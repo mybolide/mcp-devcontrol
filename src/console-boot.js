@@ -9,6 +9,7 @@ import http from "node:http";
 import crypto from "node:crypto";
 import { spawn } from "node:child_process";
 import { VERSION } from "./protocol.js";
+import { readSettings } from "./settings.js";
 import { fileURLToPath } from "node:url";
 
 const BIN = fileURLToPath(new URL("../bin/devcontrol.js", import.meta.url));
@@ -19,8 +20,8 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 
 /** 自己的控制台刚起来多久之内不重启（避免多个 MCP 连着启动时来回杀） */
-export function restartGraceMs() {
-  const raw = Number(process.env.DEVCONTROL_RESTART_GRACE_MS ?? 10_000);
+export function restartGraceMs(root = process.env.DEVCONTROL_ROOT || process.cwd()) {
+  const raw = Number(process.env.DEVCONTROL_RESTART_GRACE_MS ?? readSettings(root).console.restartGraceMs ?? 10_000);
   return Number.isFinite(raw) && raw >= 0 ? raw : 10_000;
 }
 /** 探测端口上是不是 devcontrol 控制台；不是/超时都返回 null */
@@ -207,7 +208,7 @@ async function acquireLock(root) {
 export async function ensureConsole(root, { basePort, attempts = PORT_ATTEMPTS, waitMs = 6000 } = {}) {
   if (process.env.DEVCONTROL_CONSOLE === "0") return { url: null, skipped: true, reason: "DEVCONTROL_CONSOLE=0" };
   const project = path.resolve(root);
-  const start = Number(basePort ?? process.env.DEVCONTROL_PORT ?? START_PORT);
+  const start = Number(basePort ?? process.env.DEVCONTROL_PORT ?? readSettings(project).console.port ?? START_PORT);
   const release = await acquireLock(project);
   if (!release) return { url: null, reason: "另一个进程正在启动控制台（拿不到锁），本次跳过" };
   try {
@@ -221,7 +222,7 @@ export async function ensureConsole(root, { basePort, attempts = PORT_ATTEMPTS, 
         // 只有版本不一致（升级过代码）才重启，避免旧代码一直跑；老实例没有 version 字段，按宽限期处理。
         const age = Date.now() - Date.parse(meta.startedAt ?? 0);
         const sameVersion = meta.version === VERSION;
-        const freshEnough = !meta.version && Number.isFinite(age) && age >= 0 && age < restartGraceMs();
+        const freshEnough = !meta.version && Number.isFinite(age) && age >= 0 && age < restartGraceMs(project);
         if (sameVersion || freshEnough) {
           return { url: `http://127.0.0.1:${port}/`, port, reused: true, pid: meta.pid ?? null };
         }

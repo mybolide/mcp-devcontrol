@@ -153,6 +153,7 @@ export function cmdInit(args) {
   appendLines(".gitignore", [
     ".devcontrol/state.db*",
     ".devcontrol/memory.db*",
+    ".devcontrol/settings.json",
     ".devcontrol/runs/",
     ".devcontrol/r2-wt/",
     ".devcontrol/r2-wt-legacy/",

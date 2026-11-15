@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
+import { effectiveSettings } from "./settings.js";
 
 const DDL = `
 CREATE TABLE IF NOT EXISTS memories(
@@ -38,21 +39,21 @@ export const MEMORY_KINDS = ["pitfall", "howto", "decision", "preference", "snip
 const now = () => new Date().toISOString();
 
 export function memoryConfig(env = process.env, root = process.env.DEVCONTROL_ROOT || process.cwd()) {
-  const provider = String(env.MEMORY_EMBEDDING_PROVIDER ?? "ollama").trim().toLowerCase();
-  const isOpenAI = provider === "openai" || provider === "openai-compatible";
   // 记忆跟着仓库走：真源是本项目的 .devcontrol/memory.db（不进 git），不是用户级共享库，也不写远程
   const projectRoot = path.resolve(root);
   const projectTag = crypto.createHash("sha1").update(projectRoot).digest("hex").slice(0, 8);
+  // 需要人配的东西（嵌入服务、向量库、开关）统一从项目设置读，环境变量优先
+  const eff = effectiveSettings(projectRoot, env);
   return {
-    enabled: String(env.DEVCONTROL_MEMORY ?? "on").toLowerCase() !== "off",
+    enabled: eff.memory.enabled,
     root: projectRoot,
-    dbFile: env.DEVCONTROL_MEMORY_DB ?? path.join(projectRoot, ".devcontrol", "memory.db"),
-    provider: isOpenAI ? "openai" : "ollama",
-    embeddingUrl: String(env.MEMORY_EMBEDDING_URL ?? (isOpenAI ? "http://127.0.0.1:8000/v1" : "http://127.0.0.1:11434")).replace(/\/+$/, ""),
-    model: env.MEMORY_EMBEDDING_MODEL ?? (isOpenAI ? "text-embedding-3-small" : "nomic-embed-text"),
-    apiKey: env.MEMORY_EMBEDDING_API_KEY ?? "",
-    qdrantUrl: String(env.MEMORY_QDRANT_URL ?? "http://127.0.0.1:6333").replace(/\/+$/, ""),
-    collection: env.MEMORY_QDRANT_COLLECTION ?? `devcontrol_memory_${projectTag}`,
+    dbFile: eff.memory.dbFile,
+    provider: eff.memory.provider,
+    embeddingUrl: String(eff.memory.embeddingUrl).replace(/\/+$/, ""),
+    model: eff.memory.model,
+    apiKey: eff.memory.apiKey,
+    qdrantUrl: String(eff.memory.qdrantUrl).replace(/\/+$/, ""),
+    collection: eff.memory.collection || `devcontrol_memory_${projectTag}`,
     timeoutMs: Number(env.MEMORY_TIMEOUT_MS ?? 2500),
     minScore: Number(env.MEMORY_MIN_SCORE ?? 0.55),
     dedupeScore: Number(env.MEMORY_DEDUPE_SCORE ?? 0.9),

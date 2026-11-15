@@ -26,6 +26,7 @@ import {
   listRuns,
 } from "./store.js";
 import { editMemory, listMemories, memoryConfig, promoteMemory, softDeleteMemory } from "./memory.js";
+import { effectiveSettings, readSettings, settingsFile, writeSettings } from "./settings.js";
 import { resolveRoot } from "./cli.js";
 import { sha256 } from "./fingerprint.js";
 import { listReleases, shipRelease } from "./release.js";
@@ -47,6 +48,7 @@ const OWNER_ACTIONS = {
   "memory.edit": async (db, root, p) => editMemory(memoryConfig(process.env, root), p.id, { title: p.title, body: p.body }, { promote: true }),
   "memory.drop": (db, root, p) => ({ dropped: softDeleteMemory(memoryConfig(process.env, root), p.id) }),
   "release.ship": (db, root, p) => shipRelease(db, { id: p.id }),
+  "settings.save": (db, root, p) => writeSettings(root, p.settings ?? p),
 };
 
 export async function startConsole(args) {
@@ -127,6 +129,18 @@ export async function startConsole(args) {
     if (req.method === "GET" && url.pathname === "/api/meta") {
       // 用于「这个端口上是不是本项目的 devcontrol 控制台」的探测与复用
       return json(200, { app: "devcontrol", schema: 2, version: VERSION, root: projects[0].root, port, pid: process.pid, startedAt, projects: projects.map((p) => p.root) });
+    }
+    if (req.method === "GET" && url.pathname === "/api/settings") {
+      const denied = guard(req);
+      if (denied) return json(denied.code, denied.body);
+      const active = pickProject(url.searchParams.get("project"));
+      if (!active) return json(400, { ok: false, code: "INVALID_ARGUMENT", message: "未知 project" });
+      return json(200, {
+        root: active.root,
+        file: settingsFile(active.root),
+        saved: readSettings(active.root),
+        effective: effectiveSettings(active.root),
+      });
     }
     if (req.method === "GET" && url.pathname === "/api/state") {
       const denied = guard(req);

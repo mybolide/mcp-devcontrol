@@ -157,6 +157,7 @@
         <button class="navbtn" data-nav="memory">记忆 <span class="count" id="n-mem">0</span></button>
         <button class="navbtn" data-nav="docs">文档</button>
         <button class="navbtn" data-nav="evidence">证据 <span class="count" id="n-runs">0</span></button>
+        <button class="navbtn" data-nav="settings">设置</button>
       </nav>
       <select id="project-switch" style="margin: 10px 8px 0; width: calc(100% - 16px)" hidden></select>
       <div class="sidefooter">
@@ -288,6 +289,39 @@
         </div>
       </section>
 
+      <section class="view" data-view="settings" hidden>
+        <div class="sectionhead">
+          <span class="eyebrow">SETTINGS</span>
+          <h1>设置</h1>
+          <p class="sub">需要你配的东西都在这里，改完点保存：写进本项目的 .devcontrol/settings.json（不进 git）。环境变量优先级更高，会盖过这里的值。</p>
+        </div>
+        <div class="panel">
+          <h2>记忆</h2>
+          <div class="form-row"><span style="min-width:110px">启用记忆</span>
+            <select id="set-mem-enabled"><option value="on">开着</option><option value="off">关掉</option></select></div>
+          <div class="form-row"><span style="min-width:110px">嵌入服务</span>
+            <select id="set-mem-provider"><option value="ollama">本地 Ollama</option><option value="openai">OpenAI 兼容</option></select></div>
+          <div class="form-row"><span style="min-width:110px">嵌入地址</span><input id="set-mem-url" placeholder="http://127.0.0.1:11434" /></div>
+          <div class="form-row"><span style="min-width:110px">嵌入模型</span><input id="set-mem-model" placeholder="nomic-embed-text" /></div>
+          <div class="form-row"><span style="min-width:110px">API Key</span><input id="set-mem-key" placeholder="（可选，本地模型不用填）" /></div>
+          <div class="form-row"><span style="min-width:110px">向量库地址</span><input id="set-qdrant-url" placeholder="http://127.0.0.1:6333" /></div>
+          <div class="form-row"><span style="min-width:110px">向量集合</span><input id="set-collection" placeholder="留空＝按项目自动生成" /></div>
+        </div>
+        <div class="panel">
+          <h2>控制台</h2>
+          <div class="form-row"><span style="min-width:110px">端口</span><input id="set-port" type="number" min="1024" max="65535" /></div>
+          <div class="form-row"><span style="min-width:110px">重启宽限期</span><input id="set-grace" type="number" min="0" step="1000" /><span class="mu">毫秒；控制台刚起来这段时间内不重启</span></div>
+        </div>
+        <div class="panel">
+          <h2>现在实际在用</h2>
+          <div class="mu" id="settings-effective" style="white-space:pre-wrap"></div>
+          <div class="row wrap">
+            <button class="btn primary" id="save-settings">保存设置</button>
+            <button class="btn" id="reload-settings">重新读取</button>
+          </div>
+        </div>
+      </section>
+
       <div class="toast" id="toast" hidden></div>
     </main>
     <script>
@@ -329,7 +363,7 @@
           bad ? 9000 : 3000,
         );
       };
-      const VIEWS = { inbox: "收件箱", reqs: "需求", bugs: "Bug", tasks: "任务", release: "发布", memory: "记忆", docs: "文档", evidence: "证据" };
+      const VIEWS = { inbox: "收件箱", reqs: "需求", bugs: "Bug", tasks: "任务", release: "发布", memory: "记忆", docs: "文档", evidence: "证据", settings: "设置" };
       let currentProject = localStorage.getItem("devcontrol.project") || "";
       const STATUS_TEXT = { backlog: "待办", doing: "进行中", done: "已完成", parked: "搁置", new: "待裁决", fixing: "修复中", closed: "已关闭", draft: "草稿", approved: "已批准", building: "开发中", shipped: "已发布" };
       const KIND_TEXT = { feature: "功能", bugfix: "修复", chore: "杂务", test: "测试" };
@@ -349,8 +383,34 @@
         for (const btn of document.querySelectorAll(".navbtn")) btn.classList.toggle("active", btn.dataset.nav === view);
         for (const sec of document.querySelectorAll(".view")) sec.hidden = sec.dataset.view !== view;
         $("view-title").textContent = VIEWS[view] ?? view;
+        if (view === "settings") renderSettings();
       }
 
+      async function renderSettings() {
+        try {
+          const q = currentProject ? `?project=${encodeURIComponent(currentProject)}` : "";
+          const res = await api(`/api/settings${q}`);
+          if (!res?.effective) return;
+          const m = res.effective.memory;
+          $("set-mem-enabled").value = m.enabled ? "on" : "off";
+          $("set-mem-provider").value = m.provider;
+          $("set-mem-url").value = m.embeddingUrl ?? "";
+          $("set-mem-model").value = m.model ?? "";
+          $("set-mem-key").value = m.apiKey ?? "";
+          $("set-qdrant-url").value = m.qdrantUrl ?? "";
+          $("set-collection").value = m.collection ?? "";
+          $("set-port").value = res.effective.console.port;
+          $("set-grace").value = res.effective.console.restartGraceMs;
+          $("settings-effective").textContent = [
+            `记忆库：${m.dbFile}`,
+            `设置文件：${res.file}`,
+            `嵌入：${m.provider} · ${m.embeddingUrl} · ${m.model}`,
+            `向量库：${m.qdrantUrl} · 集合 ${m.collection || "（按项目自动生成）"}`,
+          ].join("\n");
+        } catch {
+          /* 老版本控制台没有这个接口时静默 */
+        }
+      }
       function renderMetrics(d) {
         const c = d.counts ?? {};
         const items = [
@@ -595,6 +655,25 @@
         const b = e.target.closest("button");
         if (!b) return;
         if (b.id === "refresh") return tick(true);
+        if (b.id === "save-settings") {
+          const res = await owner("settings.save", {
+            settings: {
+              memory: {
+                enabled: $("set-mem-enabled").value === "on",
+                provider: $("set-mem-provider").value,
+                embeddingUrl: $("set-mem-url").value.trim(),
+                model: $("set-mem-model").value.trim(),
+                apiKey: $("set-mem-key").value.trim(),
+                qdrantUrl: $("set-qdrant-url").value.trim(),
+                collection: $("set-collection").value.trim(),
+              },
+              console: { port: Number($("set-port").value) || 7373, restartGraceMs: Number($("set-grace").value) },
+            },
+          });
+          if (res.ok) await renderSettings();
+          return res;
+        }
+        if (b.id === "reload-settings") return renderSettings();
         if (b.id === "create") {
           const kind = $("kind").value;
           const payload =
