@@ -74,6 +74,12 @@ export function taskCreate(db, root, input) {
     const title = String(input.title ?? "").trim();
     if (!title) fail("E_CONTRACT", "标题不能为空");
     const n = Number(metaGet(db, "counter:T") ?? 0) + 1;
+    // 类型：常用别名归一，未知值明确报错——静默改写成 feature 会让人以为分类生效了
+    const KINDS = ["feature", "bugfix", "chore", "test"];
+    const KIND_ALIASES = { fix: "bugfix", feat: "feature", bug: "bugfix", refactor: "chore", docs: "chore", ci: "chore", build: "chore", perf: "chore" };
+    const rawKind = String(input.kind ?? "feature").trim().toLowerCase();
+    const kind = KINDS.includes(rawKind) ? rawKind : KIND_ALIASES[rawKind];
+    if (!kind) fail("INVALID_ARGUMENT", `未知任务类型 ${rawKind}，可用 ${KINDS.join(" / ")}（fix→bugfix、feat→feature、refactor/docs/ci→chore）`);
     const id = `T-${String(n).padStart(3, "0")}`;
     db.prepare(
       "INSERT INTO tasks(id,requirement_id,path_id,kind,title,status,scope_json,acceptance_json,depends_on_json,budget_lines,base_head,contract_hash,contract_commit,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -81,7 +87,7 @@ export function taskCreate(db, root, input) {
       id,
       req.id,
       p.id,
-      ["feature", "bugfix", "chore", "test"].includes(input.kind) ? input.kind : "feature",
+      kind,
       title,
       "backlog",
       JSON.stringify(scope),
