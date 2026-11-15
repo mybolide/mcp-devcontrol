@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { openDb } from "../src/db.js";
+import { VERSION } from "../src/protocol.js";
 import {
   getTask,
   waiveFor,
@@ -196,7 +197,7 @@ test("MCP：initialize / tools/list / claim 默认 actor / bootstrap", async () 
 });
 
 
-test("MCP 连上就拉起控制台：自己的实例杀掉重启，别人的端口不碰", async () => {
+test("MCP 连上就拉起控制台：同版本复用，别人的端口不碰", async () => {
   const root = makeRepo();
   initFlow(root);
   const port = 21000 + Math.floor(Math.random() * 2000);
@@ -217,7 +218,7 @@ test("MCP 连上就拉起控制台：自己的实例杀掉重启，别人的端�
     const state = await getJson(`${digest.console}api/state`);
     assert.equal(state.paths[0].status, "approved");
 
-    // 第二次连接：同一端口、换进程 —— 自己的实例被杀掉重启
+    // 第二次连接：同一端口、同一版本 —— 直接复用。Owner 正在看的页面不该被 Agent 连上就换掉（B-004）
     const mcp2 = startMcp(root, env);
     try {
       const boot2 = await mcp2.call("tools/call", { name: "devcontrol", arguments: { action: "bootstrap" } });
@@ -226,9 +227,11 @@ test("MCP 连上就拉起控制台：自己的实例杀掉重启，别人的端�
       mcp2.close();
     }
     const second = await getJson(`${digest.console}api/meta`);
-    assert.notEqual(second.pid, first.pid);
-    assert.throws(() => process.kill(first.pid, 0), (e) => e.code === "ESRCH");
+    assert.equal(second.pid, first.pid, "同版本的实例必须复用，不能杀掉重启");
+    assert.equal(second.version, VERSION, "/api/meta 必须带版本号，才能判断是不是同一版代码");
     pids.push(second.pid);
+
+    // 宽限期内、老实例没有 version 字段：也复用（升级前的实例不打断人）
 
     // 宽限期内的第三次连接：不重启，直接复用（避免把用户刚打开的页面刷掉）
     const mcpGrace = startMcp(root, { ...env, DEVCONTROL_RESTART_GRACE_MS: "30000" });
