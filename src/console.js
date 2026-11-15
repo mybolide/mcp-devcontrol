@@ -201,12 +201,58 @@ export async function startConsole(args) {
     }
   });
 
-  server.listen(port, "127.0.0.1", () => {
-    console.log(`devcontrol 控制台：http://127.0.0.1:${port}`);
-    console.log(`项目：${root}`);
-  });
+  // 端口被占用时给人一句能看懂的话，而不是把 Node 的 EADDRINUSE 堆栈甩到脸上
+  const probe = () =>
+    new Promise((res) => {
+      const req = http.get({ host: "127.0.0.1", port, path: "/api/meta", timeout: 800 }, (r) => {
+        let body = "";
+        r.on("data", (c) => (body += c));
+        r.on("end", () => {
+          try {
+            res(JSON.parse(body));
+          } catch {
+            res(null);
+          }
+        });
+      });
+      req.on("error", () => res(null));
+      req.on("timeout", () => {
+        req.destroy();
+        res(null);
+      });
+    });
+
   return new Promise((resolve) => {
-    server.on("close", () => resolve(0));
+    let settled = false;
+    const done = (code) => {
+      if (settled) return;
+      settled = true;
+      resolve(code);
+    };
+    server.on("error", async (error) => {
+      if (error.code !== "EADDRINUSE") {
+        console.error(`控制台没起来：${error.message}`);
+        return done(1);
+      }
+      const meta = await probe();
+      const isConsole = meta?.app === "devcontrol";
+      const same = isConsole && meta.root && path.resolve(meta.root) === path.resolve(root);
+      if (same) {
+        console.log(`这个项目的控制台已经在跑了：http://127.0.0.1:${port}/（进程 ${meta.pid}）`);
+        console.log("直接打开上面的地址就行；要重开就先 devcontrol serve --stop，或者换个端口。");
+      } else if (isConsole) {
+        console.log(`端口 ${port} 被另一个项目的控制台占着：${meta.root}`);
+        console.log(`换个端口：devcontrol serve --port ${port + 1}`);
+      } else {
+        console.log(`端口 ${port} 被别的程序占着。换个端口：devcontrol serve --port ${port + 1}`);
+      }
+      return done(0);
+    });
+    server.listen(port, "127.0.0.1", () => {
+      console.log(`devcontrol 控制台：http://127.0.0.1:${port}`);
+      console.log(`项目：${root}`);
+    });
+    server.on("close", () => done(0));
     process.on("SIGINT", () => server.close());
   });
 }
