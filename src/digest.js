@@ -132,8 +132,18 @@ export function bootstrap(db, root, extra = {}) {
         return null;
       }
     })(),
-    requirement: reqs[0] ? { id: reqs[0].id, title: reqs[0].title, status: reqs[0].status } : null,
-    path: paths[0] ? { id: paths[0].id, status: paths[0].status, allowed: paths[0].allowedPaths } : null,
+    requirement: (() => {
+      const picked = (current && reqs.find((r) => r.id === current.requirement_id)) || reqs.filter((r) => ["approved", "building"].includes(r.status)).slice(-1)[0] || reqs[0];
+      return picked ? { id: picked.id, title: picked.title, status: picked.status } : null;
+    })(),
+    // 显示「真正在用的那条 Path」：在办任务的、否则最近批准的一条，别再指第一条草稿
+    path: (() => {
+      const picked =
+        (current && paths.find((p) => p.id === current.path_id)) ||
+        paths.filter((p) => p.status === "approved").slice(-1)[0] ||
+        paths[0];
+      return picked ? { id: picked.id, status: picked.status, allowed: picked.allowedPaths } : null;
+    })(),
     task: current
       ? {
           id: current.id,
