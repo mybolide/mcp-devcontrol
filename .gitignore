@@ -9,3 +9,8 @@ node_modules/
 # 编辑器
 .idea/
 .vscode/
+.devcontrol/state.db*
+.devcontrol/runs/
+.devcontrol/r2-wt/
+.devcontrol/r2-wt-legacy/
+.devcontrol/console.lock
