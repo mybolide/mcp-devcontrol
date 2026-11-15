@@ -313,9 +313,19 @@ export async function taskClose(db, root, input, opts = {}) {
         return Boolean(c.patch && db.prepare("SELECT 1 FROM patch_ids WHERE patch_id=? AND task_id=?").get(c.patch, o.id));
       }
       const at = Date.parse(c.authorTime);
-      const from = secFloor(o.claimed_at);
-      const to = secFloor(o.closed_at ?? o.claim_expires_at) + 999;
-      return at >= from && at <= to && c.authorEmail === o.claimed_by && c.files.every((f) => inScope(f, o.scope));
+      // 只卡上界：契约 §5.3 写的是「早于 claimed_at 不判违规」——过期重领、挂起再回来后
+      // claimed_at 会被重置，早先的提交仍属本任务。挂起后 to 为空，退回「现在」。
+      const to = secFloor(o.closed_at ?? o.claim_expires_at ?? Date.now()) + 999;
+      if (!(at <= to)) return false;
+      // 作者必须是曾经领过这个任务的人。挂起/重领会清空 claimed_by，所以同时查事件里的领取记录。
+      const actors = new Set(
+        db
+          .prepare("SELECT detail AS v FROM events WHERE task_id=? AND action IN ('task.claim','task.renew')")
+          .all(o.id)
+          .map((r) => String(r.v ?? "")),
+      );
+      if (o.claimed_by) actors.add(o.claimed_by);
+      return actors.has(c.authorEmail) && c.files.every((f) => inScope(f, o.scope));
     };
     // 伪造的 approve 提交（身份/前缀/路径都对，但内核从没写过这个 sha）按无主处理。
     // 合法判据三选一：
