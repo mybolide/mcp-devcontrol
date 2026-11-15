@@ -309,6 +309,26 @@ export async function taskClose(db, root, input, opts = {}) {
       const to = secFloor(o.closed_at ?? o.claim_expires_at) + 999;
       return at >= from && at <= to && c.authorEmail === o.claimed_by && c.files.every((f) => inScope(f, o.scope));
     };
+    // 伪造的 approve 提交（身份/前缀/路径都对，但内核从没写过这个 sha）按无主处理。
+    // 合法判据二选一：① sha 就是某条 Path 记下的 contract_commit；
+    // ② 该提交里的契约文件内容哈希等于某条 Path 记下的 hash（覆盖重复批准后旧 sha 被覆盖的情况）。
+    const knownBySha = new Set(
+      db.prepare("SELECT contract_commit AS v FROM paths WHERE contract_commit IS NOT NULL AND contract_commit<>''").all().map((r) => r.v),
+    );
+    const knownByHash = new Set(db.prepare("SELECT hash AS v FROM paths WHERE hash IS NOT NULL AND hash<>''").all().map((r) => r.v));
+    const fakeApprove = (c) => {
+      if (!isApprove(c)) return false;
+      if (knownBySha.has(c.sha)) return false;
+      return !c.files
+        .filter((f) => f.startsWith(".devcontrol/contracts/"))
+        .some((f) => {
+          try {
+            return knownByHash.has(sha256(Buffer.from(git(root, ["show", `${c.sha}:${f}`]))));
+          } catch {
+            return false;
+          }
+        });
+    };
     // 伪造的 approve 提交（身份/前缀/路径都对，但内核从没写过这个 sha）按无主处理
     const unowned = commits.filter((c) => (!isApprove(c) || fakeApprove(c)) && !owned.includes(c) && !validOwner(c));
     if (unowned.length) fail("E_UNOWNED_COMMIT", `${unowned.length} 个无主提交`, { commits: unowned.map((c) => c.sha) });
