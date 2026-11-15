@@ -318,15 +318,24 @@ export async function taskClose(db, root, input, opts = {}) {
       return at >= from && at <= to && c.authorEmail === o.claimed_by && c.files.every((f) => inScope(f, o.scope));
     };
     // 伪造的 approve 提交（身份/前缀/路径都对，但内核从没写过这个 sha）按无主处理。
-    // 合法判据二选一：① sha 就是某条 Path 记下的 contract_commit；
-    // ② 该提交里的契约文件内容哈希等于某条 Path 记下的 hash（覆盖重复批准后旧 sha 被覆盖的情况）。
+    // 合法判据三选一：
+    //   ① sha 就是某条 Path 记下的 contract_commit；
+    //   ② sha 出现在内核自己记的 req.approve 事件里（同一条 Path 被重新批准后，
+    //      paths 表里的 sha/hash 会被新契约覆盖，只有事件日志还留着历史）；
+    //   ③ 该提交里的契约文件内容哈希等于某条 Path 记下的 hash。
     const knownBySha = new Set(
       db.prepare("SELECT contract_commit AS v FROM paths WHERE contract_commit IS NOT NULL AND contract_commit<>''").all().map((r) => r.v),
     );
     const knownByHash = new Set(db.prepare("SELECT hash AS v FROM paths WHERE hash IS NOT NULL AND hash<>''").all().map((r) => r.v));
+    const knownApproveShas = db
+      .prepare("SELECT detail FROM events WHERE action='req.approve'")
+      .all()
+      .map((r) => String(r.detail ?? "").match(/@\s*([0-9a-f]{7,40})/i)?.[1])
+      .filter(Boolean);
     const fakeApprove = (c) => {
       if (!isApprove(c)) return false;
       if (knownBySha.has(c.sha)) return false;
+      if (knownApproveShas.some((s) => c.sha.startsWith(s))) return false;
       return !c.files
         .filter((f) => f.startsWith(".devcontrol/contracts/"))
         .some((f) => {
