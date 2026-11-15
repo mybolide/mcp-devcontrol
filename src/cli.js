@@ -90,6 +90,23 @@ function appendLines(file, lines) {
   return true;
 }
 
+/**
+ * .devcontrol/contracts/ 必须进 git（契约真源），所以 .gitignore 里"整体忽略
+ * .devcontrol/"的规则必须去掉：git 不允许在被排除的父目录下再包含文件，
+ * 光追加 !.devcontrol/contracts/ 是无效的。只删这一条，其它忽略规则不动。
+ */
+const BLANKET_DATA_DIR = /^\/?\.devcontrol\/?\*?$/;
+function dropBlanketDataDirIgnore(file = ".gitignore") {
+  const abs = path.join(process.cwd(), file);
+  if (!fs.existsSync(abs)) return false;
+  const cur = fs.readFileSync(abs, "utf8");
+  const lines = cur.split("\n");
+  const kept = lines.filter((l) => !BLANKET_DATA_DIR.test(l.trim()));
+  if (kept.length === lines.length) return false;
+  fs.writeFileSync(abs, kept.join("\n"), "utf8");
+  return true;
+}
+
 function writeIfMissing(rel, value) {
   const abs = path.join(process.cwd(), rel);
   if (fs.existsSync(abs)) return false;
@@ -132,6 +149,7 @@ export function cmdInit(args) {
   process.chdir(root);
   fs.mkdirSync(path.join(dataDir(root), "runs"), { recursive: true });
   fs.mkdirSync(path.join(dataDir(root), "contracts"), { recursive: true });
+  const unignored = dropBlanketDataDirIgnore();
   appendLines(".gitignore", [
     ".devcontrol/state.db*",
     ".devcontrol/runs/",
@@ -205,7 +223,7 @@ export function cmdInit(args) {
   console.log(`devcontrol init 完成：
 - 数据目录 .devcontrol/（state.db / contracts / runs）
 - 模式：${gitMode ? "git（完整门禁）" : "weak（无 git：只跑验收，无归属校验）"}
-- Path 草稿 ${created} 条（都还是 draft，需要 Owner 批准）
+${unignored ? "- .gitignore：已移除整体忽略 .devcontrol/ 的规则（契约必须能进 git）\n" : ""}- Path 草稿 ${created} 条（都还是 draft，需要 Owner 批准）
 - 客户端配置：.mcp.json ${label(wroteMcp)} / .cursor/mcp.json ${label(wroteCursor)} / opencode.json ${label(wroteOpencode)}
 - AGENTS.md 标记块已就绪
 - 控制台：随 MCP 连接自动启动并复用（Owner 也可以手动 devcontrol serve）
