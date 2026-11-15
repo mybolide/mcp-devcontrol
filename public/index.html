@@ -103,7 +103,7 @@
       td { padding: 10px; border-bottom: 1px solid #eef1f5; color: #26364a; vertical-align: top; }
       tr:last-child td { border-bottom: 0; }
       code, .mono { font-family: var(--font-mono); font-size: 12.5px; color: #33465d; }
-      .pill { display: inline-block; font-size: 11.5px; font-weight: 700; padding: 2px 8px; border-radius: 999px; background: #eef2f7; color: #536880; }
+      .pill { display: inline-block; white-space: nowrap; font-size: 11.5px; font-weight: 700; padding: 2px 8px; border-radius: 999px; background: #eef2f7; color: #536880; }
       .pill.doing { background: #e8f1ff; color: #1769d2; }
       .pill.done { background: #e7f5ee; color: var(--green); }
       .pill.parked { background: #fdf1e3; color: var(--warn); }
@@ -413,7 +413,9 @@
             const p = covOf(r);
             const cov = `<span class="pill ${p.missing.length ? "parked" : "good"}">覆盖 ${esc(p.text)}</span>`;
             const miss = p.missing.length ? `<div class="mu" style="color:#a86b1a">待补拆：${p.missing.map(esc).join("；")}</div>` : "";
-            const pth = s.paths.find((x) => x.requirement_id === r.id);
+            // Path 可被多条需求共用，所以先从这条需求的任务反查它实际用的 Path
+            const usedPath = s.tasks.find((t) => t.requirement_id === r.id)?.path_id;
+            const pth = (usedPath && s.paths.find((x) => x.id === usedPath)) || s.paths.find((x) => x.requirement_id === r.id);
             const tasks = s.tasks
               .filter((t) => t.requirement_id === r.id)
               .map((t) => `<span class="pill ${t.status === "done" ? "done" : t.status === "doing" ? "doing" : ""}">${esc(t.id)}</span>`)
