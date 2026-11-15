@@ -24,6 +24,8 @@ export function inScope(file, scope) {
   const f = normalize(file);
   return scope.some((raw) => {
     const s = normalize(raw).replace(/\/+$/, "");
+    // "." 表示整个仓库（根 Path）；.devcontrol/ 是内核自己的状态，永远不算在 scope 内
+    if (s === "." || s === "") return !f.startsWith(".devcontrol/");
     return f === s || f.startsWith(s + "/");
   });
 }

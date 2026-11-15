@@ -175,11 +175,15 @@ export function cmdInit(args) {
     }
   }
   let created = 0;
-  const dirs = fs
-    .readdirSync(root, { withFileTypes: true })
-    .filter((e) => e.isDirectory() && !SKIP_DIRS.has(e.name) && !e.name.startsWith("."))
-    .map((e) => e.name)
-    .filter((d) => !only || only.has(d));
+  // 默认只生成一条覆盖全项目的根 Path（"."）：改实现 + 补测试是同一个正常动作，
+  // 按顶层目录切会把它拆成两个任务、还得串依赖，人反而要多批一次。
+  // 想收窄成目录级 Path 时用 --only src,test。
+  const dirs = only
+    ? fs
+        .readdirSync(root, { withFileTypes: true })
+        .filter((e) => e.isDirectory() && !SKIP_DIRS.has(e.name) && !e.name.startsWith(".") && only.has(e.name))
+        .map((e) => e.name)
+    : ["."];
   for (const dir of dirs) {
     const exists = db.prepare("SELECT 1 FROM paths WHERE allowed_paths_json=?").get(JSON.stringify([dir]));
     if (exists) continue;
