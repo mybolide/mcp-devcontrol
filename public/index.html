@@ -155,7 +155,7 @@
       <div class="bar">
         <div class="breadcrumbs"><b id="view-title">收件箱</b><span id="project" class="mu"></span></div>
         <div class="actions">
-          <span class="badge" id="head">HEAD —</span>
+          <span class="badge" id="head">版本 —</span>
           <button class="btn" id="refresh">刷新</button>
         </div>
       </div>
@@ -228,7 +228,7 @@
         <div class="sectionhead">
           <span class="eyebrow">RELEASE</span>
           <h1>发布</h1>
-          <p class="sub">一次交付 = 一组任务。全部任务 done 才能 ship；没做完的会在这里点出来。</p>
+          <p class="sub">一次交付 = 一组任务。全部完成后才能发布；没做完的会在这里点出来。</p>
         </div>
         <div class="panel"><div id="releases"></div></div>
       </section>
@@ -265,11 +265,11 @@
         <div class="sectionhead">
           <span class="eyebrow">EVIDENCE</span>
           <h1>每次重跑</h1>
-          <p class="sub">收口时在干净检出里重跑验收：命令、退出码、HEAD、scope 指纹，全部可复核。</p>
+          <p class="sub">收口时会在干净的副本里重跑一遍验收：命令、结果、当时的版本、改动指纹，都能复核。</p>
         </div>
         <div class="panel">
           <table>
-            <thead><tr><th>时间</th><th>任务</th><th>命令</th><th>退出</th><th>HEAD</th><th>指纹</th><th>耗时</th></tr></thead>
+            <thead><tr><th>时间</th><th>任务</th><th>命令</th><th>结果</th><th>版本</th><th>内容指纹</th><th>耗时</th></tr></thead>
             <tbody id="runs"></tbody>
           </table>
         </div>
@@ -369,7 +369,7 @@
             <div class="row wrap"><button class="btn primary" data-decide="${b.id}" data-decision="accept">采纳</button><button class="btn danger" data-decide="${b.id}" data-decision="reject">驳回</button></div></div>`);
         }
         for (const t of s.tasks.filter((x) => x.status === "parked")) {
-          cards.push(`<div class="card"><strong>${esc(t.id)} 已 parked</strong>
+          cards.push(`<div class="card"><strong>${esc(t.id)} 已挂起</strong>
             <div class="mu">${esc(t.title)} · 连续失败或等待超时</div>
             <div class="row wrap"><button class="btn" data-reopen="${t.id}">打回重做</button></div></div>`);
         }
