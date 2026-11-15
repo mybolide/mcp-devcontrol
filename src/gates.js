@@ -360,8 +360,14 @@ export async function taskClose(db, root, input, opts = {}) {
     files = [...new Set(owned.flatMap((c) => c.files))];
     const outOfScope = files.filter((f) => !inScope(f, t.scope));
     if (outOfScope.length) fail("E_SCOPE_VIOLATION", "改动超出任务 scope", { files: outOfScope });
-    const unregistered = owned.flatMap((c) => addedFiles(root, c.sha)).filter((f) => !t.scope.includes(f) && !(body.allowNewFiles && inScope(f, body.allowedPaths)));
-    if (unregistered.length) fail("E_UNREGISTERED_FILES", "新增文件未登记", { files: unregistered });
+    // 新增文件只要落在任务 scope 内就放行：scope 写成目录（如 test）时，新增 test/x.test.js 属于正常动作。
+    // 不在 scope 里的新增文件仍要拦（防止往仓库里塞别的东西）。
+    const unregistered = owned
+      .flatMap((c) => addedFiles(root, c.sha))
+      .filter((f) => !inScope(f, t.scope) && !(body.allowNewFiles && inScope(f, body.allowedPaths)));
+    if (unregistered.length) {
+      fail("E_UNREGISTERED_FILES", `新增文件不在任务 scope 内：${unregistered.join("、")}`, { files: unregistered });
+    }
     lines = owned.reduce((n, c) => n + numstat(root, c.sha).reduce((m, x) => m + x.added + x.deleted, 0), 0);
     const pathUsed = db.prepare("SELECT changed_lines FROM tasks WHERE path_id=? AND status='done'").all(p.id).reduce((n, r) => n + r.changed_lines, 0);
     if (pathUsed + lines > Number(body.budgetLines ?? 1200) && !waiveFor(db, t.id, "E_DIFF_BUDGET")) fail("E_DIFF_BUDGET", `Path 累计超预算`, { scope: "path" });
