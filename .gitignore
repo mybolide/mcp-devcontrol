@@ -1,5 +1,5 @@
-# DevControl 运行时数据（属于每个项目自己，不进仓库）
-.devcontrol/
+# DevControl 运行时数据：单文件库、证据、干净检出都别进仓库；
+# 但 .devcontrol/contracts/ 必须进 git（契约真源），所以不能整体忽略 .devcontrol/
 
 # 依赖与临时产物
 node_modules/
