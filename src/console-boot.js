@@ -8,6 +8,7 @@ import net from "node:net";
 import http from "node:http";
 import crypto from "node:crypto";
 import { spawn } from "node:child_process";
+import { VERSION } from "./protocol.js";
 import { fileURLToPath } from "node:url";
 
 const BIN = fileURLToPath(new URL("../bin/devcontrol.js", import.meta.url));
@@ -216,9 +217,12 @@ export async function ensureConsole(root, { basePort, attempts = PORT_ATTEMPTS, 
       const meta = await readConsoleMeta(port);
       if (meta) {
         if (path.resolve(meta.root) !== project) continue; // 别人的 → 下一个端口
-        // 刚起来的自己人（默认 10s 内）：复用，别把用户刚打开的页面又刷一遍
+        // 同版本的健康实例直接复用：别因为「它跑了一会儿」就把 Owner 正在看的页面杀掉重启。
+        // 只有版本不一致（升级过代码）才重启，避免旧代码一直跑；老实例没有 version 字段，按宽限期处理。
         const age = Date.now() - Date.parse(meta.startedAt ?? 0);
-        if (Number.isFinite(age) && age >= 0 && age < restartGraceMs()) {
+        const sameVersion = meta.version === VERSION;
+        const freshEnough = !meta.version && Number.isFinite(age) && age >= 0 && age < restartGraceMs();
+        if (sameVersion || freshEnough) {
           return { url: `http://127.0.0.1:${port}/`, port, reused: true, pid: meta.pid ?? null };
         }
         if (!(await stopOwnConsole(meta, port))) continue; // 自己的旧实例 → 杀掉，杀不干净就换端口

@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { readConsoleMeta } from "./console-boot.js";
 import { openDb } from "./db.js";
+import { VERSION } from "./protocol.js";
 import { bootstrap } from "./digest.js";
 import {
   reqIntake,
@@ -125,7 +126,7 @@ export async function startConsole(args) {
     }
     if (req.method === "GET" && url.pathname === "/api/meta") {
       // 用于「这个端口上是不是本项目的 devcontrol 控制台」的探测与复用
-      return json(200, { app: "devcontrol", schema: 2, root: projects[0].root, port, pid: process.pid, startedAt, projects: projects.map((p) => p.root) });
+      return json(200, { app: "devcontrol", schema: 2, version: VERSION, root: projects[0].root, port, pid: process.pid, startedAt, projects: projects.map((p) => p.root) });
     }
     if (req.method === "GET" && url.pathname === "/api/state") {
       const denied = guard(req);
