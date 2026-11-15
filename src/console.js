@@ -251,6 +251,29 @@ export async function startConsole(args) {
     server.listen(port, "127.0.0.1", () => {
       console.log(`devcontrol 控制台：http://127.0.0.1:${port}`);
       console.log(`项目：${root}`);
+      // 「连接即控制台生命周期」：MCP 断开后宽限期到点自己收摊，别留 PPID 1 的孤儿进程
+      const parentPid = Number(process.env.DEVCONTROL_PARENT_PID ?? 0);
+      if (parentPid > 0) {
+        const graceMs = Number(process.env.DEVCONTROL_PARENT_GRACE_MS ?? 10000);
+        let goneAt = 0;
+        setInterval(() => {
+          let alive = true;
+          try {
+            process.kill(parentPid, 0);
+          } catch {
+            alive = false;
+          }
+          if (alive) {
+            goneAt = 0;
+            return;
+          }
+          if (!goneAt) goneAt = Date.now();
+          if (Date.now() - goneAt < graceMs) return;
+          console.log("MCP 已断开，控制台自行退出。");
+          server.close();
+          done(0);
+        }, 2000).unref();
+      }
     });
     server.on("close", () => done(0));
     process.on("SIGINT", () => server.close());

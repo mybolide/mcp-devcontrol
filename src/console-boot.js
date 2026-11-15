@@ -85,7 +85,7 @@ async function spawnConsole(root, port, waitMs) {
       cwd: root,
       detached: true,
       stdio: ["ignore", out, out],
-      env: { ...process.env, DEVCONTROL_ROOT: root, DEVCONTROL_CONSOLE: "0" },
+      env: { ...process.env, DEVCONTROL_ROOT: root, DEVCONTROL_CONSOLE: "0", DEVCONTROL_PARENT_PID: String(process.pid), DEVCONTROL_PARENT_GRACE_MS: "10000" },
     });
     child.unref();
     // 异步 spawn 失败（EAGAIN/EMFILE/cwd 被删）会触发 error 事件，不接住会打死 MCP 自己
