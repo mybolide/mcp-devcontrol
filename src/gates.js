@@ -61,7 +61,7 @@ export function taskCreate(db, root, input) {
     const req = getReq(db, input.requirementId);
     if (!req || req.status !== "approved") fail("E_NEED_APPROVED", `需求未批准：${input.requirementId}`);
     const p = getPath(db, input.pathId);
-    if (!p || p.requirement_id !== req.id) fail("E_NEED_APPROVED", `Path ${input.pathId} 未绑定该需求`);
+    if (!p || p.status !== "approved") fail("E_NEED_APPROVED", `Path ${input.pathId} 未批准`);
     const body = contractOf(db, root, p);
     const scope = Array.isArray(input.scope) && input.scope.length ? input.scope : p.allowedPaths;
     within(scope, body.allowedPaths);
