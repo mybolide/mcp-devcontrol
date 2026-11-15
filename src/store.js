@@ -305,11 +305,15 @@ export function taskReopen(db, input) {
 export function bugDecide(db, input) {
   return tx(db, () => {
     const b = getBug(db, input.bugId);
-    const decision = input.decision ?? "accept";
-    const status = decision === "reject" ? "fixing" : "closed";
+    if (!b) fail("NOT_FOUND", `Bug 不存在：${input.bugId}`);
+    const decision = String(input.decision ?? "accept");
+    if (!["accept", "reject", "wontfix"].includes(decision)) fail("INVALID_ARGUMENT", `未知裁决：${decision}`);
+    if (b.status !== "new") fail("E_ILLEGAL_TRANSITION", `${b.id} 已裁决（${b.status}）`);
+    // 采纳 = 要修，进修复队列；驳回 / wontfix = 到此为止
+    const status = decision === "accept" ? "fixing" : "closed";
     db.prepare("UPDATE bugs SET status=?, closed_by=? WHERE id=?").run(status, decision, b.id);
-    logEvent(db, { channel: "owner", action: "bug.decide", detail: `${b.id} ${decision}` });
-    return { bugId: b.id, status };
+    logEvent(db, { channel: "owner", action: "bug.decide", detail: `${b.id} ${decision} → ${status}` });
+    return { bugId: b.id, status, decision };
   });
 }
 
