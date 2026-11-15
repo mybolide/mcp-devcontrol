@@ -75,6 +75,18 @@ export function listBugs(db) {
 export function listDocs(db) {
   return db.prepare("SELECT * FROM docs ORDER BY id").all();
 }
+/**
+ * 纪律三数：被拦多少次、返工多少轮、绕过多少次。
+ * 这是「内核到底有没有生效」的可核对证据，不靠人回忆。
+ */
+export function disciplineStats(db) {
+  const blocked = db.prepare("SELECT COUNT(*) AS c FROM events WHERE action='close.fail'").get().c;
+  const rework = db.prepare("SELECT COALESCE(SUM(review_round),0) AS c FROM tasks").get().c;
+  const bypassed = db.prepare("SELECT COUNT(*) AS c FROM events WHERE action='override'").get().c;
+  const done = db.prepare("SELECT COUNT(*) AS c FROM tasks WHERE status='done'").get().c;
+  return { blocked, rework, bypassed, done };
+}
+
 /** 证据流：每次验收重跑的命令/退出码/HEAD/指纹，可复核 */
 export function listRuns(db, limit = 20) {
   return db

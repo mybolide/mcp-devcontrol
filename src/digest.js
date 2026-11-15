@@ -1,5 +1,5 @@
 // devcontrol — bootstrap digest：内核自己决定「下一步该做什么」，不让人挑
-import { listReqs, listPaths, listTasks, getTask, now } from "./store.js";
+import { listReqs, listPaths, listTasks, getTask, now, disciplineStats } from "./store.js";
 import { head } from "./git.js";
 import { metaGet } from "./db.js";
 import { releaseSummary } from "./release.js";
@@ -162,6 +162,8 @@ export function bootstrap(db, root, extra = {}) {
       done: tasks.filter((t) => t.status === "done").length,
       blocked: blocked.length,
     },
+    // 纪律三数：被拦 / 返工 / 绕过 —— 内核到底有没有在起作用，看这三个数
+    stats: disciplineStats(db),
     recent,
   };
 }

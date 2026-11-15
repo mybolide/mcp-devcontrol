@@ -9,7 +9,7 @@ import { inScope, sha256 } from "./fingerprint.js";
 import { bootstrap } from "./digest.js";
 import { doctor, exportMarkdown } from "./report.js";
 import { createRelease, getRelease, listReleases, planRelease, shipRelease } from "./release.js";
-import { getTask, mapTask, listTasks, listReqs, listPaths, listDocs, reqIntake } from "./store.js";
+import { getTask, mapTask, listTasks, listReqs, listPaths, listDocs, reqIntake, disciplineStats } from "./store.js";
 import {
   demoteMemory,
   exportMemories,
@@ -306,6 +306,15 @@ export function cmdCommit(args) {
   const body = `${message}\n\nTask-Id: ${task.id}\nDevControl-Base: ${task.base_head}`;
   const sha = commitFiles(root, mine, body, { author: actor });
   console.log(`${sha.slice(0, 8)}  ${task.id}  ${mine.length} 个文件`);
+  return 0;
+}
+
+/** 纪律三数：内核有没有真的拦住、返工、被绕过 */
+export function cmdStats() {
+  const root = resolveRoot();
+  const db = openDb(root);
+  const s = disciplineStats(db);
+  console.log(`被拦 ${s.blocked} 次 · 返工 ${s.rework} 轮 · 绕过 ${s.bypassed} 次 · 已完成 ${s.done} 个任务`);
   return 0;
 }
 
@@ -636,6 +645,8 @@ export async function main(argv) {
         return await cmdClose(args);
       case "status":
         return await cmdStatus();
+      case "stats":
+        return cmdStats();
       case "memory":
         return await cmdMemory(args);
       case "doctor":
@@ -667,6 +678,7 @@ export async function main(argv) {
   devcontrol task claim T-00x       领取任务（纯 CLI，租约 45 分钟）
   devcontrol task list              任务清单
   devcontrol next                   内核认为你现在该做的那一件事（参数可直接照抄）
+  devcontrol stats                  纪律三数：被拦 / 返工 / 绕过（内核到底有没有在起作用）
   devcontrol close [T-00x] [--resolved-by "…"]  收口：干净检出内重跑验收（R0–R5）
   devcontrol status                  bootstrap 摘要：next / actions / plan / 记忆命中
   devcontrol memory [status|list|search|add|export|reindex|promote|demote|delete]  通用记忆
