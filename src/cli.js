@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { metaGet, metaSet, openDb, dataDir, dbPath } from "./db.js";
-import { taskClose, taskRenew } from "./gates.js";
+import { taskClose, taskRenew, taskCreate, taskClaim } from "./gates.js";
 import { git, head, isRepo, toplevel, statusPorcelain, commitFiles, lsFiles } from "./git.js";
 import { inScope, sha256 } from "./fingerprint.js";
 import { bootstrap } from "./digest.js";
@@ -302,6 +302,63 @@ export function cmdCommit(args) {
   return 0;
 }
 
+export function cmdTask(args) {
+  const root = resolveRoot();
+  const db = openDb(root);
+  const flag = (name) => {
+    const i = args.indexOf(`--${name}`);
+    return i >= 0 ? args[i + 1] : undefined;
+  };
+  const every = (name) => args.flatMap((a, i) => (a === `--${name}` && args[i + 1] ? [args[i + 1]] : []));
+  const actor = flag("actor") ?? (process.env.DEVCONTROL_ACTOR || "agent");
+  const sub = args[0];
+  if (sub === "create") {
+    const req = flag("req") ?? flag("requirement");
+    const pathId = flag("path");
+    const title = flag("title");
+    if (!req || !pathId || !title) {
+      console.error('用法：devcontrol task create --req FR-001 --path P-001 --title "一言说清" [--kind fix] [--scope src,test] [--accept "npm test :: exit==0"]');
+      return 2;
+    }
+    const accepts = every("accept");
+    const deriveFrom = Number(flag("derive") ?? 0);
+    const acceptance = (accepts.length ? accepts : ["npm test :: exit==0"]).map((assertion) => ({ deriveFrom, assertion }));
+    const scope = flag("scope") ? flag("scope").split(",").map((s) => s.trim()).filter(Boolean) : undefined;
+    const task = taskCreate(db, root, { requirementId: req, pathId, kind: flag("kind") ?? "feature", title, scope, acceptance });
+    console.log(`${task.id}  已建  ${task.title}`);
+    console.log(`scope: ${(task.scope ?? []).join(", ")}`);
+    return 0;
+  }
+  if (sub === "claim") {
+    const id = args.slice(1).find((a) => /^T-\d+$/.test(a));
+    if (!id) {
+      console.error("用法：devcontrol task claim T-00x [--actor name]");
+      return 2;
+    }
+    const claimed = taskClaim(db, root, { id }, actor);
+    console.log(`${claimed.id} 已领取（租约到 ${claimed.claimExpiresAt}）`);
+    console.log(`scope: ${claimed.scope.join(", ")}`);
+    for (const cmd of claimed.testCmds) console.log(`验收命令: ${cmd}`);
+    return 0;
+  }
+  if (sub === "list") {
+    for (const t of db.prepare("SELECT id,status,kind,title FROM tasks ORDER BY id").all()) console.log(`${t.id}  ${t.status.padEnd(8)}${t.kind.padEnd(8)}${t.title}`);
+    return 0;
+  }
+  console.error("用法：devcontrol task <create|claim|list> ...");
+  return 2;
+}
+
+export function cmdNext() {
+  const root = resolveRoot();
+  const db = openDb(root);
+  const digest = bootstrap(db, root);
+  if (!digest.next) return 0;
+  console.log(`${digest.next.action}  ${digest.next.why ?? ""}`);
+  console.log(JSON.stringify(digest.next.args ?? {}, null, 2));
+  return 0;
+}
+
 export function cmdRenew(args) {
   const root = resolveRoot();
   const db = openDb(root);
@@ -564,6 +621,10 @@ export async function main(argv) {
         return cmdCommit(args);
       case "renew":
         return cmdRenew(args);
+      case "next":
+        return cmdNext();
+      case "task":
+        return cmdTask(args);
       case "close":
         return await cmdClose(args);
       case "status":
@@ -595,6 +656,10 @@ export async function main(argv) {
   devcontrol run -- <cmd>            采证执行（记录退出码与耗时）
   devcontrol commit -m "<msg>"       只提交 scope 内文件，自动写 Task-Id trailer
   devcontrol renew [T-00x]          续租（TTL 45 分钟；commit 等写操作也会自动续期）
+  devcontrol task create --req FR-001 --path P-001 --title "…"   纯 CLI 建任务（--kind/--scope/--accept 可选）
+  devcontrol task claim T-00x       领取任务（纯 CLI，租约 45 分钟）
+  devcontrol task list              任务清单
+  devcontrol next                   内核认为你现在该做的那一件事（参数可直接照抄）
   devcontrol close [T-00x] [--resolved-by "…"]  收口：干净检出内重跑验收（R0–R5）
   devcontrol status                  bootstrap 摘要：next / actions / plan / 记忆命中
   devcontrol memory [status|list|search|add|export|reindex|promote|demote|delete]  通用记忆
