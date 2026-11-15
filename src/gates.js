@@ -73,7 +73,12 @@ export function taskCreate(db, root, input) {
     for (const dep of dependsOn) if (!taskExists(db, dep)) fail("E_CONTRACT", `依赖不存在：${dep}`);
     const title = String(input.title ?? "").trim();
     if (!title) fail("E_CONTRACT", "标题不能为空");
-    const n = Number(metaGet(db, "counter:T") ?? 0) + 1;
+    // 计数器可能落后（早期手工插库），撞号就往下找空号，不要用裸 SQLite 错误崩掉
+    const usedT = new Set(db.prepare("SELECT id FROM tasks").all().map((r) => Number(String(r.id).replace(/\D/g, "")) || 0));
+    let n = Number(metaGet(db, "counter:T") ?? 0);
+    do {
+      n += 1;
+    } while (usedT.has(n));
     // 类型：常用别名归一，未知值明确报错——静默改写成 feature 会让人以为分类生效了
     const KINDS = ["feature", "bugfix", "chore", "test"];
     const KIND_ALIASES = { fix: "bugfix", feat: "feature", bug: "bugfix", refactor: "chore", docs: "chore", ci: "chore", build: "chore", perf: "chore" };

@@ -187,7 +187,12 @@ export function cmdInit(args) {
   for (const dir of dirs) {
     const exists = db.prepare("SELECT 1 FROM paths WHERE allowed_paths_json=?").get(JSON.stringify([dir]));
     if (exists) continue;
-    const n = Number(db.prepare("SELECT value FROM meta WHERE key='counter:P'").get()?.value ?? 0) + 1;
+    // 计数器可能因为早期手工插库或旧 bug 落后，撞号就往下找空号，别用裸 SQLite 错误崩掉
+    const usedP = new Set(db.prepare("SELECT id FROM paths").all().map((r) => Number(String(r.id).replace(/\D/g, "")) || 0));
+    let n = Number(db.prepare("SELECT value FROM meta WHERE key='counter:P'").get()?.value ?? 0);
+    do {
+      n += 1;
+    } while (usedP.has(n));
     db.prepare("INSERT INTO paths(id,allowed_paths_json,allow_new_files,budget_lines,test_cmds_json,status) VALUES(?,?,?,?,?,?)").run(
       `P-${String(n).padStart(3, "0")}`,
       JSON.stringify([dir]),
