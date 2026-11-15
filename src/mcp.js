@@ -21,7 +21,7 @@ export const INSTRUCTIONS = `你是本项目的编码 Agent。工作纪律（由
 3. 完成后 devcontrol commit -m "..."（只提交 scope 内文件），再 task.close —— 内核会在干净检出中重跑验收。
 4. 遇到歧义用 ask，不要猜。
 5. bootstrap 返回的 console 地址就是 Owner 控制台：MCP 启动时自动拉起、挂掉时 bootstrap 自动重建。把它转告 Owner 即可，人不需要手动启动或重启。
-6. memory 是**跨项目的通用记忆**（不是本项目专用）：踩到的坑/解法、别人的约定、踩过的 SDK 怪癖，随时可以 memory.write（title + body + kind/tags）；动手前先用 memory.search 查一下。任务失败过（bootstrap.task.reviewRound > 0）时，task.close 必须带 resolvedBy，内核会自动记一条 pitfall。`;
+6. memory 是**这个项目自己的经验库**（存在本仓库 .devcontrol/memory.db，不写远程）：踩到的坑/解法、定下的约定、踩过的 SDK 怪癖，随时可以 memory.write（title + body + kind/tags）；动手前先用 memory.search 查一下。任务失败过（bootstrap.task.reviewRound > 0）时，task.close 必须带 resolvedBy，内核会自动记一条 pitfall。`;
 
 const ACTIONS = [
   "bootstrap",

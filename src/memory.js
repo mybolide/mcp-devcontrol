@@ -1,5 +1,5 @@
-// devcontrol — 通用记忆：跨项目复用的经验（坑 / 解法 / 决策 / 偏好 / 片段）
-// - 记忆是用户级的（~/.devcontrol/memory.db），不按项目分区；project 字段只是出处溯源，可空
+// devcontrol — 项目记忆：这个仓库自己积累的经验（坑 / 解法 / 决策 / 偏好 / 片段）
+// - 记忆存在本仓库的 .devcontrol/memory.db（跟着仓库走），不写远程；project 字段只是出处溯源，可空
 // - 写入不依赖任务：任何时刻都可以 memory.write；task.close 只是其中一个方便入口
 // - SQLite 是真源，Qdrant 只是可重建的向量索引；向量栈不可用时降级为关键词检索
 import fs from "node:fs";
