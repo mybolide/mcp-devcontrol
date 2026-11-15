@@ -152,6 +152,7 @@ export function cmdInit(args) {
   const unignored = dropBlanketDataDirIgnore();
   appendLines(".gitignore", [
     ".devcontrol/state.db*",
+    ".devcontrol/memory.db*",
     ".devcontrol/runs/",
     ".devcontrol/r2-wt/",
     ".devcontrol/r2-wt-legacy/",
