@@ -612,3 +612,22 @@ test("多项目：一个控制台切换多个仓库，owner 动作按 project �
     svc.child.kill();
   }
 });
+
+test("挂起再回来的任务，自己的提交仍能收口（B-006）", async () => {
+  const root = makeRepo();
+  const { db, reqId } = initFlow(root);
+  const task = newTask(db, root, reqId);
+  taskClaim(db, root, { id: task.id }, "agentA");
+  fs.writeFileSync(path.join(root, "src/a.js"), "export const a = 2;\n");
+  commitFiles(root, ["src/a.js"], `feat\n\nTask-Id: ${task.id}\nDevControl-Base: ${task.base_head}`, { author: "agentA" });
+
+  // 中途挂起（等 Owner 回答）→ 被放回队列 → 重新领取
+  const q = ask(db, { taskId: task.id, question: "要不要顺便改导出名？" });
+  answer(db, { questionId: q.questionId, answer: "不用，保持原样" });
+  taskClaim(db, root, { id: task.id }, "agentA");
+
+  // 早先那次提交仍属本任务：不能因为重新领取就判成无主
+  const res = await taskClose(db, root, { id: task.id });
+  assert.equal(res.runs[0].passed, true);
+  assert.equal(getTask(db, task.id).status, "done");
+});
