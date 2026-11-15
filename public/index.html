@@ -137,6 +137,7 @@
       <div class="group-label">项目</div>
       <nav class="nav">
         <button class="navbtn active" data-nav="inbox">收件箱 <span class="count" id="n-inbox">0</span></button>
+        <button class="navbtn" data-nav="reqs">需求 <span class="count" id="n-req">0</span></button>
         <button class="navbtn" data-nav="tasks">任务 <span class="count" id="n-tasks">0</span></button>
         <button class="navbtn" data-nav="release">发布 <span class="count" id="n-rel">0</span></button>
         <button class="navbtn" data-nav="memory">记忆 <span class="count" id="n-mem">0</span></button>
@@ -180,6 +181,20 @@
         </div>
       </section>
 
+      <section class="view" data-view="reqs" hidden>
+        <div class="sectionhead">
+          <span class="eyebrow">REQUIREMENTS</span>
+          <h1>需求</h1>
+          <p class="sub">需求是一等对象：每条需求绑一条 Path（批准时冻结验收命令），这里看它的验收覆盖和落在它下面的任务。</p>
+        </div>
+        <div class="panel">
+          <table>
+            <thead><tr><th>ID</th><th>标题</th><th>状态</th><th>Path</th><th>验收覆盖</th><th>关联任务</th></tr></thead>
+            <tbody id="reqs"></tbody>
+          </table>
+        </div>
+      </section>
+
       <section class="view" data-view="tasks" hidden>
         <div class="sectionhead">
           <span class="eyebrow">TASKS</span>
@@ -191,10 +206,6 @@
             <thead><tr><th>ID</th><th>类型</th><th>标题</th><th>状态</th><th>验收</th><th>操作</th></tr></thead>
             <tbody id="tasks"></tbody>
           </table>
-        </div>
-        <div class="panel">
-          <h2>需求 / Path</h2>
-          <div id="reqs"></div>
         </div>
       </section>
 
@@ -258,7 +269,7 @@
       const $ = (id) => document.getElementById(id);
       const esc = (v) => String(v ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
       const show = (v) => ($("out").textContent = typeof v === "string" ? v : JSON.stringify(v, null, 2));
-      const VIEWS = { inbox: "收件箱", tasks: "任务", release: "发布", memory: "记忆", docs: "文档", evidence: "证据" };
+      const VIEWS = { inbox: "收件箱", reqs: "需求", tasks: "任务", release: "发布", memory: "记忆", docs: "文档", evidence: "证据" };
       let currentProject = localStorage.getItem("devcontrol.project") || "";
       const tag = (s) => `<span class="pill ${s === "doing" ? "doing" : s === "done" ? "done" : s === "parked" ? "parked" : ""}">${esc(s)}</span>`;
 
@@ -343,16 +354,37 @@
       function renderTasks(s) {
         $("tasks").innerHTML = s.tasks.map(taskRow).join("") || `<tr><td colspan="6" class="empty">还没有任务</td></tr>`;
         $("n-tasks").textContent = String(s.tasks.length);
-        const covOf = (id) => (s.digest.plan || []).find((p) => p.id === id);
-        $("reqs").innerHTML = s.requirements
+      }
+
+      function renderReqs(s) {
+        // 覆盖口径与内核一致：任务 acceptance 的 deriveFrom 指向需求验收的下标
+        const covOf = (r) => {
+          const idx = new Set();
+          for (const t of s.tasks) {
+            if (t.requirement_id !== r.id || t.status === "parked") continue;
+            for (const a of t.acceptance) if (typeof a.deriveFrom === "number") idx.add(a.deriveFrom);
+          }
+          const missing = r.acceptance.filter((_, i) => !idx.has(i));
+          return { text: `${idx.size}/${r.acceptance.length}`, missing };
+        };
+        const rows = s.requirements
           .map((r) => {
-            const p = covOf(r.id);
-            const cov = p ? `<span class="pill ${p.missing.length ? "parked" : "good"}">覆盖 ${esc(p.covered)}</span>` : "";
-            const miss = p && p.missing.length ? `<div class="mu" style="color:#a86b1a">待补拆：${p.missing.map(esc).join("；")}</div>` : "";
-            return `<div class="card" style="margin-bottom:10px"><strong>${esc(r.id)} ${esc(r.title)} ${cov}</strong>
-              <div class="mu">${r.acceptance.map((a) => esc(a)).join(" · ")}</div>${miss}</div>`;
+            const p = covOf(r);
+            const cov = `<span class="pill ${p.missing.length ? "parked" : "good"}">覆盖 ${esc(p.text)}</span>`;
+            const miss = p.missing.length ? `<div class="mu" style="color:#a86b1a">待补拆：${p.missing.map(esc).join("；")}</div>` : "";
+            const pth = s.paths.find((x) => x.requirement_id === r.id);
+            const tasks = s.tasks
+              .filter((t) => t.requirement_id === r.id)
+              .map((t) => `<span class="pill ${t.status === "done" ? "done" : t.status === "doing" ? "doing" : ""}">${esc(t.id)}</span>`)
+              .join(" ");
+            return `<tr><td class="mono">${esc(r.id)}</td><td>${esc(r.title)}</td><td>${tag(r.status)}</td>
+              <td class="mono">${pth ? esc(pth.id) : "—"}</td>
+              <td>${cov}${miss}<div class="mu">${r.acceptance.map((a) => esc(a)).join(" · ")}</div></td>
+              <td>${tasks || `<span class="mu">—</span>`}</td></tr>`;
           })
-          .join("") || `<div class="empty">没有需求</div>`;
+          .join("");
+        $("reqs").innerHTML = rows || `<tr><td colspan="6" class="empty">还没有需求</td></tr>`;
+        $("n-req").textContent = String(s.requirements.length);
       }
 
       function renderReleases(s) {
@@ -450,6 +482,7 @@
         renderMetrics(s.digest);
         renderInbox(s);
         renderTasks(s);
+        renderReqs(s);
         renderReleases(s);
         renderMemory(s);
         renderDocs(s);
