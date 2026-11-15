@@ -200,6 +200,16 @@ function isApprove(c) {
   );
 }
 
+// 内核自己造的提交（approve / amend / init）：不参与归属判定，永远不算无主。
+// init 会在任务进行中提交配置文件，按普通提交判会被判「无主」并把收口堵死；
+// 但它只认内核托管的那些文件，防止有人用这个提交信息夹带别的改动。
+const INIT_MANAGED = [".gitignore", ".gitattributes", "AGENTS.md", "CLAUDE.md", ".mcp.json", ".cursor/", "opencode.json", ".agents/", ".devcontrol/contracts/"];
+function isKernelCommit(c) {
+  if (c.authorEmail !== "devcontrol@localhost") return false;
+  const subject = c.subject ?? "";
+  if (/^chore\(devcontrol\): (approve|amend)\b/.test(subject)) return true;
+  return /^chore\(devcontrol\): init$/.test(subject) && c.files.length > 0 && c.files.every((f) => INIT_MANAGED.some((p) => f === p || f.startsWith(p)));
+}
 function decorate(root, commits) {
   return commits.map((c) => ({
     ...c,
@@ -363,7 +373,7 @@ export async function taskClose(db, root, input, opts = {}) {
         });
     };
     // 伪造的 approve 提交（身份/前缀/路径都对，但内核从没写过这个 sha）按无主处理
-    const unowned = commits.filter((c) => (!isApprove(c) || fakeApprove(c)) && !owned.includes(c) && !validOwner(c));
+    const unowned = commits.filter((c) => (!isKernelCommit(c) || fakeApprove(c)) && !owned.includes(c) && !validOwner(c));
     if (unowned.length) fail("E_UNOWNED_COMMIT", `${unowned.length} 个无主提交`, { commits: unowned.map((c) => c.sha) });
     if (!owned.length) fail("E_NO_DELIVERY", "区间内没有本任务的提交", { hint: "devcontrol commit -m ..." });
 
