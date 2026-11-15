@@ -73,6 +73,23 @@ const SCHEMA = {
 
 /** 动作分发：SDK 只负责协议，业务全在这里 */
 export async function dispatch(db, root, args, ctx = {}) {
+  // 参数缺失在这里就拦下：交给 SQLite 绑定只会抛 ERR_INVALID_ARG_TYPE，把数据库内部细节泄给 Agent
+  const REQUIRED = {
+    "task.create": ["requirementId", "pathId", "title"],
+    "task.claim": ["id"],
+    "task.renew": ["id"],
+    ask: ["taskId", "question"],
+    "bug.report": ["title", "symptom"],
+    "release.create": ["title"],
+    "release.plan": ["id"],
+    "release.ship": ["id"],
+  };
+  const missing = (REQUIRED[args.action] ?? []).filter((k) => args[k] === undefined || args[k] === null || args[k] === "");
+  if (missing.length) {
+    throw Object.assign(new Error(`${args.action} 缺少参数：${missing.join("、")}（照 bootstrap.next.args 原样传即可）`), {
+      code: "INVALID_ARGUMENT",
+    });
+  }
   switch (args.action) {
     case "bootstrap": {
       const doing = db.prepare("SELECT * FROM tasks WHERE status='doing' ORDER BY id LIMIT 1").get();

@@ -70,27 +70,50 @@ export function bootstrap(db, root, extra = {}) {
   for (const t of parked) blockers.push({ code: "E_PARKED", fix: `${t.id} 已 parked，等 Owner reopen` });
   for (const t of blocked) blockers.push({ code: "E_DEP_OPEN", fix: `${t.id} 等前置：${t.dependsOn.join(", ")}` });
 
-  // 内核自己排优先级：收口 > 领取（依赖已满足）> 补拆（验收没被覆盖）> 等阻塞
-  const next = current
-    ? { action: "task.close", args: { id: current.id }, why: `继续做完 ${current.id} 并收口` }
-    : ready[0]
-      ? { action: "task.claim", args: { id: ready[0].id }, why: `依赖已满足，下一个可领取：${ready[0].title}` }
-      : gaps.length
-        ? {
-            action: "task.create",
-            args: {
-              requirementId: gaps[0].id,
-              acceptance: [{ deriveFrom: gaps[0].missing[0].idx, assertion: gaps[0].missing[0].text }],
-            },
-            why: `需求 ${gaps[0].id} 还有 ${gaps[0].missing.length} 条验收没有任务覆盖：${gaps[0].missing[0].text}`,
-          }
-        : blocked.length
-          ? { action: "wait", args: {}, why: `${blocked[0].id} 等前置 ${blocked[0].dependsOn.join(", ")} 完成`, blocked: blocked.map((t) => t.id) }
-          : !reqs.some((r) => ["approved", "building"].includes(r.status))
-            ? { action: "wait", args: {}, why: reqs.some((r) => r.status === "draft") ? "等 Owner 批准需求" : "还没有已批准的需求，等 Owner 收件并批准" }
-            : !paths.some((p) => p.status === "approved")
-              ? { action: "wait", args: {}, why: "还没有已批准的 Path，等 Owner 批准" }
-              : { action: "task.create", args: {}, why: "没有待办任务，去拆新任务" };
+  // 内核自己排优先级：收口 > 领取（依赖已满足）> 补拆（验收没被覆盖）> 等阻塞。
+  // next.args 必须能原样执行：Agent 照抄就成功，不要逼它自己补 pathId/kind/scope。
+  const approvedPath = (reqId) =>
+    paths.find((p) => p.status === "approved" && p.requirement_id === reqId) ?? paths.find((p) => p.status === "approved");
+  const next = (() => {
+    if (current) return { action: "task.close", args: { id: current.id }, why: `继续做完 ${current.id} 并收口` };
+    if (ready[0]) return { action: "task.claim", args: { id: ready[0].id }, why: `依赖已满足，下一个可领取：${ready[0].title}` };
+    if (gaps.length) {
+      const gap = gaps[0];
+      const pth = approvedPath(gap.id);
+      if (!pth) return { action: "wait", args: {}, why: `需求 ${gap.id} 没有已批准的 Path，等 Owner 批准` };
+      return {
+        action: "task.create",
+        args: {
+          requirementId: gap.id,
+          pathId: pth.id,
+          kind: "feature",
+          title: `覆盖验收：${gap.missing[0].text}`,
+          scope: pth.allowedPaths,
+          acceptance: [{ deriveFrom: gap.missing[0].idx, assertion: gap.missing[0].text }],
+        },
+        why: `需求 ${gap.id} 还有 ${gap.missing.length} 条验收没有任务覆盖：${gap.missing[0].text}`,
+      };
+    }
+    if (blocked.length) return { action: "wait", args: {}, why: `${blocked[0].id} 等前置 ${blocked[0].dependsOn.join(", ")} 完成`, blocked: blocked.map((t) => t.id) };
+    if (!reqs.some((r) => ["approved", "building"].includes(r.status))) {
+      return { action: "wait", args: {}, why: reqs.some((r) => r.status === "draft") ? "等 Owner 批准需求" : "还没有已批准的需求，等 Owner 收件并批准" };
+    }
+    if (!paths.some((p) => p.status === "approved")) return { action: "wait", args: {}, why: "还没有已批准的 Path，等 Owner 批准" };
+    const req = reqs.find((r) => ["approved", "building"].includes(r.status));
+    const pth = approvedPath(req.id);
+    return {
+      action: "task.create",
+      args: {
+        requirementId: req.id,
+        pathId: pth.id,
+        kind: "feature",
+        title: "新任务：改一个能说清的标题",
+        scope: pth.allowedPaths,
+        acceptance: [{ deriveFrom: 0, assertion: req.acceptance[0] }],
+      },
+      why: "没有待办任务，去拆新任务",
+    };
+  })();
 
   const recent = db.prepare("SELECT at, action, task_id, detail FROM events ORDER BY id DESC LIMIT 3").all().map((e) => ({ at: e.at, action: e.action, taskId: e.task_id, detail: e.detail }));
   return {
