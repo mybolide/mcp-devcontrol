@@ -18,10 +18,10 @@ export function doctor(db, root) {
   }
   for (const t of listTasks(db)) {
     if (t.status === "done") {
-      const ev = db.prepare("SELECT 1 FROM events WHERE task_id=? AND action='close'").get(t.id);
-      if (!ev) items.push({ severity: "error", code: "GHOST_DONE", taskId: t.id, detail: "done 但没有 close 事件（疑似直接改库）" });
+      const closed = db.prepare("SELECT 1 FROM events WHERE task_id=? AND action IN ('close','override')").get(t.id);
+      if (!closed) items.push({ severity: "error", code: "GHOST_DONE", taskId: t.id, detail: "标记完成但没有任何收口记录（疑似直接改库）" });
       if (t.closed_by === "override" || t.closed_by === "force-close") {
-        items.push({ severity: "warn", code: "OVERRIDDEN", taskId: t.id, detail: `override 收口（${t.closed_by}）` });
+        items.push({ severity: "warn", code: "OVERRIDDEN", taskId: t.id, detail: "这条是 Owner 手下放行收口，没有跑验收" });
       }
     }
     if (t.status === "doing" && t.claim_expires_at && Date.parse(t.claim_expires_at) < Date.now()) {
