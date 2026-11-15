@@ -300,8 +300,10 @@ export async function taskClose(db, root, input, opts = {}) {
     const validOwner = (c) => {
       if (!c.trailer || !taskExists(db, c.trailer)) return false;
       const o = getTask(db, c.trailer);
-      // 已收口的任务只认它 close 时登记过的提交，防止事后用 --date 把越权提交"过继"给已完成任务
-      if (o.status === "done") {
+      // 已收口的任务只认它 close 时登记过的提交，防止事后用 --date 把越权提交"过继"给已完成任务。
+      // force-close 是 Owner 越过门禁接管，不走 close 的登记流程；若仍按 patch_ids 判定，
+      // 它的提交就会把区间内之后所有任务的收口堵死（表现为"无主提交"）。这里退回时间窗+作者+scope。
+      if (o.status === "done" && o.closed_by !== "force-close") {
         return Boolean(c.patch && db.prepare("SELECT 1 FROM patch_ids WHERE patch_id=? AND task_id=?").get(c.patch, o.id));
       }
       const at = Date.parse(c.authorTime);
