@@ -101,6 +101,8 @@
       table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
       th { text-align: left; font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: #6b7c92; font-weight: 700; padding: 8px 10px; border-bottom: 1px solid #e6ebf2; }
       td { padding: 10px; border-bottom: 1px solid #eef1f5; color: #26364a; vertical-align: top; }
+      th { white-space: nowrap; }
+      td.nw { white-space: nowrap; }
       tr:last-child td { border-bottom: 0; }
       code, .mono { font-family: var(--font-mono); font-size: 12.5px; color: #33465d; }
       .pill { display: inline-block; white-space: nowrap; font-size: 11.5px; font-weight: 700; padding: 2px 8px; border-radius: 999px; background: #eef2f7; color: #536880; }
@@ -384,9 +386,9 @@
       }
 
       function taskRow(t) {
-        return `<tr><td class="mono">${esc(t.id)}</td><td>${esc(KIND_TEXT[t.kind] ?? t.kind)}</td><td>${esc(t.title)}</td><td>${tag(t.status)}</td>
+        return `<tr><td class="mono nw">${esc(t.id)}</td><td class="nw">${esc(KIND_TEXT[t.kind] ?? t.kind)}</td><td>${esc(t.title)}</td><td class="nw">${tag(t.status)}</td>
           <td class="mu">${t.acceptance.map((a) => esc(a.assertion)).join("<br>")}</td>
-          <td><div class="row">
+          <td class="nw"><div class="row">
             <button class="btn" data-handoff="${t.id}">交接卡</button>
             ${t.status === "done" || t.status === "parked" ? `<button class="btn danger" data-reopen="${t.id}">打回</button>` : ""}
             ${t.status === "doing" ? `<button class="btn danger" data-override="${t.id}">放行</button>` : ""}
@@ -440,10 +442,10 @@
                 ? `<button class="btn primary" data-decide="${esc(b.id)}" data-decision="accept">采纳</button>
                    <button class="btn danger" data-decide="${esc(b.id)}" data-decision="reject">驳回</button>`
                 : `<span class="mu">已裁决</span>`;
-            return `<tr><td class="mono">${esc(b.id)}</td><td>${esc(b.severity)}</td><td>${esc(b.title)}</td>
-              <td>${tag(b.status)}</td>
+            return `<tr><td class="mono nw">${esc(b.id)}</td><td class="nw">${esc(b.severity)}</td><td>${esc(b.title)}</td>
+              <td class="nw">${tag(b.status)}</td>
               <td>${esc(b.symptom)}<div class="mu">复现：${repro}</div></td>
-              <td>${fix}</td><td>${act}</td></tr>`;
+              <td class="nw">${fix}</td><td class="nw">${act}</td></tr>`;
           })
           .join("");
         $("bugs").innerHTML = rows || `<tr><td colspan="7" class="empty">还没有 Bug</td></tr>`;
