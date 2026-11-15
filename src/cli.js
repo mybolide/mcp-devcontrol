@@ -30,20 +30,8 @@ import { startConsole } from "./console.js";
 import { runMcp } from "./mcp.js";
 import { VERSION } from "./protocol.js";
 import { openDb as _openDb } from "./db.js";
+import { installAgentFiles, SKILL_REL } from "./skill.js";
 
-const AGENTS_BLOCK = `<!-- devcontrol:begin -->
-开工先跑 \`devcontrol status\`：它返回的 next 就是下一件事，不要自己挑。
-改代码前必须 task.claim；不许修改 acceptance，不许自选命令；只改 scope 内的文件。
-改完 \`devcontrol commit -m "..."\`（只提交 scope 内文件），再 \`devcontrol close\`（内核在干净检出里重跑验收）。
-遇到歧义用 ask，不要猜。
-控制台地址在 \`devcontrol status\` 的 console 字段；MCP 连接时会自动拉起，挂掉会自动重建。
-<!-- devcontrol:end -->`;
-
-// 纯 CLI 模式（不注册 MCP）时，纪律块改成 CLI 说法
-const AGENTS_BLOCK_CLI = AGENTS_BLOCK.replace(
-  "控制台地址在 `devcontrol status` 的 console 字段；MCP 连接时会自动拉起，挂掉会自动重建。",
-  "控制台：需要时自己起 `devcontrol serve`（本模式不注册 MCP，不会自动拉起）。",
-);
 
 const DEVCONTROL_BIN = fileURLToPath(new URL("../bin/devcontrol.js", import.meta.url));
 
@@ -216,15 +204,15 @@ export function cmdInit(args) {
         { mcp: { "devcontrol": { type: "local", command: [process.execPath, DEVCONTROL_BIN, "mcp"], environment: { DEVCONTROL_ROOT: root } } } },
         root,
       );
-  const agentsFile = path.join(root, "AGENTS.md");
-  const agents = fs.existsSync(agentsFile) ? fs.readFileSync(agentsFile, "utf8") : "";
-  if (!agents.includes("<!-- devcontrol:begin -->")) {
-    fs.writeFileSync(agentsFile, `${agents}${agents ? "\n" : ""}${noMcp ? AGENTS_BLOCK_CLI : AGENTS_BLOCK}\n`, "utf8");
-  }
+  // Agent 侧安装物：规范 Skill 只有一份，其余都是指针（照 v5 的做法，避免多份内容各自漂移）
+  const agentFiles = installAgentFiles(root, { noMcp });
   // init 自己写的配置要自己提交：否则第一次 close 会被 E_DIRTY_SCOPE 拦住
-  const managed = [".gitignore", ".gitattributes", "AGENTS.md", ...(noMcp ? [] : [".mcp.json", ".cursor/mcp.json", "opencode.json"])].filter((f) =>
-    fs.existsSync(path.join(root, f)),
-  );
+  const managed = [
+    ".gitignore",
+    ".gitattributes",
+    ...Object.keys(agentFiles),
+    ...(noMcp ? [] : [".mcp.json", ".cursor/mcp.json", "opencode.json"]),
+  ].filter((f) => fs.existsSync(path.join(root, f)));
   let initCommit = null;
   try {
     initCommit = commitFiles(root, managed, "chore(devcontrol): init");
@@ -236,7 +224,7 @@ export function cmdInit(args) {
 - 模式：${gitMode ? "git（完整门禁）" : "weak（无 git：只跑验收，无归属校验）"}
 ${unignored ? "- .gitignore：已移除整体忽略 .devcontrol/ 的规则（契约必须能进 git）\n" : ""}- Path 草稿 ${created} 条（都还是 draft，需要 Owner 批准）
 - 客户端配置：.mcp.json ${label(wroteMcp)} / .cursor/mcp.json ${label(wroteCursor)} / opencode.json ${label(wroteOpencode)}
-- AGENTS.md 标记块已就绪
+- Agent 说明：${SKILL_REL}（规范）+ CLAUDE.md / .cursor/rules / AGENTS.md（指针）
 - 控制台：随 MCP 连接自动启动并复用（Owner 也可以手动 devcontrol serve）
 - 托管文件：${initCommit ? `已提交 chore(devcontrol): init @ ${initCommit.slice(0, 8)}` : "无变化"}
 ${noMcp ? "- 纯 CLI 模式：没有注册 MCP，Agent 直接用 devcontrol status / commit / close；需要控制台时自己 devcontrol serve" : `- Codex 需要手动加：\n${CODEX_SNIPPET}`}`);
