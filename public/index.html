@@ -269,7 +269,7 @@
       async function owner(action, payload) {
         const res = await api("/api/owner", { action, payload, project: currentProject || undefined });
         show(res);
-        if (res.ok) await tick();
+        if (res.ok) await tick(true);
         return res;
       }
       function switchView(view) {
@@ -408,10 +408,34 @@
           )
           .join("") || `<tr><td colspan="7" class="empty">还没有重跑记录</td></tr>`;
       }
+      let lastSig = "";
+      // 轮询会重绘整个视图：先记下正在输入的控件，重绘后把值和光标放回去
+      function focusSnapshot() {
+        const el = document.activeElement;
+        if (!el || !el.id || !/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)) return null;
+        return { id: el.id, value: el.value, start: el.selectionStart, end: el.selectionEnd };
+      }
+      function restoreFocus(snap) {
+        if (!snap) return;
+        const el = $(snap.id);
+        if (!el) return;
+        if (el.value !== snap.value) el.value = snap.value;
+        el.focus();
+        try {
+          el.setSelectionRange(snap.start, snap.end);
+        } catch {
+          /* select 不支持 setSelectionRange */
+        }
+      }
 
-      async function load() {
+      async function load(force = false) {
         const q = currentProject ? `?project=${encodeURIComponent(currentProject)}` : "";
         const s = await api(`/api/state${q}`);
+        const sig = JSON.stringify([s.digest, s.requirements, s.paths, s.tasks, s.bugs, s.questions, s.memories, s.memoriesActive, s.runs, s.releases, s.docs]);
+        // 数据没变就不重绘：否则每 4 秒把正在输入的内容和滚动位置冲掉
+        if (!force && sig === lastSig) return s;
+        lastSig = sig;
+        const snap = focusSnapshot();
         if (s.project?.root) currentProject = s.project.root;
         const switcher = $("project-switch");
         if ((s.projects || []).length > 1) {
@@ -430,13 +454,14 @@
         renderMemory(s);
         renderDocs(s);
         renderEvidence(s);
+        restoreFocus(snap);
         return s;
       }
 
-      async function tick() {
+      async function tick(force = false) {
         if (document.hidden) return;
         try {
-          await load();
+          await load(force);
           $("conn").textContent = `已连接 · ${new Date().toLocaleTimeString("zh-CN", { hour12: false })}`;
           $("conn").classList.remove("off");
         } catch {
@@ -450,7 +475,7 @@
         if (nav) return switchView(nav.dataset.nav);
         const b = e.target.closest("button");
         if (!b) return;
-        if (b.id === "refresh") return tick();
+        if (b.id === "refresh") return tick(true);
         if (b.id === "create") {
           const kind = $("kind").value;
           const payload =
@@ -487,7 +512,7 @@
       $("project-switch").addEventListener("change", (e) => {
         currentProject = e.target.value;
         localStorage.setItem("devcontrol.project", currentProject);
-        tick();
+        tick(true);
       });
 
       switchView("inbox");
