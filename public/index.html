@@ -283,10 +283,36 @@
     <script>
       const $ = (id) => document.getElementById(id);
       const esc = (v) => String(v ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-      const show = (v) => ($("out").textContent = typeof v === "string" ? v : JSON.stringify(v, null, 2));
+      const ACTION_TEXT = {
+        intake: "已登记",
+        approve: "已批准",
+        amend: "已更新契约",
+        adjust: "已调整",
+        reopen: "已打回重做",
+        decide: "已裁决",
+        answer: "已回答",
+        override: "已放行",
+        handoff: "已生成交接卡",
+        "memory.promote": "已收进记忆",
+        "memory.edit": "已收进记忆",
+        "memory.drop": "已丢弃",
+        "release.ship": "已发布",
+      };
+      const show = (v, action) => {
+        const box = $("out");
+        if (typeof v === "string") return (box.textContent = v);
+        if (v && v.ok === false) {
+          box.textContent = `没成功：${v.message ?? "未知原因"}\n\n（技术细节：${v.code ?? "E_INTERNAL"}）`;
+          return;
+        }
+        const head = v?.ok === true ? ACTION_TEXT[action] ?? "已完成" : "结果";
+        box.textContent = `${head}\n\n${JSON.stringify(v?.result ?? v, null, 2)}`;
+      };
       const VIEWS = { inbox: "收件箱", reqs: "需求", bugs: "Bug", tasks: "任务", release: "发布", memory: "记忆", docs: "文档", evidence: "证据" };
       let currentProject = localStorage.getItem("devcontrol.project") || "";
-      const tag = (s) => `<span class="pill ${s === "doing" ? "doing" : s === "done" ? "done" : s === "parked" ? "parked" : ""}">${esc(s)}</span>`;
+      const STATUS_TEXT = { backlog: "待办", doing: "进行中", done: "已完成", parked: "搁置", new: "待裁决", fixing: "修复中", closed: "已关闭", draft: "草稿", approved: "已批准", building: "开发中", shipped: "已发布" };
+      const KIND_TEXT = { feature: "功能", bugfix: "修复", chore: "杂务", test: "测试" };
+      const tag = (s) => `<span class="pill ${s === "doing" ? "doing" : s === "done" ? "done" : s === "parked" ? "parked" : ""}">${esc(STATUS_TEXT[s] ?? s)}</span>`;
 
       async function api(path, body) {
         const res = await fetch(path, body ? { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) } : {});
@@ -294,7 +320,7 @@
       }
       async function owner(action, payload) {
         const res = await api("/api/owner", { action, payload, project: currentProject || undefined });
-        show(res);
+        show(res, action);
         if (res.ok) await tick(true);
         return res;
       }
@@ -358,7 +384,7 @@
       }
 
       function taskRow(t) {
-        return `<tr><td class="mono">${esc(t.id)}</td><td>${esc(t.kind)}</td><td>${esc(t.title)}</td><td>${tag(t.status)}</td>
+        return `<tr><td class="mono">${esc(t.id)}</td><td>${esc(KIND_TEXT[t.kind] ?? t.kind)}</td><td>${esc(t.title)}</td><td>${tag(t.status)}</td>
           <td class="mu">${t.acceptance.map((a) => esc(a.assertion)).join("<br>")}</td>
           <td><div class="row">
             <button class="btn" data-handoff="${t.id}">交接卡</button>
@@ -511,9 +537,11 @@
         } else {
           switcher.hidden = true;
         }
-        $("project").textContent = `· ${s.project?.name ?? ""} · ${s.digest.requirement?.id ?? ""} ${s.digest.path?.id ?? ""}`.trim();
-        $("head").textContent = s.digest.head ? `HEAD ${s.digest.head}` : "HEAD —";
-        $("meta").textContent = `${s.digest.path?.allowed?.join(", ") ?? ""} · r${s.digest.task?.reviewRound ?? 0}`;
+        const req = s.digest.requirement;
+        const pth = s.digest.path;
+        $("project").textContent = `· ${s.project?.name ?? ""}${req ? ` · 需求 ${req.id}` : ""}${pth ? ` · Path ${pth.id}` : ""}`.trim();
+        $("head").textContent = s.digest.head ? `当前版本 ${s.digest.head}` : "还没有提交";
+        $("meta").textContent = `${pth ? `改动范围：${pth.allowed?.join("、") || "整个仓库"}` : "还没有 Path"}${s.digest.task?.reviewRound ? ` · 返工过 ${s.digest.task.reviewRound} 次` : ""}`;
         renderMetrics(s.digest);
         renderInbox(s);
         renderTasks(s);
@@ -563,9 +591,13 @@
         }
         if (b.dataset.reopen) return owner("reopen", { taskId: b.dataset.reopen, reason: prompt("打回理由") ?? "" });
         if (b.dataset.override) {
-          const code = prompt("放行哪个拦截？E_ASSERTION_FAILED / E_DIFF_BUDGET / E_DEP_OR_TEST_TOUCH / E_TEST_CONFIG_TOUCH / E_SCOPE_VIOLATION", "E_ASSERTION_FAILED");
+          const picked = prompt(
+            "要手下放行哪一种拦截？输入序号\n1 验收没过\n2 改动超出预算\n3 动了依赖或测试文件\n4 动了测试配置\n5 改到范围之外的文件",
+            "1",
+          );
+          const code = { "1": "E_ASSERTION_FAILED", "2": "E_DIFF_BUDGET", "3": "E_DEP_OR_TEST_TOUCH", "4": "E_TEST_CONFIG_TOUCH", "5": "E_SCOPE_VIOLATION" }[String(picked ?? "").trim()];
           if (!code) return;
-          const reason = prompt("override 理由（≥30 字，写进事件日志）");
+          const reason = prompt("为什么放行？（至少 30 字，会记进事件日志）");
           if (!reason) return;
           return owner("override", { taskId: b.dataset.override, code, mode: "waive", reason });
         }
