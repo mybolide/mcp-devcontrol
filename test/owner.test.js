@@ -137,8 +137,14 @@ test("Owner 动作：adjust / handoff / override / reopen / decide", () => {
   assert.equal(back.review_round, 0);
 
   const bug = reqIntake(db, root, { type: "bug", title: "列表为空", repro: ["打开页面"] });
-  bugDecide(db, { bugId: bug.id, decision: "accept" });
-  assert.equal(listBugs(db).find((b) => b.id === bug.id).status, "closed");
+  // 采纳 = 要修（进修复队列）；驳回 / wontfix 才是 closed
+  assert.equal(bugDecide(db, { bugId: bug.id, decision: "accept" }).status, "fixing");
+  assert.equal(listBugs(db).find((b) => b.id === bug.id).status, "fixing");
+  // 已裁决的 Bug 不能再裁决一次
+  assert.throws(() => bugDecide(db, { bugId: bug.id, decision: "reject" }), (e) => e.code === "E_ILLEGAL_TRANSITION");
+  const bug2 = reqIntake(db, root, { type: "bug", title: "保存报 500", repro: ["点保存"] });
+  bugDecide(db, { bugId: bug2.id, decision: "reject" });
+  assert.equal(listBugs(db).find((b) => b.id === bug2.id).status, "closed");
   assert.throws(() => taskReopen(db, { taskId: "T-999", reason: "x" }), (e) => e.code === "NOT_FOUND");
 });
 
