@@ -128,7 +128,8 @@ export function taskClaim(db, root, input, actor = "agent") {
       const d = getTask(db, dep);
       if (!d || d.status !== "done") fail("E_DEP_OPEN", `前置 ${dep} 未完成`, { dep, status: d?.status ?? "missing" });
     }
-    const doing = db.prepare("SELECT * FROM tasks WHERE status='doing' AND id<>? AND closing_token IS NULL").all().map((r) => JSON.parse(r.scope_json));
+    // 注意：这里必须传 t.id，否则 id<>NULL 恒不成立，相交检查会形同虚设（并发探针发现的）
+    const doing = db.prepare("SELECT * FROM tasks WHERE status='doing' AND id<>? AND closing_token IS NULL").all(t.id).map((r) => JSON.parse(r.scope_json));
     for (const other of doing) if (intersect(t.scope, other)) fail("E_SCOPE_OVERLAP", "与其他在办任务 scope 相交", { conflict: other });
     const mine = db.prepare("SELECT id FROM tasks WHERE status='doing' AND claimed_by=? AND id<>?").all(actor, t.id);
     if (mine.length) fail("E_WIP_LIMIT", `你手上还有 ${mine[0].id}`, { holding: mine[0].id });
