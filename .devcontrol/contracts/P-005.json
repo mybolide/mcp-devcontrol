@@ -1,0 +1,13 @@
+{
+  "pathId": "P-005",
+  "requirementId": "FR-001",
+  "allowedPaths": [
+    "src"
+  ],
+  "allowNewFiles": false,
+  "testCmds": [
+    "npm test"
+  ],
+  "budgetLines": 1200,
+  "note": "批准时冻结；Agent 只读，改动必须由 Owner 重新批准"
+}
