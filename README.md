@@ -76,7 +76,7 @@ MCP 只有一个工具 `devcontrol`，十三个动作（`wait` 是 `next` 告诉
 | `bug.report` | 报 Bug（现象 + 复现步骤） | 不能直接改代码 |
 | `ask` | 歧义就问，不猜 | 问完任务 `parked`，Owner 回答后回到队列 |
 | `memory.write` | 随时记一条通用经验（坑 / 解法 / 约定 / 片段） | 不合格会进隔离区并给出改写模板 |
-| `memory.search` | 查通用记忆（跨项目） | 只读；命中累计 `hits` |
+| `memory.search` | 查本项目记忆 | 只读；命中累计 `hits` |
 | `release.create` / `release.plan` / `release.ship` | 发布：一组任务全 done 才能 ship | 空发布 / 有未完成任务都会被拦 |
 
 CLI 等价（不接 MCP 的客户端用这条）：
@@ -141,11 +141,11 @@ MCP 连接就是控制台的生命周期触发器。`runMcp` 启动时调用 `en
 
 开关：`DEVCONTROL_CONSOLE=0` 关掉自动拉起；`DEVCONTROL_PORT=<n>` 换起始端口；`DEVCONTROL_RESTART_GRACE_MS=<ms>` 调宽限期。
 
-### 3.4 通用记忆（memory）
+### 3.4 项目记忆（memory）
 
-**在 A 项目踩过的坑，做 B 项目时要能被检索出来**——这是 v5 memory 的真实价值，v6 保留，但换了实现：
+**记忆是「这个项目自己的」**：踩过的坑、定下的约定、用过的解法，跟着仓库走。跨项目共享是以后同步到远程的事，不是本地默认行为。
 
-- 真源是 `~/.devcontrol/memory.db`（一张 `pitfalls` 表）；Qdrant 只是**可重建的向量索引**，挂了不丢数据。
+- 真源是本仓库的 `.devcontrol/memory.db`（一张 `pitfalls` 表，不进 git）；Qdrant 只是**可重建的向量索引**，挂了不丢数据。
 - 写：`memory.write` 随时可用（不要求有任务）；`task.close` 失败过必须带 `resolvedBy`（否则 `E_NEED_RESOLUTION`），内核自动记一条 pitfall。
 - **不是所有问题都配进库**：内容太短、没有可观测信号、解法是一次性手滑（拼写/漏文件/改名）、写死本项目私有路径 → 进**隔离区**（`candidate`），不建索引、不召回；`devcontrol memory promote M-xxx` 才晋升。标题相同自动去重。
 - 读：`bootstrap.memories` 注入当前任务命中的 top 3；`memory.search` 显式查。
@@ -156,7 +156,7 @@ MCP 连接就是控制台的生命周期触发器。`runMcp` 启动时调用 `en
 
 ```bash
 devcontrol memory status                    # 有多少坑、索引状态、连的哪个 embedding/Qdrant
-devcontrol memory search "worktree 提交丢失"  # 跨项目检索
+devcontrol memory search "worktree 提交丢失"  # 在本项目记忆里检索
 devcontrol close --resolved-by "r2-wt 是 detached，提交后要 cherry-pick 回主分支"
 devcontrol memory reindex                   # 向量库重建（数据不丢）
 devcontrol release create "v0.1" --target 2026-12-01   # 发布：plan 挂任务，ship 全部 done 才放行
@@ -167,8 +167,8 @@ devcontrol release list
 | env | 默认 |
 |---|---|
 | `MEMORY_EMBEDDING_PROVIDER` / `MEMORY_EMBEDDING_URL` / `MEMORY_EMBEDDING_MODEL` | `ollama` / `http://127.0.0.1:11434` / `nomic-embed-text` |
-| `MEMORY_QDRANT_URL` / `MEMORY_QDRANT_COLLECTION` | `http://127.0.0.1:6333` / `devcontrol_memory` |
-| `DEVCONTROL_MEMORY` / `DEVCONTROL_MEMORY_DB` | `on` / `~/.devcontrol/memory.db` |
+| `MEMORY_QDRANT_URL` / `MEMORY_QDRANT_COLLECTION` | `http://127.0.0.1:6333` / `devcontrol_memory_<项目路径前8位>` |
+| `DEVCONTROL_MEMORY` / `DEVCONTROL_MEMORY_DB` | `on` / `<项目>/.devcontrol/memory.db` |
 
 ## 4. 拦截点（这就是"法"）
 

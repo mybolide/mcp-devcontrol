@@ -133,7 +133,7 @@ export async function dispatch(db, root, args, ctx = {}) {
       return result;
     }
     case "memory.search": {
-      const cfg = memoryConfig();
+      const cfg = memoryConfig(process.env, root);
       const mem = openMemory(cfg);
       try {
         return await searchMemories(cfg, mem, { query: String(args.query ?? ""), limit: Number(args.limit ?? 5) });

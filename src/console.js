@@ -43,9 +43,9 @@ const OWNER_ACTIONS = {
   answer: (db, root, p) => answer(db, p),
   override: (db, root, p) => override(db, p),
   handoff: (db, root, p) => handoff(db, p),
-  "memory.promote": async (db, root, p) => promoteMemory(memoryConfig(), p.id),
-  "memory.edit": async (db, root, p) => editMemory(memoryConfig(), p.id, { title: p.title, body: p.body }, { promote: true }),
-  "memory.drop": (db, root, p) => ({ dropped: softDeleteMemory(memoryConfig(), p.id) }),
+  "memory.promote": async (db, root, p) => promoteMemory(memoryConfig(process.env, root), p.id),
+  "memory.edit": async (db, root, p) => editMemory(memoryConfig(process.env, root), p.id, { title: p.title, body: p.body }, { promote: true }),
+  "memory.drop": (db, root, p) => ({ dropped: softDeleteMemory(memoryConfig(process.env, root), p.id) }),
   "release.ship": (db, root, p) => shipRelease(db, { id: p.id }),
 };
 
@@ -147,8 +147,8 @@ export async function startConsole(args) {
           return { ...d, drift };
         }),
         questions: listQuestions(active.db),
-        memories: listMemories(memoryConfig(), 30, null, "candidate"),
-        memoriesActive: listMemories(memoryConfig(), 30, null, "active"),
+        memories: listMemories(memoryConfig(process.env, active.root), 30, null, "candidate"),
+        memoriesActive: listMemories(memoryConfig(process.env, active.root), 30, null, "active"),
         runs: listRuns(active.db, 30),
         releases: listReleases(active.db),
       });

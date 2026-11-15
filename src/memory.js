@@ -37,18 +37,22 @@ export const MEMORY_KINDS = ["pitfall", "howto", "decision", "preference", "snip
 
 const now = () => new Date().toISOString();
 
-export function memoryConfig(env = process.env) {
+export function memoryConfig(env = process.env, root = process.env.DEVCONTROL_ROOT || process.cwd()) {
   const provider = String(env.MEMORY_EMBEDDING_PROVIDER ?? "ollama").trim().toLowerCase();
   const isOpenAI = provider === "openai" || provider === "openai-compatible";
+  // 记忆跟着仓库走：真源是本项目的 .devcontrol/memory.db（不进 git），不是用户级共享库，也不写远程
+  const projectRoot = path.resolve(root);
+  const projectTag = crypto.createHash("sha1").update(projectRoot).digest("hex").slice(0, 8);
   return {
     enabled: String(env.DEVCONTROL_MEMORY ?? "on").toLowerCase() !== "off",
-    dbFile: env.DEVCONTROL_MEMORY_DB ?? path.join(os.homedir(), ".devcontrol", "memory.db"),
+    root: projectRoot,
+    dbFile: env.DEVCONTROL_MEMORY_DB ?? path.join(projectRoot, ".devcontrol", "memory.db"),
     provider: isOpenAI ? "openai" : "ollama",
     embeddingUrl: String(env.MEMORY_EMBEDDING_URL ?? (isOpenAI ? "http://127.0.0.1:8000/v1" : "http://127.0.0.1:11434")).replace(/\/+$/, ""),
     model: env.MEMORY_EMBEDDING_MODEL ?? (isOpenAI ? "text-embedding-3-small" : "nomic-embed-text"),
     apiKey: env.MEMORY_EMBEDDING_API_KEY ?? "",
     qdrantUrl: String(env.MEMORY_QDRANT_URL ?? "http://127.0.0.1:6333").replace(/\/+$/, ""),
-    collection: env.MEMORY_QDRANT_COLLECTION ?? "devcontrol_memory",
+    collection: env.MEMORY_QDRANT_COLLECTION ?? `devcontrol_memory_${projectTag}`,
     timeoutMs: Number(env.MEMORY_TIMEOUT_MS ?? 2500),
     minScore: Number(env.MEMORY_MIN_SCORE ?? 0.55),
     dedupeScore: Number(env.MEMORY_DEDUPE_SCORE ?? 0.9),
@@ -501,7 +505,7 @@ export async function recallMemories(root, task = null, { limit = 3 } = {}) {
 }
 
 /** task.close 的便捷入口：失败过的任务自动记一条 pitfall（project 只是出处） */
-export async function rememberTaskPitfall(root, task, resolvedBy, lastFailure, cfg = memoryConfig()) {
+export async function rememberTaskPitfall(root, task, resolvedBy, lastFailure, cfg = memoryConfig(process.env, root)) {
   if (!cfg.enabled) return { recorded: false, reason: "DEVCONTROL_MEMORY=off" };
   const entry = {
     title: task.title,

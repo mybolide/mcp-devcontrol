@@ -422,7 +422,7 @@ export async function cmdStatus() {
 
 export async function cmdMemory(args) {
   const sub = args[0] ?? "status";
-  const cfg = memoryConfig();
+  const cfg = memoryConfig(process.env, resolveRoot());
   const flag = (name, fallback = undefined) => {
     const i = args.indexOf(`--${name}`);
     return i >= 0 ? args[i + 1] : fallback;

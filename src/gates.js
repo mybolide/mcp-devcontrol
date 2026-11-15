@@ -272,7 +272,7 @@ export async function taskClose(db, root, input, opts = {}) {
   // 失败过的任务：必须交出「最后怎么解决的」，这是坑库的唯一入口（不靠 Agent 自觉）
   const rounds = t0.review_round ?? 0;
   const resolvedBy = String(input.resolvedBy ?? "").trim();
-  if (rounds > 0 && memoryConfig().enabled && !resolvedBy) {
+  if (rounds > 0 && memoryConfig(process.env, root).enabled && !resolvedBy) {
     fail("E_NEED_RESOLUTION", `${t0.id} 已经失败 ${rounds} 次，close 必须带 resolvedBy（一句话：最后怎么解决的）`, {
       reviewRound: rounds,
       hint: 'action=task.close, resolvedBy: "把 X 改成 Y 就好了"',
@@ -444,7 +444,7 @@ export async function taskClose(db, root, input, opts = {}) {
     let memory = null;
     if (rounds > 0 && resolvedBy) {
       const lastFail = db.prepare("SELECT code, detail FROM events WHERE task_id=? AND action='close.fail' ORDER BY id DESC LIMIT 1").get(t.id);
-      memory = await rememberTaskPitfall(root, t, resolvedBy, lastFail ? `${lastFail.code}: ${lastFail.detail}` : null);
+      memory = await rememberTaskPitfall(root, t, resolvedBy, lastFail ? `${lastFail.code}: ${lastFail.detail}` : null, memoryConfig(process.env, root));
     }
     if (memory?.status === "candidate") memory.hint = generalizeHint(memory.reasons ?? []);
     return { id: t.id, lines, files: files.length, runs, closedBy: "rerun", commits: weak ? [] : owned.map((c) => c.sha), fingerprint: fp0, memory, memoryHint: memory?.hint ?? null, weak };
