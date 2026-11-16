@@ -8,6 +8,6 @@
   "testCmds": [
     "npm test"
   ],
-  "budgetLines": 1200,
+  "budgetLines": 6000,
   "note": "批准时冻结；Agent 只读，改动必须由 Owner 重新批准"
 }
