@@ -124,28 +124,29 @@ function consistency(db) {
   // 混着用会让 assertionCommand 拿到 [object Object] 静默返回 null，检查形同虚设。
   const cmdOf = (a) => assertionCommand(typeof a === "string" ? a : a?.assertion);
 
-  // ① 已批准的需求必须绑着一条已批准的 Path，否则没人能开工
+  // ① 项目里一条已批准的 Path 都没有 → 谁都开不了工
+  //
+  // 注意 Path 是**可复用的**：一条 Path 能被多个需求先后批准，DB 里只留最后一次绑定。
+  // 所以不能按「requirement_id 绑着谁」来判断——那样会把复用过的需求全报成孤儿（假警报）。
+  // 该问的是：这个需求的验收，有没有至少一条已批准的 Path 能承载它。
+  const approvedPaths = paths.filter((p) => p.status === "approved");
+  if (!approvedPaths.length && reqs.some((r) => r.status === "approved")) {
+    out.push({ severity: "error", code: "NO_APPROVED_PATH", detail: "有已批准的需求，但项目里一条已批准的 Path 都没有——Agent 建不了任务" });
+  }
+
+  // ② 需求的每条验收命令，至少要有一条已批准的 Path 冻结了它
   for (const r of reqs) {
-    if (r.status !== "approved") continue;
-    const bound = paths.filter((p) => p.requirement_id === r.id);
-    if (!bound.length) {
-      out.push({ severity: "error", code: "REQ_WITHOUT_PATH", requirementId: r.id, detail: `${r.id} 已批准但没有任何 Path 绑着它——Agent 建不了任务` });
-      continue;
-    }
-    // ② 需求里写的验收命令，必须都在它 Path 的冻结命令里。
-    //    这条如果破，Agent 用那条命令建任务就会被 E_CONTRACT 拦住，
-    //    而错误里完全看不出「这是 Owner 早就批准过的」。
-    for (const p of bound) {
-      const missing = r.acceptance.map(cmdOf).filter((c) => c && !p.testCmds.includes(c));
-      if (missing.length) {
-        out.push({
-          severity: "error",
-          code: "ACCEPTANCE_NOT_IN_CONTRACT",
-          requirementId: r.id,
-          pathId: p.id,
-          detail: `${r.id} 批准的验收里有 ${missing.join(" / ")}，但 ${p.id} 的契约只冻结了 ${p.testCmds.join(" / ") || "(空)"}`,
-        });
-      }
+    if (r.status !== "approved" || !approvedPaths.length) continue;
+    const uncovered = r.acceptance
+      .map(cmdOf)
+      .filter((c) => c && !approvedPaths.some((p) => p.testCmds.includes(c)));
+    if (uncovered.length) {
+      out.push({
+        severity: "error",
+        code: "ACCEPTANCE_NOT_IN_CONTRACT",
+        requirementId: r.id,
+        detail: `${r.id} 批准的验收里有 ${uncovered.join(" / ")}，但没有任何已批准的 Path 冻结了它（现有：${[...new Set(approvedPaths.flatMap((p) => p.testCmds))].join(" / ") || "空"}）`,
+      });
     }
   }
 

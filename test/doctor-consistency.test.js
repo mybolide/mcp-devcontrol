@@ -135,14 +135,40 @@ test("依赖成环 → TASK_DEP_CYCLE（成环等于永远没人能开工）", (
   assert.match(hit.detail, /→/);
 });
 
-test("已批准的需求没有 Path 绑着 → REQ_WITHOUT_PATH", () => {
+test("有已批准的需求但一条已批准 Path 都没有 → NO_APPROVED_PATH", () => {
   const root = makeRepo();
   const db = openDb(root);
   mkPath(db);
   const r = req(db, root);
   reqApprove(db, root, { requirementId: r.id, pathId: "P-001" });
-  db.prepare("UPDATE paths SET requirement_id=NULL WHERE id='P-001'").run();
-  assert.ok(codes(doctor(db, root)).includes("REQ_WITHOUT_PATH"));
+  db.prepare("UPDATE paths SET status='draft' WHERE id='P-001'").run();
+  assert.ok(codes(doctor(db, root)).includes("NO_APPROVED_PATH"));
+});
+
+test("Path 被多个需求复用不算孤儿（复用是支持的，不能假警报）", () => {
+  const root = makeRepo();
+  const db = openDb(root);
+  mkPath(db, { cmds: ["npm test"] });
+  const r1 = req(db, root);
+  reqApprove(db, root, { requirementId: r1.id, pathId: "P-001" });
+  const r2 = req(db, root);
+  reqApprove(db, root, { requirementId: r2.id, pathId: "P-001" });
+  // paths.requirement_id 只留最后一次绑定，r1 表面上「没有 Path 了」——但它是可用的
+  const items = doctor(db, root).filter((i) => /NO_APPROVED_PATH|ACCEPTANCE_NOT_IN_CONTRACT/.test(i.code));
+  assert.deepEqual(codes(items), []);
+});
+
+test("需求验收的命令没有任何已批准 Path 冻结它 → ACCEPTANCE_NOT_IN_CONTRACT", () => {
+  const root = makeRepo();
+  const db = openDb(root);
+  mkPath(db, { cmds: ["npm test"] });
+  const r = req(db, root, ["npm run build :: exit==0"]);
+  reqApprove(db, root, { requirementId: r.id, pathId: "P-001" });
+  // 模拟旧 bug：契约里没留下 build
+  db.prepare("UPDATE paths SET test_cmds_json=? WHERE id='P-001'").run(JSON.stringify(["npm test"]));
+  const hit = doctor(db, root).find((i) => i.code === "ACCEPTANCE_NOT_IN_CONTRACT");
+  assert.ok(hit);
+  assert.match(hit.detail, /没有任何已批准的 Path/);
 });
 
 test("自洽检查读得出对象和字符串两种 acceptance，不会静默失效", () => {
