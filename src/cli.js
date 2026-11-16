@@ -666,6 +666,34 @@ export function cmdExport() {
   return 0;
 }
 
+export function cmdEvidence(args) {
+  const root = resolveRoot();
+  const db = openDb(root);
+  const id = args[0];
+  if (!id) {
+    const rows = db.prepare("SELECT id,task_id,command,exit_code,started_at FROM runs ORDER BY started_at DESC, rowid DESC LIMIT 8").all();
+    if (!rows.length) {
+      console.log("还没有验收记录（收口时才会产生）");
+      return 0;
+    }
+    for (const r of rows) console.log(`${r.id}  ${r.task_id}  exit=${r.exit_code}  ${r.command}  ${r.started_at}`);
+    console.log("\n看某一次的输出：devcontrol evidence run-xxxx");
+    return 0;
+  }
+  const row = db.prepare("SELECT * FROM runs WHERE id=?").get(id);
+  if (!row) {
+    console.error(`没有这次运行：${id}（devcontrol evidence 看最近的）`);
+    return 2;
+  }
+  console.log(`${row.id}  ${row.task_id}  断言 #${row.assertion_idx}`);
+  console.log(`命令：${row.command}`);
+  console.log(`退出码：${row.exit_code}   耗时：${row.duration_ms}ms   时间：${row.started_at}`);
+  console.log(`提交：${row.head ?? "—"}`);
+  console.log("─".repeat(64));
+  console.log(row.output || "（没有输出）");
+  return 0;
+}
+
 export async function main(argv) {
   const [cmd, ...args] = argv;
   try {
@@ -694,6 +722,8 @@ export async function main(argv) {
         return await cmdMemory(args);
       case "doctor":
         return cmdDoctor();
+      case "evidence":
+        return cmdEvidence(args);
       case "doc":
         return cmdDoc(args);
       case "release":
@@ -725,6 +755,7 @@ export async function main(argv) {
   devcontrol flow <list|show|save|apply>  流程模板：把做过的交付沉淀下来复用（存 .devcontrol/flows/）
   devcontrol close [T-00x] [--resolved-by "…"]  收口：干净检出内重跑验收（R0–R5）
   devcontrol status                  bootstrap 摘要：next / actions / plan / 记忆命中
+  devcontrol evidence [run-xxxx]    看验收证据（退出码与输出；不给编号看最近 8 次）
   devcontrol memory [status|list|search|add|export|reindex|promote|demote|delete]  通用记忆
   devcontrol doctor                  对账：幽灵 done / 未落地 / 悬空 claim / 文档漂移
   devcontrol doc [add|list]          登记文档并检测漂移（改了没登记 → doc 漂移）
