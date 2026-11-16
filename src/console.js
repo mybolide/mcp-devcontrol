@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { readConsoleMeta } from "./console-boot.js";
-import { openDb } from "./db.js";
+import { dbPath, openDb } from "./db.js";
 import { VERSION } from "./protocol.js";
 import { bootstrap } from "./digest.js";
 import {
@@ -84,7 +84,33 @@ export async function startConsole(args) {
     if (a === "--project") extra.push(args[i + 1]);
   });
   const roots = [...new Set([root, ...extra].filter(Boolean).map((r) => path.resolve(r)))];
-  const projects = roots.map((r) => ({ root: r, name: path.basename(r) || r, db: openDb(r) }));
+  const projects = roots.map((r) => ({ root: r, name: path.basename(r) || r, db: openDb(r), dbIno: inodeOf(r) }));
+  /** 库文件的 inode：文件被删掉重建后 inode 会变，这是「句柄过期」唯一可靠的信号 */
+  function inodeOf(r) {
+    try {
+      return fs.statSync(dbPath(r)).ino;
+    } catch {
+      return null;
+    }
+  }
+  /**
+   * 库文件被换掉（rm -rf .devcontrol 后重新 init，或者从备份恢复）时，控制台手里的句柄
+   * 还指着那个已被删除的 inode：Owner 在页面上批准，写进的是看不见的旧文件，
+   * Agent 那边永远读不到，只会看到「需求未批准」。每次请求前对一下 inode，换过就重开。
+   */
+  function freshDb(p) {
+    const now = inodeOf(p.root);
+    if (now && p.dbIno && now !== p.dbIno) {
+      try {
+        p.db.close();
+      } catch {
+        /* 老句柄关不掉也不要紧，重开就行 */
+      }
+      p.db = openDb(p.root);
+      p.dbIno = inodeOf(p.root);
+    }
+    return p.db;
+  }
   // 控制台一启动就把 Agent 侧说明补/更新一遍：老项目 init 过也不会缺，版本升级自动跟上。
   // 有任务在办时跳过——这些文件在任务 scope 外，改了会把工作树弄脏、把收口卡死。
   const refreshed = [];
@@ -162,24 +188,25 @@ export async function startConsole(args) {
       if (denied) return json(denied.code, denied.body);
       const active = pickProject(url.searchParams.get("project"));
       if (!active) return json(400, { ok: false, code: "INVALID_ARGUMENT", message: "未知 project" });
+      const adb = freshDb(active);
       return json(200, {
         project: { root: active.root, name: active.name },
         projects: projects.map((p) => ({ name: p.name, root: p.root, current: p.root === active.root })),
-        digest: bootstrap(active.db, active.root, { console: `http://127.0.0.1:${port}/` }),
-        requirements: listReqs(active.db),
-        paths: listPaths(active.db),
-        tasks: listTasks(active.db),
-        bugs: listBugs(active.db),
-        docs: listDocs(active.db).map((d) => {
+        digest: bootstrap(adb, active.root, { console: `http://127.0.0.1:${port}/` }),
+        requirements: listReqs(adb),
+        paths: listPaths(adb),
+        tasks: listTasks(adb),
+        bugs: listBugs(adb),
+        docs: listDocs(adb).map((d) => {
           const abs = path.join(active.root, d.path);
           const drift = !fs.existsSync(abs) ? "missing" : sha256(fs.readFileSync(abs)) !== d.sha256 ? "changed" : null;
           return { ...d, drift };
         }),
-        questions: listQuestions(active.db),
+        questions: listQuestions(adb),
         memories: listMemories(memoryConfig(process.env, active.root), 30, null, "candidate"),
         memoriesActive: listMemories(memoryConfig(process.env, active.root), 30, null, "active"),
         runs: listRuns(active.db, 30),
-        releases: listReleases(active.db),
+        releases: listReleases(adb),
       });
     }
     if (req.method === "POST" && url.pathname === "/api/owner") {
@@ -204,7 +231,7 @@ export async function startConsole(args) {
       const active = pickProject(payload.project ?? payload.payload?.project);
       if (!active) return json(400, { ok: false, code: "INVALID_ARGUMENT", message: "未知 project" });
       try {
-        return json(200, { ok: true, result: await action(active.db, active.root, payload.payload ?? payload) });
+        return json(200, { ok: true, result: await action(freshDb(active), active.root, payload.payload ?? payload) });
       } catch (error) {
         return json(200, { ok: false, code: error.code ?? "E_INTERNAL", message: error.message, data: error.data ?? null });
       }
