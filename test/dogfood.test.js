@@ -8,8 +8,9 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { createRelease, getRelease, planRelease, shipRelease } from "../src/release.js";
-import { override } from "../src/store.js";
+import { listPaths, override, pathAdjust } from "../src/store.js";
 import { hintFor } from "../src/hints.js";
+import { readContract } from "../src/contract.js";
 import { makeRepo, initFlow, newTask } from "./helpers.js";
 
 const BIN = path.resolve(import.meta.dirname, "../bin/devcontrol.js");
@@ -88,6 +89,28 @@ test("ship：别人手上还有在办任务时不许发布（半成品会上线�
 
   db.prepare("UPDATE tasks SET status='done' WHERE id=?").run(other.id);
   assert.equal(shipRelease(db, { id: r.id }).status, "shipped");
+});
+
+test("Path 预算能调（项目会长大），改的是契约本身且留痕", () => {
+  const root = makeRepo();
+  const { db } = initFlow(root);
+  assert.equal(listPaths(db).find((p) => p.id === "P-001").budget_lines, 1200);
+
+  const r = pathAdjust(db, root, { pathId: "P-001", budgetLines: 4000, reason: "项目进入第二个季度，新增模块的正常体量已超过初始预算" });
+  assert.equal(r.from, 1200);
+  assert.equal(r.to, 4000);
+  // 契约是事实源：新提交里必须能读到新预算
+  assert.equal(readContract(root, r.contractCommit, "P-001").body.budgetLines, 4000);
+  assert.equal(listPaths(db).find((p) => p.id === "P-001").budget_lines, 4000);
+
+  assert.throws(
+    () => pathAdjust(db, root, { pathId: "P-001", budgetLines: 50, reason: "预算太小会误伤正常改动" }),
+    (e) => e.code === "E_CONTRACT",
+  );
+  assert.throws(
+    () => pathAdjust(db, root, { pathId: "P-001", budgetLines: 2000, reason: "太短" }),
+    (e) => e.code === "E_CONTRACT" && /现在 2 字/.test(e.message),
+  );
 });
 
 test("hint 覆盖所有会被 Agent 撞到的门禁码（漏了就返回 null，不会瞎编）", () => {

@@ -274,6 +274,34 @@ export function reqAmend(db, root, input) {
   });
 }
 
+/**
+ * Owner：调一条 Path 的改动预算。
+ * 项目会长大，1200 行这种数字不可能一次定死；但改预算必须留痕（写进契约、进审计），
+ * 而且只影响之后领取的任务——在办任务仍按领取时固定的那份契约算（契约 pin 在 claim 上）。
+ */
+export function pathAdjust(db, root, input) {
+  return tx(db, () => {
+    const p = listPaths(db).find((x) => x.id === input.pathId);
+    if (!p) fail("NOT_FOUND", `Path 不存在：${input.pathId}`);
+    const budget = Number(input.budgetLines);
+    if (!Number.isFinite(budget) || budget < 100) fail("E_CONTRACT", "预算至少 100 行——再小会把正常改动也拦掉");
+    const reason = String(input.reason ?? "").trim();
+    if (reason.length < 12) fail("E_CONTRACT", `调预算要写理由（至少 12 字，现在 ${reason.length} 字）：以后才知道为什么放宽`);
+    const body = contractBody({
+      pathId: p.id,
+      requirementId: p.requirement_id,
+      allowedPaths: p.allowedPaths,
+      allowNewFiles: Boolean(p.allow_new_files),
+      testCmds: p.testCmds,
+      budgetLines: budget,
+    });
+    const { sha, hash } = commitContract(root, body, "amend", { weak: metaGet(db, "mode") === "weak" });
+    db.prepare("UPDATE paths SET budget_lines=?, hash=?, contract_commit=? WHERE id=?").run(budget, hash, sha, p.id);
+    logEvent(db, { channel: "owner", action: "path.adjust", detail: `${p.id} 预算 ${p.budget_lines} → ${budget}：${reason}` });
+    return { pathId: p.id, from: p.budget_lines, to: budget, contractCommit: sha };
+  });
+}
+
 // ── Owner：任务动作 ────────────────────────────────────────────────────────
 
 export function taskAdjust(db, root, input) {
