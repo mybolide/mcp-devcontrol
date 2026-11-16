@@ -154,7 +154,13 @@ export function cmdInit(args) {
   const weak = args.includes("--weak");
   const gitMode = isRepo(root);
   if (!gitMode && !weak) {
-    console.error(Object.assign(new Error("E_NOT_REPO: 这里不是 git 仓库。加 --weak 使用弱模式（只跑验收，没有提交归属与 scope 校验）"), { code: "E_NOT_REPO" }).message);
+    // 不是用法写错，是环境不满足：退出码 1（被拒），不是 2（用法）
+    return failCli(
+      "这里不是 git 仓库。加 --weak 使用弱模式（只跑验收，没有提交归属与 scope 校验）",
+      "E_NOT_REPO",
+      null,
+      1,
+    );
     return 1;
   }
   process.chdir(root);
@@ -254,7 +260,7 @@ export async function cmdRun(args) {
   const idx = args.indexOf("--");
   const command = idx >= 0 ? args.slice(idx + 1).join(" ") : args.join(" ");
   if (!command) {
-    console.error("用法：devcontrol run -- <command>");
+    return failCli("用法：devcontrol run -- <command>", "E_USAGE");
     return 2;
   }
   const root = resolveRoot();
@@ -265,28 +271,44 @@ export async function cmdRun(args) {
   return result.exit;
 }
 
+/**
+ * 统一的失败出口。
+ *
+ * 为什么必须有它：成功是 stdout 上的 JSON，失败却曾经只是 stderr 上一行纯文本——
+ * Agent 想分支处理就得先撞一遍。约定很简单：**失败也是 JSON，`ok:false` 且必带 code**。
+ * exit 2 留给「用法写错了」，1 留给「动作被拒」。
+ */
+function failCli(message, code = "E_USAGE", data = null, exit = 2) {
+  const hint = hintFor({ code });
+  console.log(JSON.stringify({ ok: false, code, message, data, hint }, null, 2));
+  console.error(`${code}: ${message}`);
+  if (hint) console.error(`  → ${hint}`);
+  if (data) console.error(JSON.stringify(data, null, 2));
+  return exit;
+}
+
 export function cmdCommit(args) {
   const root = resolveRoot();
   const msgIdx = args.indexOf("-m");
   const message = msgIdx >= 0 ? args[msgIdx + 1] : null;
   if (!message) {
-    console.error('用法：devcontrol commit -m "<message>" [--actor name]');
+    return failCli('用法：devcontrol commit -m "<message>" [--actor name]', "E_USAGE");
     return 2;
   }
   const actorIdx = args.indexOf("--actor");
   const actor = actorIdx >= 0 ? args[actorIdx + 1] : process.env.DEVCONTROL_ACTOR || "agent";
   const db = openDb(root);
   if (metaGet(db, "mode") === "weak") {
-    console.error("E_WEAK_NO_GIT: 弱模式没有 git，不能提交；直接把改动留在工作树里，然后 devcontrol close");
+    return failCli("弱模式没有 git，不能提交；直接把改动留在工作树里，然后 devcontrol close", "E_WEAK_NO_GIT", null, 1);
     return 1;
   }
   const doing = db.prepare("SELECT * FROM tasks WHERE status='doing' AND claimed_by=? AND closing_token IS NULL").all(actor);
   if (!doing.length) {
-    console.error(`E_NO_TASK: ${actor} 手上没有在办任务，先 task.claim`);
+    return failCli(`${actor} 手上没有在办任务，先 task.claim`, "E_NO_TASK", null, 1);
     return 1;
   }
   if (doing.length > 1) {
-    console.error(`E_WIP_LIMIT: ${actor} 有多个在办任务：${doing.map((t) => t.id).join(", ")}`);
+    return failCli(`${actor} 有多个在办任务：${doing.map((t) => t.id).join(", ")}`, "E_WIP_LIMIT", { holding: doing.map((t) => t.id) }, 1);
     return 1;
   }
   const task = getTask(db, doing[0].id);
@@ -321,11 +343,21 @@ export function cmdCommit(args) {
   const mine = dirty.filter((f) => inScope(f, task.scope));
   const foreign = dirty.filter((f) => !inScope(f, task.scope) && !f.startsWith(".devcontrol/"));
   if (foreign.length) {
-    console.error(`E_SCOPE_VIOLATION: 以下改动不在 ${task.id} 的 scope 内：\n${foreign.join("\n")}`);
+    return failCli(
+      `以下改动不在 ${task.id} 的 scope 内（scope=${task.scope.join(",") || "."}）：${foreign.slice(0, 8).join("、")}${foreign.length > 8 ? ` …共 ${foreign.length} 个` : ""}`,
+      "E_SCOPE_VIOLATION",
+      { taskId: task.id, scope: task.scope, files: foreign },
+      1,
+    );
     return 1;
   }
   if (!mine.length) {
-    console.error("没有可提交的改动（scope 内为空）");
+    return failCli(
+      `scope 内没有可提交的改动（scope=${task.scope.join(",") || "."}）`,
+      "E_NO_DELIVERY",
+      { taskId: task.id, scope: task.scope },
+      1,
+    );
     return 1;
   }
   const body = `${message}\n\nTask-Id: ${task.id}\nDevControl-Base: ${task.base_head}`;
@@ -371,7 +403,7 @@ export function cmdFlow(args) {
     const name = args[1];
     const from = flag("from");
     if (!name || !from) {
-      console.error("用法：devcontrol flow save <名字> --from FR-001");
+      return failCli("用法：devcontrol flow save <名字> --from FR-001", "E_USAGE");
       return 2;
     }
     const flow = flowFromRequirement(db, from, name, root);
@@ -390,7 +422,7 @@ export function cmdFlow(args) {
     });
     return 0;
   }
-  console.error("用法：devcontrol flow <list|show|save|apply> ...");
+  return failCli("用法：devcontrol flow <list|show|save|apply> ...", "E_USAGE");
   return 2;
 }
 
@@ -409,10 +441,10 @@ export function cmdTask(args) {
     const pathId = flag("path");
     const title = flag("title");
     if (!req || !pathId || !title) {
-      console.error(
+      return failCli(
         '用法：devcontrol task create --req FR-001 --path P-001 --title "一言说清" [--kind fix] [--scope src,test] [--accept "npm test :: exit==0"] [--depends T-001[,T-002]]',
+        "E_USAGE",
       );
-      return 2;
     }
     const accepts = every("accept");
     const deriveFrom = Number(flag("derive") ?? 0);
@@ -432,7 +464,7 @@ export function cmdTask(args) {
   if (sub === "claim") {
     const id = args.slice(1).find((a) => /^T-\d+$/.test(a));
     if (!id) {
-      console.error("用法：devcontrol task claim T-00x [--actor name]");
+      return failCli("用法：devcontrol task claim T-00x [--actor name]", "E_USAGE");
       return 2;
     }
     const claimed = taskClaim(db, root, { id }, actor);
@@ -445,7 +477,7 @@ export function cmdTask(args) {
     for (const t of db.prepare("SELECT id,status,kind,title FROM tasks ORDER BY id").all()) console.log(`${t.id}  ${t.status.padEnd(8)}${t.kind.padEnd(8)}${t.title}`);
     return 0;
   }
-  console.error("用法：devcontrol task <create|claim|list> ...");
+  return failCli("用法：devcontrol task <create|claim|list> ...", "E_USAGE");
   return 2;
 }
 
@@ -468,7 +500,7 @@ export function cmdRenew(args) {
   const held = db.prepare("SELECT id FROM tasks WHERE status='doing' AND claimed_by=? AND closing_token IS NULL").get(actor);
   const id = explicit ?? held?.id;
   if (!id) {
-    console.error(`E_NO_TASK: ${actor} 手上没有在办任务`);
+    return failCli(`${actor} 手上没有在办任务`, "E_NO_TASK", null, 1);
     return 1;
   }
   const res = taskRenew(db, root, { id }, actor);
@@ -490,7 +522,9 @@ export async function cmdClose(args) {
   if (!id) {
     const doing = db.prepare("SELECT id FROM tasks WHERE status='doing' AND claimed_by=? AND closing_token IS NULL").all(actor);
     if (doing.length !== 1) {
-      console.error(doing.length ? `E_WIP_LIMIT: ${actor} 有多个在办任务，请指明任务号` : `E_NO_TASK: ${actor} 手上没有在办任务`);
+      return doing.length
+        ? failCli(`${actor} 有多个在办任务，请指明任务号`, "E_WIP_LIMIT", { holding: doing.map((t) => t.id) }, 1)
+        : failCli(`${actor} 手上没有在办任务`, "E_NO_TASK", null, 1);
       return 1;
     }
     id = doing[0].id;
@@ -553,7 +587,7 @@ export async function cmdMemory(args) {
   if (sub === "search") {
     const query = args.slice(1).filter((a) => !a.startsWith("--")).join(" ").trim();
     if (!query) {
-      console.error('用法：devcontrol memory search "<关键词>"');
+      return failCli('用法：devcontrol memory search "<关键词>"', "E_USAGE");
       return 2;
     }
     const mem = openMemory(cfg);
@@ -574,7 +608,7 @@ export async function cmdMemory(args) {
     const title = args[1] && !args[1].startsWith("--") ? args[1] : flag("title");
     const body = flag("body");
     if (!title || !body) {
-      console.error('用法：devcontrol memory add "标题" --body "现象/原因/解法" [--kind pitfall|howto|decision|preference|snippet|note] [--tags a,b]');
+      return failCli('用法：devcontrol memory add "标题" --body "现象/原因/解法" [--kind pitfall|howto|decision|preference|snippet|note] [--tags a,b]', "E_USAGE");
       return 2;
     }
     const res = await rememberAndIndex(
@@ -607,7 +641,7 @@ export async function cmdMemory(args) {
   }
   if (sub === "promote" || sub === "demote") {
     if (!args[1]) {
-      console.error(`用法：devcontrol memory ${sub} M-xxxxxxxx`);
+      return failCli(`用法：devcontrol memory ${sub} M-xxxxxxxx`, "E_USAGE");
       return 2;
     }
     if (sub === "promote") {
@@ -619,13 +653,13 @@ export async function cmdMemory(args) {
   }
   if (sub === "delete") {
     if (!args[1]) {
-      console.error("用法：devcontrol memory delete M-xxxxxxxx");
+      return failCli("用法：devcontrol memory delete M-xxxxxxxx", "E_USAGE");
       return 2;
     }
     console.log(softDeleteMemory(cfg, args[1]) ? "已软删除" : "没有这条记录");
     return 0;
   }
-  console.error("未知子命令：status | list | search | add | export | reindex | promote | demote | delete");
+  return failCli("未知子命令：status | list | search | add | export | reindex | promote | demote | delete", "E_USAGE");
   return 2;
 }
 
@@ -636,7 +670,11 @@ export function cmdDoctor() {
   if (!items.length) console.log("doctor: 一切正常");
   // 三档要分清楚：error=坏了必须处理，warn=纪律上的提醒，info=环境状况（不是你的错，也不用修）
   const LABEL = { error: "ERROR", warn: "warn ", info: "note " };
-  for (const it of items) console.log(`${LABEL[it.severity] ?? "warn "} ${it.code} ${it.taskId ?? ""} ${it.detail}`);
+  for (const it of items) {
+    // 一行一个：先标出「哪条」，再说「怎么了」。不写编号的话，十条一模一样的话看不出该动哪一条。
+    const who = it.taskId ?? it.requirementId ?? it.pathId ?? "";
+    console.log(`${LABEL[it.severity] ?? "warn "} ${it.code}${who ? ` ${who}` : ""} ${it.detail}`);
+  }
   return items.some((i) => i.severity === "error") ? 1 : 0;
 }
 
@@ -647,7 +685,7 @@ export function cmdDoc(args) {
   if (sub === "add") {
     const rel = args[1];
     if (!rel) {
-      console.error("用法：devcontrol doc add <相对路径> [--title 标题] [--kind spec|adr|guide]");
+      return failCli("用法：devcontrol doc add <相对路径> [--title 标题] [--kind spec|adr|guide]", "E_USAGE");
       return 2;
     }
     const flag = (name) => {
@@ -668,7 +706,7 @@ export function cmdDoc(args) {
     }
     return 0;
   }
-  console.error("未知子命令：add | list");
+  return failCli("未知子命令：add | list", "E_USAGE");
   return 2;
 }
 
@@ -690,7 +728,7 @@ export function cmdRelease(args) {
     if (sub === "create") {
       const title = args[1] ?? flag("title");
       if (!title) {
-        console.error('用法：devcontrol release create "v0.1" [--target 2026-01-01]');
+        return failCli('用法：devcontrol release create "v0.1" [--target 2026-01-01]', "E_USAGE");
         return 2;
       }
       console.log(JSON.stringify(createRelease(db, { title, targetDate: flag("target") }), null, 2));
@@ -710,12 +748,9 @@ export function cmdRelease(args) {
       console.log(JSON.stringify(getRelease(db, args[1]), null, 2));
       return 0;
     }
-    console.error("未知子命令：list | create | plan | ship | show");
-    return 2;
+    return failCli("未知子命令：list | create | plan | ship | show", "E_USAGE");
   } catch (error) {
-    console.error(`${error.code ?? "E_ERROR"}: ${error.message}`);
-    if (error.data) console.error(JSON.stringify(error.data, null, 2));
-    return 1;
+    return failCli(error.message, error.code ?? "E_ERROR", error.data ?? null, 1);
   }
 }
 
@@ -742,7 +777,7 @@ export function cmdEvidence(args) {
   }
   const row = db.prepare("SELECT * FROM runs WHERE id=?").get(id);
   if (!row) {
-    console.error(`没有这次运行：${id}（devcontrol evidence 看最近的）`);
+    return failCli(`没有这次运行：${id}（devcontrol evidence 看最近的）`, "NOT_FOUND", { runId: id }, 1);
     return 2;
   }
   console.log(`${row.id}  ${row.task_id}  断言 #${row.assertion_idx}`);
@@ -798,6 +833,9 @@ export async function main(argv) {
       case "-v":
         console.log(VERSION);
         return 0;
+      case "bootstrap":
+        return await cmdStatus();
+      case "help":
       case "--help":
       case "-h":
       case undefined:
@@ -814,7 +852,8 @@ export async function main(argv) {
   devcontrol stats                  纪律三数：被拦 / 返工 / 绕过（内核到底有没有在起作用）
   devcontrol flow <list|show|save|apply>  流程模板：把做过的交付沉淀下来复用（存 .devcontrol/flows/）
   devcontrol close [T-00x] [--resolved-by "…"]  收口：干净检出内重跑验收（R0–R5）
-  devcontrol status                  bootstrap 摘要：next / actions / plan / 记忆命中
+  devcontrol status                  摘要：next / actions / plan / 记忆命中（bootstrap 是它的别名）
+  devcontrol help                    就是这份说明（--help / -h 同义）
   devcontrol evidence [run-xxxx]    看验收证据（退出码与输出；不给编号看最近 8 次）
   devcontrol memory [status|list|search|add|export|reindex|promote|demote|delete]  通用记忆
   devcontrol doctor                  对账：幽灵 done / 未落地 / 悬空 claim / 文档漂移
@@ -826,18 +865,14 @@ export async function main(argv) {
 `);
         return 0;
       default:
-        console.error(`未知命令：${cmd}`);
-        return 2;
+        return failCli(
+          `未知命令：${cmd}。可用命令见 devcontrol --help（或 devcontrol help）`,
+          "E_USAGE",
+          { command: cmd },
+        );
     }
   } catch (error) {
-    const code = error.code ?? "E_ERROR";
-    const hint = hintFor(error);
-    // 机器读 stdout：失败也是 JSON，字段和成功时一致（ok/code/message/data）
-    console.log(JSON.stringify({ ok: false, code, message: error.message, data: error.data ?? null, hint }, null, 2));
-    // 人读 stderr：一行说哪里错了，一行说然后呢
-    console.error(`${code}: ${error.message}`);
-    if (hint) console.error(`  → ${hint}`);
     if (process.env.DEVCONTROL_DEBUG) console.error(error.stack);
-    return 1;
+    return failCli(error.message, error.code ?? "E_ERROR", error.data ?? null, 1);
   }
 }

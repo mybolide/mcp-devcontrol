@@ -29,6 +29,19 @@ const HINTS = {
   E_ILLEGAL_TRANSITION: "当前状态不允许这个动作（比如还没领任务就收口）。先看 devcontrol next 说的是哪一步。",
   E_NOT_REPO: "这里不是 git 仓库。devcontrol 靠提交链判定归属，先在仓库里用。",
   E_NO_ROOT: "找不到 .devcontrol/。在项目根目录运行，或设置 DEVCONTROL_ROOT。",
+  E_USAGE: "命令写错了。devcontrol --help 看可用命令与参数；别人给的示例可以直接抄。",
+  E_WEAK_NO_GIT: "弱模式没有 git 就没有提交链。改动留在工作树里，直接 devcontrol close 跑验收。",
+  NOT_FOUND: "找不到你要的东西。先 devcontrol status 看清当前有什么，再挑一个真实存在的编号。",
+  E_NO_DELIVERY: "scope 内没有可提交的改动：要么代码还没写，要么写到了 scope 外面（先看 devcontrol status 里的 scope）。",
+  E_HASH_MISMATCH: "需求内容在你看到之后被改过。刷新控制台，按最新的内容重新批准。",
+  E_BUSY: "任务状态正在被另一个进程改。等一秒重试；重复出现说明有两个 Agent 在抢同一个任务。",
+  E_INTERNAL: "内核内部错误。带上 devcontrol 版本和刚才的命令去开 issue；DEVCONTROL_DEBUG=1 能看到堆栈。",
+  E_DEP_OPEN: "前置任务还没收口。先把它做完（devcontrol close），或者换一个不依赖它的任务。",
+  E_CLAIM_STALE: "租约过期了，这个任务已经回到待领队列。重新 task.claim 一次即可（超过 45 分钟没动静就会这样）。",
+  E_UNMERGED_WORK: "你的提交不在当前分支的祖先链上（被 rebase 掉了，或者提交在别的分支）。把它们合回来再收口。",
+  E_LINT_TODO: "代码里还留着 TODO/FIXME 标记。先把它做成真实现，或者写进 issue 再删掉标记。",
+  INVALID_ARGUMENT: "参数不合法。看 message 里说的允许取值，照着改一个再重试。",
+  E_NO_TASK: "手上没有在办任务。先 devcontrol task claim T-00x（devcontrol next 会告诉你该做哪个）。",
 };
 
 /** 给一个错误找一句人话建议；找不到就返回 null（别硬编） */
