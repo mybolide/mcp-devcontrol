@@ -505,7 +505,7 @@
               .map((t) => `<span class="pill ${t.status === "done" ? "done" : t.status === "doing" ? "doing" : ""}">${esc(t.id)}</span>`)
               .join(" ");
             return `<tr><td class="mono">${esc(r.id)}</td><td>${esc(r.title)}</td><td>${tag(r.status)}</td>
-              <td class="mono">${pth ? esc(pth.id) : "—"}</td>
+              <td class="mono">${pth ? `${esc(pth.id)} <button class="btn" data-budget="${pth.id}" data-cur="${pth.budget_lines ?? ""}" title="改这条 Path 的改动预算">${pth.budget_lines ?? "?"} 行</button>` : "—"}</td>
               <td>${cov}${miss}<div class="mu">${r.acceptance.map((a) => esc(a)).join(" · ")}</div></td>
               <td>${tasks || `<span class="mu">—</span>`}</td></tr>`;
           })
@@ -702,9 +702,17 @@
           );
           const code = { "1": "E_ASSERTION_FAILED", "2": "E_DIFF_BUDGET", "3": "E_DEP_OR_TEST_TOUCH", "4": "E_TEST_CONFIG_TOUCH", "5": "E_SCOPE_VIOLATION" }[String(picked ?? "").trim()];
           if (!code) return;
-          const reason = prompt("为什么放行？（至少 30 字，会记进事件日志）");
+          const reason = prompt("为什么放行？（至少 12 字，会记进事件日志）");
           if (!reason) return;
           return owner("override", { taskId: b.dataset.override, code, mode: "waive", reason });
+        }
+        if (b.dataset.budget) {
+          // 项目会长大：预算要能在控制台改，且改的是契约（留痕），不是偷偷放水
+          const next = prompt(`把 ${b.dataset.budget} 的改动预算改成多少行？`, b.dataset.cur ?? "");
+          if (!next) return;
+          const reason = prompt("为什么调整？（至少 12 字，会进审计）");
+          if (!reason) return;
+          return owner("path.adjust", { pathId: b.dataset.budget, budgetLines: Number(next), reason });
         }
         if (b.dataset.memAccept) {
           const id = b.dataset.memAccept;
