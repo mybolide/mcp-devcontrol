@@ -185,6 +185,21 @@ devcontrol release list
 
 失败计数规则：环境类（`E_DIRTY_SCOPE` / `E_BUSY` / `E_TIMEOUT`）**不计** `review_round`；其余失败累计，3 次自动 `parked`，等 Owner `reopen`。
 
+### 失败长什么样（Agent 靠这个分支处理）
+
+**成功和失败都是 stdout 上的 JSON，`ok` 字段必在**。失败时一定带 `code` 和 `hint`：
+
+```json
+{ "ok": false, "code": "E_DEP_OPEN", "message": "前置 T-001 未完成",
+  "data": { "dep": "T-001", "status": "doing" },
+  "hint": "前置任务还没收口。先把它做完（devcontrol close），或者换一个不依赖它的任务。" }
+```
+
+- `message` 说**哪里**错了，`data` 放机读细节（越界的文件名、允许的命令列表…），`hint` 说**下一步做什么**。
+- stderr 只放人读的两行（`code: message` + `→ hint`），可以整段丢掉不影响程序。
+- 退出码：`0` 成功 / `1` 动作被拒 / `2` 用法写错。**不是用法错误就别给 2**，否则脚本分不清「你敲错了」和「内核不让」。
+- 每条会返回给 Agent 的错误码都必须有 hint；`test/failure-contract.test.js` 会从源码里扫出所有错误码逐条核对，漏一个就红。
+
 ### 错误码
 
 | 码 | 含义 |
@@ -197,6 +212,8 @@ devcontrol release list
 | `E_SCOPE_VIOLATION` / `E_UNREGISTERED_FILES` / `E_DIFF_BUDGET` / `E_LINT_TODO` / `E_TEST_CONFIG_TOUCH` / `E_DEP_OR_TEST_TOUCH` | R1 |
 | `E_ASSERTION_FAILED` / `E_TIMEOUT` / `E_EVIDENCE_DRIFT` / `E_UNMERGED_WORK` | R2–R4 |
 | `E_DIRTY_SCOPE` / `E_BUSY` | 环境类，不计轮次 |
+| `E_USAGE` / `INVALID_ARGUMENT` | 命令或参数写错（`E_USAGE` 退出码 2） |
+| `E_NO_TASK` / `E_WEAK_NO_GIT` / `NOT_FOUND` | 手上没任务、弱模式不能提交、找不到那个编号 |
 | `E_INTERNAL` | 兜底 |
 
 ## 5. 数据模型（9 表 + meta）
@@ -210,12 +227,38 @@ devcontrol release list
 ## 6. 自检
 
 ```bash
-npm test          # 43 条集成测试：门禁 7 + memory 6 + Owner/MCP/控制台/CLI/发布/弱模式/迁移
-devcontrol doctor    # 幽灵 done / 未落地提交 / 悬空 claim / 卡住的 close / 文档漂移 / 脏工作树
-devcontrol export    # markdown 快照（只读，别拿去改状态）
+npm test            # 166 条集成测试，真的建临时仓库、真的跑 close、真的起 MCP 与控制台，不 mock
+devcontrol doctor   # 出问题才说话；有 ERROR 时退出码 1
+devcontrol export   # markdown 快照（只读，别拿去改状态）
 ```
 
-测试会真的建临时 git 仓库、真的跑 `close`、真的起一个 MCP stdio 进程和一个 HTTP 控制台，不 mock。
+`doctor` 分两组，职责不同：
+
+**「Agent 做了什么」**（对账仓库与库）
+
+| 码 | 含义 |
+|---|---|
+| `GHOST_DONE` | 库里 done 但没有收口事件（疑似直接改库） |
+| `STALE_CLAIM` / `STALE_CLOSING` | 租约过期 / 收口卡住 |
+| `STALE_PATH` / `TEST_CMD_DRIFT` | Path 指向的目录没了 / 冻结的验收命令已过期 |
+| `DOC_DRIFT` / `SKILL_OUTDATED` / `DIRTY_TREE` | 文档变了没登记 / Agent 说明过期 / 工作树脏 |
+| `OVERRIDDEN` / `WEAK_MODE` | Owner 放行过的收口 / 弱模式没有提交链 |
+
+**「内核自己有没有前后矛盾」**（只看库，不看仓库）
+
+| 码 | 含义 |
+|---|---|
+| `NO_APPROVED_PATH` | 有已批准的需求，但一条已批准的 Path 都没有 |
+| `ACCEPTANCE_NOT_IN_CONTRACT` | 需求批准过的验收命令，没有任何已批准 Path 冻结它 |
+| `TASK_ASSERTION_DRIFT` | 任务的断言命令不在它 Path 的契约里 → 这条任务收不了口 |
+| `TASK_SCOPE_OUTSIDE_PATH` | 任务 scope 超出 Path 允许的区域 |
+| `TASK_REQ_UNKNOWN` / `TASK_REQ_NOT_APPROVED` | 任务挂的需求不存在 / 没批准 |
+| `TASK_DEP_UNKNOWN` / `TASK_DEP_CYCLE` | 依赖指向不存在的任务 / 依赖成环 |
+| `TASK_PATH_UNKNOWN` / `TASK_CONTRACT_STALE` | 挂的 Path 没了 / 记的是旧契约（领取时会自动对齐） |
+
+第二组是为了抓住「两边都以为自己没错」的故障：Owner 在页面上看到已批准、Agent 看到未批准；
+或者需求白纸黑字写了「构建也要过」，契约里却只冻结了测试命令。这类状态**没有任何异常**，
+只能靠把两边摊在一起比对才看得见。
 
 ## 7. 与设计文档的对应
 
