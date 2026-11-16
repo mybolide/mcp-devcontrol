@@ -3,7 +3,7 @@ import { DatabaseSync } from "node:sqlite";
 import fs from "node:fs";
 import path from "node:path";
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 export const DATA_DIR = ".devcontrol";
 export const DB_FILE = "state.db";
 
@@ -61,7 +61,8 @@ CREATE TABLE IF NOT EXISTS patch_ids(
   PRIMARY KEY(patch_id, task_id));
 CREATE TABLE IF NOT EXISTS releases(
   id TEXT PRIMARY KEY, title TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'planned',
-  target_date TEXT, created_at TEXT NOT NULL, shipped_at TEXT);
+  target_date TEXT, created_at TEXT NOT NULL, shipped_at TEXT,
+  git_tag TEXT, git_sha TEXT, note TEXT);
 CREATE TABLE IF NOT EXISTS release_tasks(
   release_id TEXT NOT NULL, task_id TEXT NOT NULL,
   PRIMARY KEY(release_id, task_id));
@@ -84,13 +85,31 @@ export function openDb(root) {
   db.exec("PRAGMA journal_mode=WAL");
   db.exec("PRAGMA foreign_keys=ON");
   db.exec(DDL);
+  migrate(db);
+  return db;
+}
+
+/**
+ * 老库升级：只做加列/加表这类向后兼容的动作，必须能重复执行——每次 openDb 都会过一遍。
+ */
+function migrate(db) {
   const cur = db.prepare("SELECT value FROM meta WHERE key='schema_version'").get();
-  if (!cur) db.prepare("INSERT INTO meta(key,value) VALUES('schema_version',?)").run(String(SCHEMA_VERSION));
-  else if (Number(cur.value) > SCHEMA_VERSION) {
-    const err = new Error(`E_SCHEMA_NEWER: 库版本 ${cur.value} > 程序版本 ${SCHEMA_VERSION}，请升级 devcontrol`);
+  const from = cur ? Number(cur.value) : 0;
+  if (from > SCHEMA_VERSION) {
+    const err = new Error(`库版本 ${from} > 程序版本 ${SCHEMA_VERSION}，请升级 devcontrol`);
     err.code = "E_SCHEMA_NEWER";
     throw err;
   }
+  const cols = (t) => new Set(db.prepare(`PRAGMA table_info(${t})`).all().map((c) => c.name));
+  // v2 → v3：发布要能指回一个可回滚的提交
+  if (from < 3) {
+    const c = cols("releases");
+    for (const [name, type] of [["git_tag", "TEXT"], ["git_sha", "TEXT"], ["note", "TEXT"]]) {
+      if (!c.has(name)) db.exec(`ALTER TABLE releases ADD COLUMN ${name} ${type}`);
+    }
+  }
+  if (!cur) db.prepare("INSERT INTO meta(key,value) VALUES('schema_version',?)").run(String(SCHEMA_VERSION));
+  else db.prepare("UPDATE meta SET value=? WHERE key='schema_version'").run(String(SCHEMA_VERSION));
   return db;
 }
 

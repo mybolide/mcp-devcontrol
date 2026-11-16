@@ -119,7 +119,7 @@ export async function dispatch(db, root, args, ctx = {}) {
     case "release.plan":
       return planRelease(db, { id: args.id, tasks: args.tasks });
     case "release.ship":
-      return shipRelease(db, { id: args.id });
+      return shipRelease(db, { id: args.id, root });
     case "memory.write": {
       const result = await rememberAndIndex({
         title: String(args.title ?? ""),

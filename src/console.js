@@ -50,7 +50,7 @@ const OWNER_ACTIONS = {
   "memory.promote": async (db, root, p) => promoteMemory(memoryConfig(process.env, root), p.id),
   "memory.edit": async (db, root, p) => editMemory(memoryConfig(process.env, root), p.id, { title: p.title, body: p.body }, { promote: true }),
   "memory.drop": (db, root, p) => ({ dropped: softDeleteMemory(memoryConfig(process.env, root), p.id) }),
-  "release.ship": (db, root, p) => shipRelease(db, { id: p.id }),
+  "release.ship": (db, root, p) => shipRelease(db, { id: p.id, root }),
   "settings.save": (db, root, p) => writeSettings(root, p.settings ?? p),
 };
 

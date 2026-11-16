@@ -643,7 +643,7 @@ export function cmdRelease(args) {
       return 0;
     }
     if (sub === "ship") {
-      console.log(JSON.stringify(shipRelease(db, { id: args[1] }), null, 2));
+      console.log(JSON.stringify(shipRelease(db, { id: args[1], root }), null, 2));
       return 0;
     }
     if (sub === "show") {
