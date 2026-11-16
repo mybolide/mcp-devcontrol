@@ -428,7 +428,7 @@ export async function taskClose(db, root, input, opts = {}) {
     if (depOrTest.length && !waiveFor(db, t.id, "E_DEP_OR_TEST_TOUCH")) {
       fail("E_DEP_OR_TEST_TOUCH", "改动了依赖或既有测试", { files: depOrTest });
     }
-    }
+    } // ← 闭合上面 324 行的 if (!weak)：这段故意不缩进，别当成多余括号删掉（删了弱模式会跑 R0）
 
     mark("checks", `归属与 scope 检查通过（${files.length} 个文件 / ${lines} 行）`);
 
