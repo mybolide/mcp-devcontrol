@@ -12,6 +12,8 @@ const read = (root, rel) => fs.readFileSync(path.join(root, rel), "utf8");
 
 test("init 装好规范 Skill 与各客户端指针", () => {
   const root = makeRepo();
+  fs.mkdirSync(path.join(root, ".cursor"), { recursive: true });
+  fs.mkdirSync(path.join(root, ".claude"), { recursive: true });
   init(root);
 
   const skill = read(root, SKILL_REL);
@@ -47,6 +49,8 @@ test("重复 init 幂等，且不吞掉用户原有内容", () => {
 
 test("init 把自己写的 Agent 文件提交进仓库（第一次 close 不会被脏树拦住）", () => {
   const root = makeRepo();
+  fs.mkdirSync(path.join(root, ".cursor"), { recursive: true });
+  fs.mkdirSync(path.join(root, ".claude"), { recursive: true });
   init(root);
   const tracked = execFileSync("git", ["ls-files"], { cwd: root, encoding: "utf8" });
   for (const f of [SKILL_REL, CURSOR_RULE_REL, "AGENTS.md", "CLAUDE.md"]) {
@@ -58,6 +62,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 test("控制台启动时自动补齐 Agent 说明（老项目也跟上）", async () => {
   const root = makeRepo();
+  fs.mkdirSync(path.join(root, ".cursor"), { recursive: true });
+  fs.mkdirSync(path.join(root, ".claude"), { recursive: true });
   init(root);
   // 模拟一个早先 init 过、但没有这些说明文件的仓库
   fs.rmSync(path.join(root, ".agents"), { recursive: true, force: true });
@@ -90,6 +96,7 @@ test("控制台启动时自动补齐 Agent 说明（老项目也跟上）", asyn
 
 test("MCP 每次连上都把 Agent 说明对齐（升级后自愈）", () => {
   const root = makeRepo();
+  fs.mkdirSync(path.join(root, ".claude"), { recursive: true });
   init(root);
   fs.rmSync(path.join(root, ".agents"), { recursive: true, force: true });
   fs.rmSync(path.join(root, "CLAUDE.md"), { force: true });
@@ -102,4 +109,13 @@ test("MCP 每次连上都把 Agent 说明对齐（升级后自愈）", () => {
   });
   assert.ok(fs.existsSync(path.join(root, SKILL_REL)), "MCP 启动后应补回 SKILL.md");
   assert.ok(fs.existsSync(path.join(root, "CLAUDE.md")), "MCP 启动后应补回 CLAUDE.md");
+});
+
+test("项目不用 Cursor / Claude 时，不给它塞指针文件", () => {
+  const root = makeRepo();
+  init(root);
+  assert.ok(fs.existsSync(path.join(root, SKILL_REL)), "通用说明要写");
+  assert.ok(fs.existsSync(path.join(root, "AGENTS.md")), "AGENTS.md 要写");
+  assert.ok(!fs.existsSync(path.join(root, CURSOR_RULE_REL)), "没装 Cursor 不该写 .cursor/rules");
+  assert.ok(!fs.existsSync(path.join(root, "CLAUDE.md")), "没用 Claude 不该写 CLAUDE.md");
 });

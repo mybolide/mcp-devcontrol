@@ -5,6 +5,7 @@ import { memoryStatus } from "./memory.js";
 import { metaGet } from "./db.js";
 import { listTasks, listReqs, listBugs, listDocs, listPaths } from "./store.js";
 import { head, isAncestor, statusPorcelain } from "./git.js";
+import { SKILL_REL, skillContent } from "./skill.js";
 import { sha256 } from "./fingerprint.js";
 
 export function doctor(db, root) {
@@ -57,6 +58,19 @@ export function doctor(db, root) {
     }
   } catch {
     /* ignore */
+  }
+  // 说明文件是不是当前版本写的（过期不自动改：任务在办时动它会弄脏工作树）
+  try {
+    const abs = path.join(root, SKILL_REL);
+    if (fs.existsSync(abs) && fs.readFileSync(abs, "utf8") !== skillContent()) {
+      items.push({
+        severity: "warn",
+        code: "SKILL_OUTDATED",
+        detail: "Agent 说明是旧版本写的：收口后跑 devcontrol init（或连一次 MCP）会对齐",
+      });
+    }
+  } catch {
+    /* 读不到就跳过 */
   }
   return items;
 }

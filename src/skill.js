@@ -136,11 +136,20 @@ function writeIfChanged(file, content) {
  * 安装 Agent 侧的全部文件。返回每个文件的状态，供 init 打印与提交。
  * 规范 Skill 只有一份，其余都是指针 —— 内容不会各自漂移。
  */
+/** 项目在用哪个客户端，就只给它装指针：不用的别往仓库里塞文件 */
+function usesClaude(root) {
+  return fs.existsSync(path.join(root, CLAUDE_REL)) || fs.existsSync(path.join(root, ".claude"));
+}
+function usesCursor(root) {
+  return fs.existsSync(path.join(root, ".cursor"));
+}
+
 export function installAgentFiles(root, opts = {}) {
   const out = {};
+  // 规范说明 + AGENTS.md 是通用约定，一直写
   out[SKILL_REL] = writeIfChanged(path.join(root, SKILL_REL), skillContent(opts));
-  out[CURSOR_RULE_REL] = writeIfChanged(path.join(root, CURSOR_RULE_REL), cursorRule());
-  out[CLAUDE_REL] = upsertBlock(path.join(root, CLAUDE_REL), claudeBlock());
   out[AGENTS_REL] = upsertBlock(path.join(root, AGENTS_REL), agentsBlock(opts));
+  if (usesClaude(root)) out[CLAUDE_REL] = upsertBlock(path.join(root, CLAUDE_REL), claudeBlock());
+  if (usesCursor(root)) out[CURSOR_RULE_REL] = writeIfChanged(path.join(root, CURSOR_RULE_REL), cursorRule());
   return out;
 }
