@@ -24,7 +24,7 @@ export const INSTRUCTIONS = `你是本项目的编码 Agent。工作纪律（由
 5. bootstrap 返回的 console 地址就是 Owner 控制台：MCP 启动时自动拉起、挂掉时 bootstrap 自动重建。把它转告 Owner 即可，人不需要手动启动或重启。
 6. memory 是**这个项目自己的经验库**（存在本仓库 .devcontrol/memory.db，不写远程）：踩到的坑/解法、定下的约定、踩过的 SDK 怪癖，随时可以 memory.write（title + body + kind/tags）；动手前先用 memory.search 查一下。任务失败过（bootstrap.task.reviewRound > 0）时，task.close 必须带 resolvedBy，内核会自动记一条 pitfall。`;
 
-const ACTIONS = [
+export const ACTIONS = [
   "bootstrap",
   "wait",
   "task.create",
@@ -40,7 +40,7 @@ const ACTIONS = [
   "release.ship",
 ];
 
-const SCHEMA = {
+export const SCHEMA = {
   action: z.enum(ACTIONS).describe("要执行的动作"),
   id: z.string().optional().describe("任务号 / 发布号"),
   requirementId: z.string().optional(),

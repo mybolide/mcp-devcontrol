@@ -37,7 +37,7 @@ import { listReleases, shipRelease } from "./release.js";
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(HERE, "..", "public");
 
-const OWNER_ACTIONS = {
+export const OWNER_ACTIONS = {
   intake: (db, root, p) => reqIntake(db, root, p),
   approve: (db, root, p) => reqApprove(db, root, p),
   amend: (db, root, p) => reqAmend(db, root, p),
