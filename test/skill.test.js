@@ -87,3 +87,19 @@ test("控制台启动时自动补齐 Agent 说明（老项目也跟上）", asyn
     child.kill("SIGTERM");
   }
 });
+
+test("MCP 每次连上都把 Agent 说明对齐（升级后自愈）", () => {
+  const root = makeRepo();
+  init(root);
+  fs.rmSync(path.join(root, ".agents"), { recursive: true, force: true });
+  fs.rmSync(path.join(root, "CLAUDE.md"), { force: true });
+  // 起一次 MCP（stdin 立刻 EOF），它会按当前代码把说明文件对齐
+  execFileSync(process.execPath, [BIN, "mcp"], {
+    cwd: root,
+    env: { ...process.env, DEVCONTROL_ROOT: root, DEVCONTROL_CONSOLE: "0", DEVCONTROL_MEMORY: "off" },
+    input: "",
+    timeout: 20000,
+  });
+  assert.ok(fs.existsSync(path.join(root, SKILL_REL)), "MCP 启动后应补回 SKILL.md");
+  assert.ok(fs.existsSync(path.join(root, "CLAUDE.md")), "MCP 启动后应补回 CLAUDE.md");
+});

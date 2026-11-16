@@ -6,6 +6,7 @@ import { z } from "zod";
 import { openDb } from "./db.js";
 import { bootstrap } from "./digest.js";
 import { VERSION } from "./protocol.js";
+import { installAgentFiles } from "./skill.js";
 import { taskCreate, taskClaim, taskRenew, taskClose, bugReport, ask } from "./gates.js";
 import { resolveRoot } from "./cli.js";
 import { ensureConsole, readConsoleMeta } from "./console-boot.js";
@@ -196,6 +197,14 @@ export function createServer({ db, root, consoleUrl }) {
 export async function runMcp() {
   const root = resolveRoot();
   const db = openDb(root);
+
+  // MCP 每次连上都把 Agent 说明按当前代码对齐：升级后（哪怕版本号没变）也能自愈
+  const refreshed = Object.entries(installAgentFiles(root)).filter(([, status]) => status !== "unchanged");
+  if (refreshed.length) {
+    // stdout 是 JSON-RPC 通道，日志只能走 stderr
+    const detail = refreshed.map(([rel, status]) => `${rel}（${status === "created" ? "新建" : "更新"}）`).join("、");
+    process.stderr.write(`[devcontrol] Agent 说明已同步：${detail}（记得 commit）\n`);
+  }
 
   // MCP 连接即控制台的生命周期触发器：连上就确保控制台在跑（复用同项目实例）
   const consoleReady = ensureConsole(root).catch(() => null);
