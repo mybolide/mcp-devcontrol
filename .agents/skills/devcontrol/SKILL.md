@@ -43,6 +43,12 @@ version: "6.0.0-alpha.1"
 每个 Agent 用**不同的** `DEVCONTROL_ACTOR`（MCP 里传 `actor`）。
 两个 Agent 用同一个 actor 名，第二个会被 WIP=1 挡住，要等 45 分钟租约过期才恢复。
 
+## 同类需求怎么复用
+
+- 先看有没有现成模板：`devcontrol flow list`
+- 这次做得好，就沉淀下来：`devcontrol flow save <名字> --from FR-001`
+- 下次同类需求：`devcontrol flow apply <名字>` 建需求草稿（批准仍由 Owner 做），再照模板拆任务
+
 ## 记忆
 
 `memory` 是**本项目**的经验库（`.devcontrol/memory.db`）：动手前先搜，踩完坑再写。

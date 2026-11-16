@@ -9,6 +9,7 @@ import { inScope, sha256 } from "./fingerprint.js";
 import { bootstrap } from "./digest.js";
 import { doctor, exportMarkdown } from "./report.js";
 import { createRelease, getRelease, listReleases, planRelease, shipRelease } from "./release.js";
+import { FLOWS_REL, flowFromRequirement, flowToRequirement, listFlows, readFlow } from "./flow.js";
 import { getTask, mapTask, listTasks, listReqs, listPaths, listDocs, reqIntake, disciplineStats } from "./store.js";
 import {
   demoteMemory,
@@ -304,6 +305,57 @@ export function cmdStats() {
   const s = disciplineStats(db);
   console.log(`被拦 ${s.blocked} 次 · 返工 ${s.rework} 轮 · 绕过 ${s.bypassed} 次 · 已完成 ${s.done} 个任务`);
   return 0;
+}
+
+export function cmdFlow(args) {
+  const root = resolveRoot();
+  const db = openDb(root);
+  const sub = args[0] ?? "list";
+  const flag = (name) => {
+    const i = args.indexOf(`--${name}`);
+    return i >= 0 ? args[i + 1] : undefined;
+  };
+  if (sub === "list") {
+    const rows = listFlows(root);
+    if (!rows.length) {
+      console.log("还没有 flow 模板。把一个做过的需求沉淀成模板：devcontrol flow save <名字> --from FR-001");
+      return 0;
+    }
+    for (const r of rows) {
+      if (r.error) console.log(`${r.name}  ✗ ${r.error}`);
+      else console.log(`${r.name.padEnd(20)} ${r.acceptance} 条验收 · ${r.tasks} 个任务  ${r.description}`);
+    }
+    return 0;
+  }
+  if (sub === "show") {
+    console.log(JSON.stringify(readFlow(args[1], root), null, 2));
+    return 0;
+  }
+  if (sub === "save") {
+    const name = args[1];
+    const from = flag("from");
+    if (!name || !from) {
+      console.error("用法：devcontrol flow save <名字> --from FR-001");
+      return 2;
+    }
+    const flow = flowFromRequirement(db, from, name, root);
+    console.log(`已沉淀 flow ${flow.name}：${flow.acceptance.length} 条验收 · ${flow.tasks.length} 个任务 → ${FLOWS_REL}/${flow.name}.json`);
+    console.log("记得把它 commit 进仓库——它是团队的做法，不是机器状态。");
+    return 0;
+  }
+  if (sub === "apply") {
+    const name = args[1];
+    const { requirementId, flow } = flowToRequirement(db, root, name);
+    console.log(`已按 flow ${name} 建需求 ${requirementId}（草稿）。`);
+    console.log("下一步：Owner 在控制台批准 → Agent 按模板拆任务：");
+    flow.tasks.forEach((t, i) => {
+      const dep = t.dependsOn.length ? `  依赖 ${t.dependsOn.map((n) => n + 1).join(",")}` : "";
+      console.log(`  ${i + 1}. ${t.title}  scope=${(t.scope ?? []).join(",") || "-"}${dep}`);
+    });
+    return 0;
+  }
+  console.error("用法：devcontrol flow <list|show|save|apply> ...");
+  return 2;
 }
 
 export function cmdTask(args) {
@@ -629,6 +681,8 @@ export async function main(argv) {
         return cmdNext();
       case "task":
         return cmdTask(args);
+      case "flow":
+        return cmdFlow(args);
       case "close":
         return await cmdClose(args);
       case "status":
@@ -667,6 +721,7 @@ export async function main(argv) {
   devcontrol task list              任务清单
   devcontrol next                   内核认为你现在该做的那一件事（参数可直接照抄）
   devcontrol stats                  纪律三数：被拦 / 返工 / 绕过（内核到底有没有在起作用）
+  devcontrol flow <list|show|save|apply>  流程模板：把做过的交付沉淀下来复用（存 .devcontrol/flows/）
   devcontrol close [T-00x] [--resolved-by "…"]  收口：干净检出内重跑验收（R0–R5）
   devcontrol status                  bootstrap 摘要：next / actions / plan / 记忆命中
   devcontrol memory [status|list|search|add|export|reindex|promote|demote|delete]  通用记忆
