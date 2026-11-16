@@ -347,7 +347,11 @@ export function override(db, input) {
   return tx(db, () => {
     const t = getTask(db, input.taskId);
     if (!t) fail("NOT_FOUND", `任务不存在：${input.taskId}`);
-    if (String(input.reason ?? "").trim().length < 30) fail("E_CONTRACT", "override 理由至少 30 字");
+    const reason = String(input.reason ?? "").trim();
+    // 12 字够写清"为什么放行"；门槛太高只会让人复制粘贴废话，反而丢了审计价值
+    if (reason.length < 12) fail("E_CONTRACT", `放行理由至少 12 字（现在 ${reason.length} 字）：写清楚为什么这次可以放行，会进审计`);
+    // 错误码只有 waive 才需要：force-close 是"整体签字收工"，不针对某一条门禁
+    if (input.mode !== "force-close" && !input.code) fail("E_CONTRACT", "放行要指明拦下的是哪个错误码（例如 E_DEP_OR_TEST_TOUCH）");
     if (input.mode === "force-close") {
       db.prepare("UPDATE tasks SET status='done', closed_by='force-close', closed_at=?, closing_at=NULL, closing_token=NULL, updated_at=? WHERE id=?").run(now(), now(), t.id);
     } else {

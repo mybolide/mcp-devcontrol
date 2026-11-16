@@ -59,6 +59,11 @@ export function shipRelease(db, { id } = {}) {
       pending: r.tasks.filter((t) => t.status !== "done").map((t) => ({ id: t.id, status: t.status })),
     });
   }
+  // 发布意味着"仓库这一版可以交付"：还挂在别人手上的任务会把半成品带上线
+  const stillDoing = db.prepare("SELECT id, title FROM tasks WHERE status='doing' ORDER BY id").all();
+  if (stillDoing.length) {
+    fail("E_RELEASE_OPEN", `还有 ${stillDoing.length} 个任务正在做，先收口再发布`, { doing: stillDoing });
+  }
   db.prepare("UPDATE releases SET status='shipped', shipped_at=? WHERE id=?").run(now(), id);
   logEvent(db, { action: "release.ship", detail: `${id} ${r.tasks.length} 个任务` });
   return getRelease(db, id);

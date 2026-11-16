@@ -11,6 +11,7 @@ import { doctor, exportMarkdown } from "./report.js";
 import { createRelease, getRelease, listReleases, planRelease, shipRelease } from "./release.js";
 import { FLOWS_REL, flowFromRequirement, flowToRequirement, listFlows, readFlow } from "./flow.js";
 import { getTask, mapTask, listTasks, listReqs, listPaths, listDocs, reqIntake, disciplineStats } from "./store.js";
+import { hintFor } from "./hints.js";
 import {
   demoteMemory,
   exportMemories,
@@ -453,12 +454,12 @@ export async function cmdClose(args) {
   }
   try {
     const res = await taskClose(db, root, { id, resolvedBy });
-    console.log(JSON.stringify(res, null, 2));
+    // 成功也带 ok:true：脚本只要看一个字段就知道结果，不用猜"有没有 ok 字段"
+    console.log(JSON.stringify({ ok: true, ...res }, null, 2));
     return 0;
   } catch (error) {
-    const payload = { ok: false, code: error.code ?? "E_INTERNAL", message: error.message, data: error.data ?? null };
-    console.error(JSON.stringify(payload, null, 2));
-    return 1;
+    // 交给 main() 统一收口：失败的 JSON 也走 stdout，人话提示走 stderr
+    throw error;
   }
 }
 
@@ -738,7 +739,13 @@ export async function main(argv) {
         return 2;
     }
   } catch (error) {
-    console.error(`${error.code ?? "E_ERROR"}: ${error.message}`);
+    const code = error.code ?? "E_ERROR";
+    const hint = hintFor(error);
+    // 机器读 stdout：失败也是 JSON，字段和成功时一致（ok/code/message/data）
+    console.log(JSON.stringify({ ok: false, code, message: error.message, data: error.data ?? null, hint }, null, 2));
+    // 人读 stderr：一行说哪里错了，一行说然后呢
+    console.error(`${code}: ${error.message}`);
+    if (hint) console.error(`  → ${hint}`);
     if (process.env.DEVCONTROL_DEBUG) console.error(error.stack);
     return 1;
   }
