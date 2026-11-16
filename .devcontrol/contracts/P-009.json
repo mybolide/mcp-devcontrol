@@ -1,6 +1,6 @@
 {
   "pathId": "P-009",
-  "requirementId": "FR-011",
+  "requirementId": "FR-012",
   "allowedPaths": [
     "."
   ],
