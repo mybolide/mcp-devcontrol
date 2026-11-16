@@ -12,6 +12,7 @@ import { createRelease, getRelease, listReleases, planRelease, shipRelease } fro
 import { FLOWS_REL, flowFromRequirement, flowToRequirement, listFlows, readFlow } from "./flow.js";
 import { getTask, mapTask, listTasks, listReqs, listPaths, listDocs, reqIntake, disciplineStats } from "./store.js";
 import { hintFor } from "./hints.js";
+import { detectTestCmds } from "./testcmd.js";
 import {
   demoteMemory,
   exportMemories,
@@ -156,16 +157,9 @@ export function cmdInit(args) {
 
   const db = openDb(root);
   metaSet(db, "mode", gitMode ? "git" : "weak");
-  const pkgFile = path.join(root, "package.json");
-  let testCmds = [];
-  if (fs.existsSync(pkgFile)) {
-    try {
-      const pkg = JSON.parse(fs.readFileSync(pkgFile, "utf8"));
-      if (pkg.scripts?.test) testCmds = [pkg.scripts.test.includes("--") ? `npm test` : "npm test"];
-    } catch {
-      /* ignore */
-    }
-  }
+  // 命令从「项目现在的样子」采一次；之后项目变了，Owner 在控制台点「重采验收命令」
+  const detected = detectTestCmds(root);
+  const testCmds = detected.cmds;
   let created = 0;
   // 默认只生成一条覆盖全项目的根 Path（"."）：改实现 + 补测试是同一个正常动作，
   // 按顶层目录切会把它拆成两个任务、还得串依赖，人反而要多批一次。

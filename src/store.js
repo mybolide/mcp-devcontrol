@@ -5,6 +5,7 @@ import { logEvent, metaGet, metaSet, nextId, tx } from "./db.js";
 import { commitContract, contractBody, parseAssertion, readContract } from "./contract.js";
 import { inScope } from "./fingerprint.js";
 import { sha256 } from "./fingerprint.js";
+import { assertionCommand, detectTestCmds, retargetAssertion } from "./testcmd.js";
 
 export const now = () => new Date().toISOString();
 export const MIN = 60_000;
@@ -299,6 +300,73 @@ export function pathAdjust(db, root, input) {
     db.prepare("UPDATE paths SET budget_lines=?, hash=?, contract_commit=? WHERE id=?").run(budget, hash, sha, p.id);
     logEvent(db, { channel: "owner", action: "path.adjust", detail: `${p.id} 预算 ${p.budget_lines} → ${budget}：${reason}` });
     return { pathId: p.id, from: p.budget_lines, to: budget, contractCommit: sha };
+  });
+}
+
+/**
+ * Owner：重新采验收命令（`path.retest`）。
+ *
+ * 为什么需要它：契约里的 testCmds 是批准那一刻冻的，但项目会变——
+ * test 脚本从 `node --test tests/` 换成 `node --test`（Node 24 不认目录参数），
+ * 或者从 npm 换成 pnpm。命令一过期，收口跑的就是一条不存在的命令，Agent 只能干瞪眼。
+ *
+ * 只换命令、不改谓词：谓词是「怎样算通过」，那是验收标准，要动得走 req.amend。
+ * 还没开工的任务跟着改断言；已经在办的不动（它 pin 了旧契约），交给 Owner 决定。
+ */
+export function pathRetest(db, root, input) {
+  return tx(db, () => {
+    const p = listPaths(db).find((x) => x.id === input.pathId);
+    if (!p) fail("NOT_FOUND", `Path 不存在：${input.pathId}`);
+    const detected = detectTestCmds(root);
+    const next = (Array.isArray(input.testCmds) && input.testCmds.length ? input.testCmds : detected.cmds)
+      .map((c) => String(c).trim())
+      .filter(Boolean);
+    if (!next.length) {
+      fail("E_NO_TEST_CMD", `采不到验收命令：${detected.note ?? detected.source}`, { source: detected.source });
+    }
+    const reason = String(input.reason ?? "").trim();
+    if (reason.length < 12) fail("E_CONTRACT", `重采命令要写理由（至少 12 字，现在 ${reason.length} 字）：以后才知道为什么换了`);
+    const body = contractBody({
+      pathId: p.id,
+      requirementId: p.requirement_id,
+      allowedPaths: p.allowedPaths,
+      allowNewFiles: Boolean(p.allow_new_files),
+      testCmds: next,
+      budgetLines: p.budget_lines,
+    });
+    const { sha, hash } = commitContract(root, body, "amend", { weak: metaGet(db, "mode") === "weak" });
+    db.prepare("UPDATE paths SET test_cmds_json=?, hash=?, contract_commit=? WHERE id=?").run(JSON.stringify(next), hash, sha, p.id);
+
+    // 还没开工的任务（backlog）跟着换命令：它们自己的 acceptance 里也写着旧的命令原文
+    const cmd = next[0];
+    const retargeted = [];
+    const stuck = [];
+    for (const t of listTasks(db).filter((x) => x.path_id === p.id)) {
+      if (!t.acceptance.length) continue;
+      const needs = t.acceptance.some((a) => !next.includes(assertionCommand(a.assertion)));
+      if (!needs) continue;
+      if (t.status !== "backlog" && t.status !== "parked") {
+        stuck.push(t.id);
+        continue;
+      }
+      const acceptance = t.acceptance.map((a) =>
+        next.includes(assertionCommand(a.assertion)) ? a : { ...a, assertion: retargetAssertion(a.assertion, cmd) },
+      );
+      db.prepare("UPDATE tasks SET acceptance_json=?, contract_hash=?, contract_commit=?, updated_at=? WHERE id=?").run(
+        JSON.stringify(acceptance),
+        hash,
+        sha,
+        now(),
+        t.id,
+      );
+      retargeted.push(t.id);
+    }
+    logEvent(db, {
+      channel: "owner",
+      action: "path.retest",
+      detail: `${p.id} 命令 ${JSON.stringify(p.testCmds)} → ${JSON.stringify(next)}（${detected.source}）：${reason}`,
+    });
+    return { pathId: p.id, from: p.testCmds, to: next, source: detected.source, contractCommit: sha, retargeted, stuck };
   });
 }
 

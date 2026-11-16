@@ -686,7 +686,8 @@
               .map((t) => `<span class="pill ${t.status === "done" ? "done" : t.status === "doing" ? "doing" : ""}">${esc(t.id)}</span>`)
               .join(" ");
             return `<tr><td class="mono">${esc(r.id)}</td><td>${esc(r.title)}</td><td>${tag(r.status)}</td>
-              <td class="mono">${pth ? `${esc(pth.id)} <button class="btn" data-budget="${pth.id}" data-cur="${pth.budget_lines ?? ""}" data-used="${s.tasks.filter((t) => t.path_id === pth.id && t.status === "done").reduce((n, t) => n + (t.changed_lines ?? 0), 0)}" title="改这条 Path 的改动预算">${pth.budget_lines ?? "?"} 行</button>` : "—"}</td>
+              <td class="mono">${pth ? `${esc(pth.id)} <button class="btn" data-budget="${pth.id}" data-cur="${pth.budget_lines ?? ""}" data-used="${s.tasks.filter((t) => t.path_id === pth.id && t.status === "done").reduce((n, t) => n + (t.changed_lines ?? 0), 0)}" title="改这条 Path 的改动预算">${pth.budget_lines ?? "?"} 行</button>` : "—"}
+                ${pth && (pth.testCmds || []).length ? `<div class="mu" style="margin-top:4px">验收：${pth.testCmds.map(esc).join(" · ")} <button class="btn" data-retest="${pth.id}" data-cmds="${esc((pth.testCmds || []).join(" | "))}" title="项目改了 test 脚本，重新采一次验收命令">重采</button></div>` : ""}</td>
               <td>${cov}${miss}<div class="mu">${r.acceptance.map((a) => esc(a)).join(" · ")}</div></td>
               <td>${tasks || `<span class="mu">—</span>`}</td></tr>`;
           })
@@ -929,6 +930,23 @@
           });
           if (!r.ok) return;
           return owner("path.adjust", { pathId, budgetLines: r.values.budgetLines, reason: r.values.reason });
+        }
+        if (b.dataset.retest) {
+          // 项目改了 test 脚本，契约里的命令不会自己跟：这里让 Owner 重新采一次
+          const pathId = b.dataset.retest;
+          const cur = (b.dataset.cmds || "").split(" | ").filter(Boolean);
+          const r = await openSheet({
+            title: `重采 ${pathId} 的验收命令`,
+            desc: "默认按项目现在的样子采（package.json 的 test 脚本 / 语言事实标准）。只换命令，不改「怎样算通过」——那属于验收标准，要走需求变更。",
+            okText: "重采并冻进契约",
+            fields: [
+              { name: "command", label: "验收命令", type: "text", value: cur[0] ?? "", help: "留空表示按项目现状自动采。多条命令用空格分隔会当成一条，请只填一条。" },
+              { name: "reason", label: "为什么换", type: "textarea", rows: 3, minLength: 12, placeholder: "例如：test 脚本从 node --test tests/ 改成 node --test，Node 24 不认目录参数" },
+            ],
+          });
+          if (!r.ok) return;
+          const testCmds = r.values.command ? [r.values.command] : [];
+          return owner("path.retest", { pathId, testCmds, reason: r.values.reason });
         }
         if (b.dataset.memAccept) {
           const id = b.dataset.memAccept;

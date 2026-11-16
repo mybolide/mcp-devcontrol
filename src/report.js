@@ -7,6 +7,7 @@ import { listTasks, listReqs, listBugs, listDocs, listPaths } from "./store.js";
 import { head, isAncestor, statusPorcelain } from "./git.js";
 import { SKILL_REL, skillContent } from "./skill.js";
 import { sha256 } from "./fingerprint.js";
+import { detectTestCmds } from "./testcmd.js";
 
 export function doctor(db, root) {
   const items = [];
@@ -35,6 +36,20 @@ export function doctor(db, root) {
   for (const p of listPaths(db)) {
     for (const rel of p.allowedPaths) {
       if (!fs.existsSync(path.join(root, rel))) items.push({ severity: "warn", code: "STALE_PATH", detail: `${p.id} 的 allowed_path 不存在：${rel}` });
+    }
+    // 验收命令会不会已经过期：契约冻的是批准那一刻的命令，项目改了 test 脚本它不会自己跟。
+    // 命令过期时收口跑的是一条不存在的命令，Agent 看着「失败」却不知道错在哪。
+    if (p.status === "approved" && p.testCmds?.length) {
+      const now = detectTestCmds(root);
+      const stale = now.cmds.length ? !p.testCmds.some((c) => now.cmds.includes(c)) : false;
+      if (stale) {
+        items.push({
+          severity: "warn",
+          code: "TEST_CMD_DRIFT",
+          pathId: p.id,
+          detail: `${p.id} 冻结的命令是 ${p.testCmds.join(" / ")}，项目现在该用 ${now.cmds.join(" / ")}（控制台点「重采验收命令」可更新）`,
+        });
+      }
     }
   }
   if (weak) {

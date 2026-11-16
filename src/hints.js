@@ -23,6 +23,8 @@ const HINTS = {
   E_NO_CLEAN_WORKTREE: "工作树不干净，收口要在干净检出里重跑。先提交或清理。",
   E_MEMORY_CANDIDATE: "这条经验不合格，已进隔离区。按返回的模板改写成「可复用的一条」再提交。",
   E_CONTRACT: "违反契约。看 message 里的具体条款——契约是 Owner 批准的，Agent 不能改。",
+  E_NO_TEST_CMD: "按项目现状采不到验收命令。这需要 Owner 处理：控制台「需求」页里给这条 Path 手填一条（例如 npm test）。",
+  E_RELEASE_TAG: "发布时打不上 git tag，回滚点没建成，所以不算发布。检查 .git/refs/tags 的权限，或本地是否有同名 tag 冲突。",
   E_NO_CONTRACT: "还没有契约。先 devcontrol init，并让 Owner 批准 Path。",
   E_ILLEGAL_TRANSITION: "当前状态不允许这个动作（比如还没领任务就收口）。先看 devcontrol next 说的是哪一步。",
   E_NOT_REPO: "这里不是 git 仓库。devcontrol 靠提交链判定归属，先在仓库里用。",
