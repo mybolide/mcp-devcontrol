@@ -409,8 +409,13 @@ export async function taskClose(db, root, input, opts = {}) {
     if (todos.length) fail("E_LINT_TODO", "新增 TODO 未带任务号", { lines: todos.slice(0, 5) });
     const cfg = files.filter(isTestConfig);
     if (cfg.length && !waiveFor(db, t.id, "E_TEST_CONFIG_TOUCH")) fail("E_TEST_CONFIG_TOUCH", "改动了测试配置", { files: cfg });
-    const depOrTest = files.filter((f) => isPkg(f) || (isTestPath(f) && t.kind !== "test"));
-    if (depOrTest.length && !waiveFor(db, t.id, "E_DEP_OR_TEST_TOUCH")) fail("E_DEP_OR_TEST_TOUCH", "改动了依赖或测试", { files: depOrTest });
+    // 新增测试文件是 TDD 的正常动作，它不削弱任何既有断言；
+    // 真正要 Owner 签字的是「动了既有的测试」——那条路能悄悄放宽断言。
+    const addedFilesSet = new Set(owned.flatMap((c) => addedFiles(root, c.sha)));
+    const depOrTest = files.filter((f) => isPkg(f) || (isTestPath(f) && t.kind !== "test" && !addedFilesSet.has(f)));
+    if (depOrTest.length && !waiveFor(db, t.id, "E_DEP_OR_TEST_TOUCH")) {
+      fail("E_DEP_OR_TEST_TOUCH", "改动了依赖或既有测试", { files: depOrTest });
+    }
     }
 
     // 干净判定（需要 git；弱模式没有这个能力）

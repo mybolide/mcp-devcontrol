@@ -93,6 +93,25 @@ test("ship：别人手上还有在办任务时不许发布（半成品会上线�
   assert.equal(shipRelease(db, { id: r.id }).status, "shipped");
 });
 
+test("新增测试文件放行，改既有测试仍要 Owner 签字", async () => {
+  const root = makeRepo();
+  const { db, reqId } = initFlow(root);
+  // ① 只新增一个测试文件：这是 TDD 的正常动作，不该要 Owner 放行
+  const a = newTask(db, root, reqId, { title: "补新测试", scope: ["src"] });
+  taskClaim(db, root, { id: a.id }, "agentA");
+  fs.writeFileSync(path.join(root, "src/new.test.js"), "import test from \"node:test\";\ntest(\"x\", () => {});\n");
+  commitFiles(root, ["src/new.test.js"], `feat\n\nTask-Id: ${a.id}\nDevControl-Base: ${a.base_head}`, { author: "agentA" });
+  const res = await taskClose(db, root, { id: a.id });
+  assert.equal(res.runs[0].passed, true, "新增测试文件不应该被拦");
+
+  // ② 改既有测试：这才是能悄悄放宽断言的路，仍然要签字
+  const b = newTask(db, root, reqId, { title: "改老测试", scope: ["src"] });
+  taskClaim(db, root, { id: b.id }, "agentA");
+  fs.writeFileSync(path.join(root, "src/new.test.js"), "import test from \"node:test\";\ntest(\"x\", () => {});\n// 顺手放宽\n");
+  commitFiles(root, ["src/new.test.js"], `chore\n\nTask-Id: ${b.id}\nDevControl-Base: ${b.base_head}`, { author: "agentA" });
+  await assert.rejects(() => taskClose(db, root, { id: b.id }), (e) => e.code === "E_DEP_OR_TEST_TOUCH");
+});
+
 test("Path 预算能调（项目会长大），改的是契约本身且留痕", () => {
   const root = makeRepo();
   const { db } = initFlow(root);
