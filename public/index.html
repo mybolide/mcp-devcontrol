@@ -940,12 +940,22 @@
             desc: "默认按项目现在的样子采（package.json 的 test 脚本 / 语言事实标准）。只换命令，不改「怎样算通过」——那属于验收标准，要走需求变更。",
             okText: "重采并冻进契约",
             fields: [
-              { name: "command", label: "验收命令", type: "text", value: cur[0] ?? "", help: "留空表示按项目现状自动采。多条命令用空格分隔会当成一条，请只填一条。" },
+              {
+                name: "command",
+                label: "验收命令",
+                type: "textarea",
+                rows: 3,
+                value: cur.join("\n"),
+                help: "一行一条：全栈项目常常「测试要过 + 构建要过」，两行就是两条验收。留空表示按项目现状自动采。",
+              },
               { name: "reason", label: "为什么换", type: "textarea", rows: 3, minLength: 12, placeholder: "例如：test 脚本从 node --test tests/ 改成 node --test，Node 24 不认目录参数" },
             ],
           });
           if (!r.ok) return;
-          const testCmds = r.values.command ? [r.values.command] : [];
+          const testCmds = String(r.values.command ?? "")
+            .split("\n")
+            .map((c) => c.trim())
+            .filter(Boolean);
           return owner("path.retest", { pathId, testCmds, reason: r.values.reason });
         }
         if (b.dataset.memAccept) {
