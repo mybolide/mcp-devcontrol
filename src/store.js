@@ -205,21 +205,26 @@ export function reqApprove(db, root, input) {
     if (input.acceptanceHashPrefix && !expected.startsWith(input.acceptanceHashPrefix)) {
       fail("E_HASH_MISMATCH", `哈希前 8 位不符：${expected.slice(0, 8)}`);
     }
+    // Owner 在需求验收里写的命令，必须一起冻进契约：只按 Path 原来采到的那几条冻结，
+    // 等于把 Owner 明说的验收（例如「构建也要过」）静默丢掉，之后任何任务想用它都会被 E_CONTRACT 拦住。
+    const wanted = req.acceptance.map((a) => assertionCommand(a)).filter(Boolean);
+    const testCmds = [...new Set([...p.testCmds, ...wanted])];
     const body = contractBody({
       pathId: p.id,
       requirementId: req.id,
       allowedPaths: p.allowedPaths,
       allowNewFiles: Boolean(p.allow_new_files),
-      testCmds: p.testCmds,
+      testCmds,
       budgetLines: p.budget_lines,
     });
     const weak = metaGet(db, "mode") === "weak";
     const { sha, hash } = commitContract(root, body, "approve", { weak });
     db.prepare("UPDATE requirements SET status='approved', approved_at=? WHERE id=?").run(now(), req.id);
-    db.prepare("UPDATE paths SET requirement_id=?, status='approved', hash=?, contract_commit=?, approved_at=? WHERE id=?").run(
+    db.prepare("UPDATE paths SET requirement_id=?, status='approved', hash=?, contract_commit=?, test_cmds_json=?, approved_at=? WHERE id=?").run(
       req.id,
       hash,
       sha,
+      JSON.stringify(testCmds),
       now(),
       p.id,
     );
