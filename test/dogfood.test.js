@@ -8,9 +8,11 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { createRelease, getRelease, planRelease, shipRelease } from "../src/release.js";
-import { listPaths, override, pathAdjust } from "../src/store.js";
+import { getTask, listPaths, override, pathAdjust } from "../src/store.js";
 import { hintFor } from "../src/hints.js";
 import { readContract } from "../src/contract.js";
+import { taskClaim, taskClose } from "../src/gates.js";
+import { commitFiles } from "../src/git.js";
 import { makeRepo, initFlow, newTask } from "./helpers.js";
 
 const BIN = path.resolve(import.meta.dirname, "../bin/devcontrol.js");
@@ -111,6 +113,25 @@ test("Path 预算能调（项目会长大），改的是契约本身且留痕", 
     () => pathAdjust(db, root, { pathId: "P-001", budgetLines: 2000, reason: "太短" }),
     (e) => e.code === "E_CONTRACT" && /现在 2 字/.test(e.message),
   );
+});
+
+test("放宽 Path 预算对在办任务立即生效（不用先收了重开）", async () => {
+  const root = makeRepo();
+  const { db, reqId } = initFlow(root);
+  // 先占住预算：造一条"已完成"的大任务，让剩余空间只剩 1 行
+  db.prepare(
+    "INSERT INTO tasks(id,requirement_id,path_id,kind,title,status,scope_json,acceptance_json,depends_on_json,budget_lines,base_head,contract_hash,contract_commit,created_at,updated_at,changed_lines) VALUES('T-900',?,'P-001','feature','占位','done','[\"src\"]','[]','[]',400,'x','h','c',0,0,1199)",
+  ).run(reqId);
+  const t = newTask(db, root, reqId);
+  taskClaim(db, root, { id: t.id }, "agentA");
+  fs.writeFileSync(path.join(root, "src/a.js"), "export const big = 1;\nexport const more = 2;\n");
+  commitFiles(root, ["src/a.js"], `feat\n\nTask-Id: ${t.id}\nDevControl-Base: ${t.base_head}`, { author: "agentA" });
+
+  // 领取之后 Owner 才放宽：应该立即生效，不用重新领取
+  pathAdjust(db, root, { pathId: "P-001", budgetLines: 5000, reason: "项目体量增长，原预算已不够用，按实际情况放宽" });
+  const res = await taskClose(db, root, { id: t.id });
+  assert.equal(res.runs[0].passed, true);
+  assert.equal(getTask(db, t.id).status, "done");
 });
 
 test("hint 覆盖所有会被 Agent 撞到的门禁码（漏了就返回 null，不会瞎编）", () => {

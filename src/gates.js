@@ -396,7 +396,12 @@ export async function taskClose(db, root, input, opts = {}) {
     }
     lines = owned.reduce((n, c) => n + numstat(root, c.sha).reduce((m, x) => m + x.added + x.deleted, 0), 0);
     const pathUsed = db.prepare("SELECT changed_lines FROM tasks WHERE path_id=? AND status='done'").all(p.id).reduce((n, r) => n + r.changed_lines, 0);
-    if (pathUsed + lines > Number(body.budgetLines ?? 1200) && !waiveFor(db, t.id, "E_DIFF_BUDGET")) fail("E_DIFF_BUDGET", `Path 累计超预算`, { scope: "path" });
+    // 预算不是安全边界（安全边界是 scope 和验收），只是"任务是不是太大了"的提醒：
+    // 所以取「领取时 pin 的」与「当前 Path 契约」的较大者——Owner 放宽预算立即生效，
+    // 收紧则只影响之后领取的任务，不会把人卡在半路。
+    const curBudget = Number(readContract(root, p.contract_commit, p.id).body?.budgetLines ?? 0);
+    const pathBudget = Math.max(Number(body.budgetLines ?? 1200), curBudget);
+    if (pathUsed + lines > pathBudget && !waiveFor(db, t.id, "E_DIFF_BUDGET")) fail("E_DIFF_BUDGET", `Path 累计 ${pathUsed + lines} 行 > ${pathBudget}`, { scope: "path", used: pathUsed + lines, budget: pathBudget });
     if (lines > t.budget_lines && !waiveFor(db, t.id, "E_DIFF_BUDGET")) fail("E_DIFF_BUDGET", `任务累计 ${lines} 行 > ${t.budget_lines}`);
     const todos = owned
       .flatMap((c) => git(root, ["diff", "-m", "--first-parent", `${c.sha}^..${c.sha}`]).split("\n"))
