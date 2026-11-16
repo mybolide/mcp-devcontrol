@@ -415,10 +415,16 @@ export async function taskClose(db, root, input, opts = {}) {
     const pathBudget = Math.max(Number(body.budgetLines ?? 1200), curBudget);
     if (pathUsed + lines > pathBudget && !waiveFor(db, t.id, "E_DIFF_BUDGET")) fail("E_DIFF_BUDGET", `Path 累计 ${pathUsed + lines} 行 > ${pathBudget}`, { scope: "path", used: pathUsed + lines, budget: pathBudget });
     if (lines > t.budget_lines && !waiveFor(db, t.id, "E_DIFF_BUDGET")) fail("E_DIFF_BUDGET", `任务累计 ${lines} 行 > ${t.budget_lines}`);
+    // 只认「注释开头的标记」：斜杠注释、井号注释、块注释、HTML 注释后面紧跟标记词。
+    // 早先只看词根，结果凡是在文案/文档里**提到**那个词也会被拦
+    // （内核自己写了一条讲它的提示，就被自己的门禁挡住了）。
+    // 注意：这段注释本身也不能写出「注释符+标记词」的字面量，否则会被自己拦住——
+    // 这不是妥协，是这条规则必然的后果，测试文件里同样要绕。
+    const MARK = /(?:\/\/|#|\/\*|\*|<!--)\s*(TODO|FIXME|HACK|XXX)\b/;
     const todos = owned
       .flatMap((c) => git(root, ["diff", "-m", "--first-parent", `${c.sha}^..${c.sha}`]).split("\n"))
-      .filter((l) => /^\+/.test(l) && /(TODO|FIXME|HACK|XXX)/.test(l) && !l.includes(t.id));
-    if (todos.length) fail("E_LINT_TODO", "新增 TODO 未带任务号", { lines: todos.slice(0, 5) });
+      .filter((l) => /^\+/.test(l) && MARK.test(l) && !l.includes(t.id));
+    if (todos.length) fail("E_LINT_TODO", `新增 TODO/FIXME 标记未带任务号（写在注释里就得带 ${t.id}）`, { lines: todos.slice(0, 5) });
     const cfg = files.filter(isTestConfig);
     if (cfg.length && !waiveFor(db, t.id, "E_TEST_CONFIG_TOUCH")) fail("E_TEST_CONFIG_TOUCH", "改动了测试配置", { files: cfg });
     // 新增测试文件是 TDD 的正常动作，它不削弱任何既有断言；
