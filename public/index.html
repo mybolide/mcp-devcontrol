@@ -134,6 +134,28 @@
       .toast.bad { background: #8d2f2f; }
       .toast[hidden] { display: none; }
       .view[hidden] { display: none; }
+      /* Owner 的动作要有表单，不要靠 prompt() 裸奔：字段、校验提示、二次确认都在这里 */
+      dialog.sheet {
+        border: 1px solid #e2e7ee; border-radius: var(--radius); padding: 0; margin: auto;
+        width: min(560px, calc(100vw - 32px)); background: #fff; color: var(--text);
+        box-shadow: 0 24px 64px #0d1a2b30;
+      }
+      dialog.sheet::backdrop { background: #17212f3d; }
+      .sheet-inner { padding: 22px 24px 4px; }
+      .sheet-inner h2 { margin-bottom: 6px; }
+      .sheet-inner .desc { font-size: 13.5px; color: #526276; margin: 0 0 18px; line-height: 1.55; }
+      .field { margin-bottom: 15px; }
+      .field > label { display: block; font-size: 12.5px; font-weight: 660; color: #344258; margin-bottom: 5px; }
+      .field > input, .field > textarea, .field > select { width: 100%; }
+      .field .help { font-size: 12px; color: #6b7c92; margin-top: 5px; line-height: 1.5; }
+      .field .err { font-size: 12px; color: var(--red); margin-top: 5px; font-weight: 640; }
+      .field .err[hidden], .field .help[hidden] { display: none; }
+      .field input[aria-invalid="true"], .field textarea[aria-invalid="true"], .field select[aria-invalid="true"] {
+        border-color: #e0a3aa; background: #fdf7f7;
+      }
+      .field .counter { font-size: 11.5px; color: #6b7c92; margin-top: 4px; text-align: right; font-family: var(--font-mono); }
+      .sheet-foot { display: flex; justify-content: flex-end; gap: 9px; padding: 16px 24px 20px; border-top: 1px solid #eef1f5; margin-top: 6px; background: #fbfcfe; }
+      .sheet-foot .btn { min-width: 92px; justify-content: center; }
       @media (max-width: 900px) {
         body { grid-template-columns: 1fr; }
         .sidebar { position: static; height: auto; border-right: 0; border-bottom: 1px solid var(--stroke); }
@@ -323,6 +345,19 @@
       </section>
 
       <div class="toast" id="toast" hidden></div>
+      <dialog class="sheet" id="sheet">
+        <form method="dialog" id="sheet-form">
+          <div class="sheet-inner">
+            <h2 id="sheet-title"></h2>
+            <p class="desc" id="sheet-desc" hidden></p>
+            <div id="sheet-fields"></div>
+          </div>
+          <div class="sheet-foot">
+            <button class="btn" type="button" id="sheet-cancel">取消</button>
+            <button class="btn primary" type="submit" id="sheet-ok">确定</button>
+          </div>
+        </form>
+      </dialog>
     </main>
     <script>
       const $ = (id) => document.getElementById(id);
@@ -379,6 +414,152 @@
         show(res, action);
         if (res.ok) await tick(true);
         return res;
+      }
+
+      /**
+       * 通用表单弹层：返回 { ok: true, values } 或 { ok: false }（取消）。
+       * fields: [{ name, label, type: text|number|textarea|select, value, placeholder,
+       *            help, options: [{value,label}], min, max, minLength, required, validate }]
+       * 校验在提交时跑一遍，把每个字段的错误显示在自己的位置，而不是弹个 alert。
+       */
+      function openSheet({ title, desc, fields = [], okText = "确定", danger = false }) {
+        const dlg = $("sheet");
+        $("sheet-title").textContent = title;
+        const descEl = $("sheet-desc");
+        descEl.textContent = desc ?? "";
+        descEl.hidden = !desc;
+        const ok = $("sheet-ok");
+        ok.textContent = okText;
+        ok.className = `btn ${danger ? "danger" : "primary"}`;
+        const box = $("sheet-fields");
+        box.textContent = "";
+
+        for (const f of fields) {
+          const wrap = document.createElement("div");
+          wrap.className = "field";
+          const id = `sheet-f-${f.name}`;
+          const label = document.createElement("label");
+          label.htmlFor = id;
+          label.textContent = f.label;
+          wrap.append(label);
+          let input;
+          if (f.type === "textarea") {
+            input = document.createElement("textarea");
+            input.rows = f.rows ?? 3;
+          } else if (f.type === "select") {
+            input = document.createElement("select");
+            for (const o of f.options ?? []) {
+              const opt = document.createElement("option");
+              opt.value = String(o.value);
+              opt.textContent = o.label;
+              input.append(opt);
+            }
+          } else {
+            input = document.createElement("input");
+            input.type = f.type === "number" ? "number" : "text";
+            if (f.min !== undefined) input.min = String(f.min);
+            if (f.max !== undefined) input.max = String(f.max);
+          }
+          input.id = id;
+          input.name = f.name;
+          if (f.value !== undefined && f.value !== null) input.value = String(f.value);
+          if (f.placeholder) input.placeholder = f.placeholder;
+          wrap.append(input);
+          const help = document.createElement("div");
+          help.className = "help";
+          help.textContent = f.help ?? "";
+          help.hidden = !f.help;
+          wrap.append(help);
+          const err = document.createElement("div");
+          err.className = "err";
+          err.id = `${id}-err`;
+          err.hidden = true;
+          wrap.append(err);
+          let counter = null;
+          if (f.minLength) {
+            counter = document.createElement("div");
+            counter.className = "counter";
+            wrap.append(counter);
+            const sync = () => {
+              const n = input.value.trim().length;
+              const enough = n >= f.minLength;
+              counter.textContent = `${n} / ${f.minLength} 字${enough ? " ✓" : ""}`;
+              counter.style.color = enough ? "var(--green)" : "#a86b1a";
+            };
+            input.addEventListener("input", sync);
+            sync();
+          }
+          input.addEventListener("input", () => {
+            err.hidden = true;
+            input.setAttribute("aria-invalid", "false");
+          });
+          box.append(wrap);
+          f._el = input;
+          f._err = err;
+          f._counter = counter;
+        }
+
+        return new Promise((resolve) => {
+          // close 事件是异步派发的：先 close() 再同步 resolve，那个迟到的 close 会打到
+          // 紧接着 showModal() 的下一层弹层上（表现为二次确认一闪而过、形同虚设）。
+          // 所以一律等 close 事件真正派发完再 resolve。
+          let settled = null;
+          const finish = () => {
+            dlg.removeEventListener("close", onClose);
+            ok.removeEventListener("click", onSubmit);
+            $("sheet-cancel").removeEventListener("click", onCancel);
+            const result = settled ?? { ok: false };
+            settled = null;
+            resolve(result);
+          };
+          const done = (result) => {
+            if (settled) return; // 双击「确定」只算一次
+            settled = result;
+            if (dlg.open) dlg.close();
+            else finish();
+          };
+          const collect = () => {
+            const values = {};
+            for (const f of fields) values[f.name] = f.type === "number" ? Number(f._el.value) : f._el.value.trim();
+            return values;
+          };
+          // 「确定」是 submit：按回车也能提交，但校验不过不关窗
+          const onSubmit = (e) => {
+            e.preventDefault();
+            const values = collect();
+            let firstBad = null;
+            for (const f of fields) {
+              const raw = f.type === "number" ? f._el.value : values[f.name];
+              let msg = "";
+              if (f.required !== false && (raw === "" || raw === undefined || raw === null)) msg = "这一项不能空";
+              else if (f.type === "number" && !Number.isFinite(values[f.name])) msg = "要填一个数字";
+              else if (f.minLength && values[f.name].length < f.minLength) msg = `至少 ${f.minLength} 字（现在 ${values[f.name].length} 字）`;
+              else if (f.type === "number" && f.min !== undefined && values[f.name] < f.min) msg = `不能小于 ${f.min}`;
+              else if (f.type === "number" && f.max !== undefined && values[f.name] > f.max) msg = `不能大于 ${f.max}`;
+              else if (f.validate) msg = f.validate(values[f.name], values) ?? "";
+              f._err.textContent = msg;
+              f._err.hidden = !msg;
+              f._el.setAttribute("aria-invalid", msg ? "true" : "false");
+              if (msg && !firstBad) firstBad = f._el;
+            }
+            if (firstBad) return firstBad.focus();
+            done({ ok: true, values });
+          };
+          const onCancel = () => done({ ok: false });
+          // Esc / 点遮罩 / 自身 close 都走这里；只有我们确实关过（settled 非空）才算取消
+          const onClose = () => finish();
+          ok.addEventListener("click", onSubmit);
+          $("sheet-cancel").addEventListener("click", onCancel);
+          dlg.addEventListener("close", onClose);
+          dlg.showModal();
+          const first = fields.find((f) => f.type !== "select") ?? fields[0];
+          if (first) setTimeout(() => first._el.focus(), 0);
+        });
+      }
+      /** 危险动作的二次确认：只有一个确认按钮，取消就是不做 */
+      async function confirmSheet(title, desc, okText = "确认") {
+        const r = await openSheet({ title, desc, okText, danger: true, fields: [] });
+        return r.ok;
       }
       function switchView(view) {
         for (const btn of document.querySelectorAll(".navbtn")) btn.classList.toggle("active", btn.dataset.nav === view);
@@ -505,7 +686,7 @@
               .map((t) => `<span class="pill ${t.status === "done" ? "done" : t.status === "doing" ? "doing" : ""}">${esc(t.id)}</span>`)
               .join(" ");
             return `<tr><td class="mono">${esc(r.id)}</td><td>${esc(r.title)}</td><td>${tag(r.status)}</td>
-              <td class="mono">${pth ? `${esc(pth.id)} <button class="btn" data-budget="${pth.id}" data-cur="${pth.budget_lines ?? ""}" title="改这条 Path 的改动预算">${pth.budget_lines ?? "?"} 行</button>` : "—"}</td>
+              <td class="mono">${pth ? `${esc(pth.id)} <button class="btn" data-budget="${pth.id}" data-cur="${pth.budget_lines ?? ""}" data-used="${s.tasks.filter((t) => t.path_id === pth.id && t.status === "done").reduce((n, t) => n + (t.changed_lines ?? 0), 0)}" title="改这条 Path 的改动预算">${pth.budget_lines ?? "?"} 行</button>` : "—"}</td>
               <td>${cov}${miss}<div class="mu">${r.acceptance.map((a) => esc(a)).join(" · ")}</div></td>
               <td>${tasks || `<span class="mu">—</span>`}</td></tr>`;
           })
@@ -694,25 +875,60 @@
           if (res.ok && navigator.clipboard) await navigator.clipboard.writeText(res.result.text);
           return;
         }
-        if (b.dataset.reopen) return owner("reopen", { taskId: b.dataset.reopen, reason: prompt("打回理由") ?? "" });
+        if (b.dataset.reopen) {
+          const taskId = b.dataset.reopen;
+          const r = await openSheet({
+            title: `打回 ${taskId}`,
+            desc: "任务会回到待办，重新走 claim → commit → close。写清为什么要重做，Agent 才不会再犯同一个错。",
+            okText: "打回重做",
+            fields: [{ name: "reason", label: "打回理由", type: "textarea", rows: 3, minLength: 6, placeholder: "例如：验收只跑了 happy path，边界没覆盖" }],
+          });
+          if (!r.ok) return;
+          return owner("reopen", { taskId, reason: r.values.reason });
+        }
         if (b.dataset.override) {
-          const picked = prompt(
-            "要手下放行哪一种拦截？输入序号\n1 验收没过\n2 改动超出预算\n3 动了依赖或测试文件\n4 动了测试配置\n5 改到范围之外的文件",
-            "1",
-          );
-          const code = { "1": "E_ASSERTION_FAILED", "2": "E_DIFF_BUDGET", "3": "E_DEP_OR_TEST_TOUCH", "4": "E_TEST_CONFIG_TOUCH", "5": "E_SCOPE_VIOLATION" }[String(picked ?? "").trim()];
-          if (!code) return;
-          const reason = prompt("为什么放行？（至少 12 字，会记进事件日志）");
-          if (!reason) return;
-          return owner("override", { taskId: b.dataset.override, code, mode: "waive", reason });
+          const taskId = b.dataset.override;
+          const CODES = [
+            { value: "E_ASSERTION_FAILED", label: "E_ASSERTION_FAILED — 验收没过" },
+            { value: "E_DIFF_BUDGET", label: "E_DIFF_BUDGET — 改动超出预算" },
+            { value: "E_DEP_OR_TEST_TOUCH", label: "E_DEP_OR_TEST_TOUCH — 动了依赖或既有测试" },
+            { value: "E_TEST_CONFIG_TOUCH", label: "E_TEST_CONFIG_TOUCH — 动了测试配置" },
+            { value: "E_SCOPE_VIOLATION", label: "E_SCOPE_VIOLATION — 改到范围之外的文件" },
+            { value: "__force__", label: "整单放行（force-close）：不看门禁，直接算完成" },
+          ];
+          const r = await openSheet({
+            title: `放行 ${taskId}`,
+            desc: "放行是记账，不是免罪：这条会进审计，事后能查是谁、为什么。",
+            okText: "放行",
+            danger: true,
+            fields: [
+              { name: "code", label: "拦下的是哪一条", type: "select", options: CODES },
+              { name: "reason", label: "为什么这次可以放行", type: "textarea", rows: 3, minLength: 12, placeholder: "写清楚原因，以后才看得懂这次为什么破例" },
+            ],
+          });
+          if (!r.ok) return;
+          const force = r.values.code === "__force__";
+          const code = force ? undefined : r.values.code;
+          // 整单放行是不可逆的（直接标 done），单独确认一次
+          if (force && !(await confirmSheet(`真的整单放行 ${taskId}？`, "它会被直接标记完成，跳过了干净检出重跑验收。事后只有事件日志能说明这里发生过什么。"))) return;
+          return owner("override", { taskId, code, mode: force ? "force-close" : "waive", reason: r.values.reason });
         }
         if (b.dataset.budget) {
           // 项目会长大：预算要能在控制台改，且改的是契约（留痕），不是偷偷放水
-          const next = prompt(`把 ${b.dataset.budget} 的改动预算改成多少行？`, b.dataset.cur ?? "");
-          if (!next) return;
-          const reason = prompt("为什么调整？（至少 12 字，会进审计）");
-          if (!reason) return;
-          return owner("path.adjust", { pathId: b.dataset.budget, budgetLines: Number(next), reason });
+          const pathId = b.dataset.budget;
+          const cur = Number(b.dataset.cur) || 0;
+          const used = Number(b.dataset.used) || 0;
+          const r = await openSheet({
+            title: `调整 ${pathId} 的改动预算`,
+            desc: `当前预算 ${cur} 行${used ? `，已用 ${used} 行` : ""}。放宽对在办任务立即生效；收紧只影响之后领取的任务。`,
+            okText: "改预算",
+            fields: [
+              { name: "budgetLines", label: "新预算（行）", type: "number", value: cur, min: 100, help: "至少 100 行。这不是安全边界，只是「任务是不是太大了」的提醒。" },
+              { name: "reason", label: "为什么调整", type: "textarea", rows: 3, minLength: 12, placeholder: "例如：这个项目进入维护期，单次改动不再需要 1200 行" },
+            ],
+          });
+          if (!r.ok) return;
+          return owner("path.adjust", { pathId, budgetLines: r.values.budgetLines, reason: r.values.reason });
         }
         if (b.dataset.memAccept) {
           const id = b.dataset.memAccept;
