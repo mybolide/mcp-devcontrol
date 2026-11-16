@@ -275,6 +275,17 @@ function linkNodeModules(root, cwd) {
 }
 
 export async function taskClose(db, root, input, opts = {}) {
+  // 收口要跑一遍干净检出（本项目 npm test ≈ 26s），中途没有任何输出会让人以为卡死了。
+  // 进度只走回调：CLI 打到 stderr（stdout 必须保持干净 JSON），MCP 不传就没有噪音。
+  const progress = typeof opts.onProgress === "function" ? opts.onProgress : () => {};
+  const startedAt = Date.now();
+  const mark = (stage, detail) => {
+    try {
+      progress({ stage, detail, elapsedMs: Date.now() - startedAt });
+    } catch {
+      /* 进度上报失败不能影响收口本身 */
+    }
+  };
   const t0 = getTask(db, input.id);
   if (!t0) fail("NOT_FOUND", `任务不存在：${input.id}`);
   if (t0.status !== "doing") fail("E_ILLEGAL_TRANSITION", `${t0.id} 当前 ${t0.status}`);
@@ -297,6 +308,7 @@ export async function taskClose(db, root, input, opts = {}) {
   if (cas.changes !== 1) fail("E_BUSY", "另一个 close 正在进行");
 
   let last = null;
+  mark("start", `开始收口 ${t0.id}（干净检出里重跑验收）`);
   try {
     const t = getTask(db, t0.id);
     const p = getPath(db, t.path_id);
@@ -418,6 +430,8 @@ export async function taskClose(db, root, input, opts = {}) {
     }
     }
 
+    mark("checks", `归属与 scope 检查通过（${files.length} 个文件 / ${lines} 行）`);
+
     // 干净判定（需要 git；弱模式没有这个能力）
     if (!weak) {
       if (statusPorcelain(root, ["--untracked-files=no", "--", ".", ":(exclude).devcontrol"])) fail("E_DIRTY_SCOPE", "工作树有未提交改动");
@@ -426,12 +440,24 @@ export async function taskClose(db, root, input, opts = {}) {
 
     // R2（干净检出内重跑）
     const fp0 = fingerprint(root, t.scope, head0);
+    mark("worktree", "在干净检出里准备环境");
     const cwd = prepareWorktree(root, { weak });
     linkNodeModules(root, cwd);
     const runs = [];
     for (const [idx, item] of t.acceptance.entries()) {
       const { command, predicate } = parseAssertion(item.assertion);
-      const result = await execCommand(cwd, command, { env: { DEVCONTROL_TASK: t.id } });
+      mark("assert", `跑验收 ${idx + 1}/${t.acceptance.length}：${command}`);
+      // 心跳：一条 npm test 可能跑几十秒，期间没有任何输出会让人以为卡死而 Ctrl-C。
+      // 只报「还在跑」，不假装有进度百分比——子进程不给我们就不编。
+      const beat = setInterval(() => mark("beat", `跑验收 ${idx + 1}/${t.acceptance.length}：${command}（还在跑）`), 5000);
+      beat.unref?.();
+      let result;
+      try {
+        result = await execCommand(cwd, command, { env: { DEVCONTROL_TASK: t.id }, signal: opts.signal });
+      } finally {
+        clearInterval(beat);
+      }
+      mark("assert-done", `验收 ${idx + 1}/${t.acceptance.length} ${result.exit === 0 ? "通过" : `失败（exit ${result.exit}）`} · ${Math.round(result.durationMs / 100) / 10}s`);
       const runId = recordRun(db, { taskId: t.id, idx, command, result, head0: head0 ?? "", fp: fp0 });
       const passed = evaluate(predicate, result);
       runs.push({ idx, runId, exit: result.exit, passed, command });
@@ -461,6 +487,7 @@ export async function taskClose(db, root, input, opts = {}) {
       if (c.patch) db.prepare("INSERT OR REPLACE INTO patch_ids(patch_id,task_id,commit_sha) VALUES(?,?,?)").run(c.patch, t.id, c.sha);
     }
     logEvent(db, { action: "close", taskId: t.id, detail: weak ? `弱模式 · ${runs.length} 断言` : `${lines} 行 / ${files.length} 文件 / ${runs.length} 断言` });
+    mark("done", `${t.id} 收口完成，用时 ${Math.round((Date.now() - startedAt) / 100) / 10}s`);
     // 失败过才记坑：现象取最近一次失败事件，解法取 resolvedBy（上面已强制）
     let memory = null;
     if (rounds > 0 && resolvedBy) {
@@ -471,6 +498,7 @@ export async function taskClose(db, root, input, opts = {}) {
     return { id: t.id, lines, files: files.length, runs, closedBy: "rerun", commits: weak ? [] : owned.map((c) => c.sha), fingerprint: fp0, memory, memoryHint: memory?.hint ?? null, weak };
   } catch (error) {
     last = last ?? error.code ?? "E_INTERNAL";
+    mark("failed", `${last}：${String(error.message).slice(0, 120)}`);
     throw error;
   } finally {
     const cur = getTask(db, t0.id);

@@ -447,7 +447,22 @@ export async function cmdClose(args) {
     id = doing[0].id;
   }
   try {
-    const res = await taskClose(db, root, { id, resolvedBy });
+    // 进度走 stderr：stdout 必须可以整段 JSON.parse，进度只是给人看的
+    const tty = process.stderr.isTTY;
+    const onProgress = ({ stage, detail, elapsedMs }) => {
+      const secs = `${Math.round(elapsedMs / 100) / 10}s`;
+      if (!tty) {
+        process.stderr.write(`[devcontrol ${secs}] ${detail}\n`);
+        return;
+      }
+      // TTY 下原地刷新，一行看完整程；里程碑（开跑/跑完/成功/失败）各占一行；
+      // 心跳只在原地改那一行，不刷屏。
+      const milestone = stage === "assert" || stage === "assert-done" || stage === "done" || stage === "failed";
+      process.stderr.write(`\r\x1b[2K[devcontrol ${secs}] ${detail}`);
+      if (milestone) process.stderr.write("\n");
+    };
+    const res = await taskClose(db, root, { id, resolvedBy }, { onProgress });
+    if (tty) process.stderr.write("\n");
     // 成功也带 ok:true：脚本只要看一个字段就知道结果，不用猜"有没有 ok 字段"
     console.log(JSON.stringify({ ok: true, ...res }, null, 2));
     return 0;
