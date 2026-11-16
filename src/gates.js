@@ -19,7 +19,7 @@ import { fingerprint, inScope, sha256 } from "./fingerprint.js";
 import { addedFiles, git, head, isAncestor, logCommits, numstat, patchId, statusPorcelain, trailers } from "./git.js";
 import { evaluate, execCommand } from "./exec.js";
 import { generalizeHint, memoryConfig, rememberTaskPitfall } from "./memory.js";
-
+import { isVendorPath } from "./vendor.js";
 const R2WT = ".devcontrol/r2-wt";
 const ENV_ONLY = new Set(["E_DIRTY_SCOPE", "E_BUSY", "E_TIMEOUT"]);
 
@@ -433,9 +433,24 @@ export async function taskClose(db, root, input, opts = {}) {
     mark("checks", `归属与 scope 检查通过（${files.length} 个文件 / ${lines} 行）`);
 
     // 干净判定（需要 git；弱模式没有这个能力）
+    // 依赖/构建产物不算「脏」：装依赖、跑构建是开发中的常态，不该拦住收口。
+    // 只放行未跟踪的那些；已被跟踪的文件照常要求干净（那是有人特意提交的）。
     if (!weak) {
-      if (statusPorcelain(root, ["--untracked-files=no", "--", ".", ":(exclude).devcontrol"])) fail("E_DIRTY_SCOPE", "工作树有未提交改动");
-      if (statusPorcelain(root, ["--untracked-files=all", "--", ...t.scope])) fail("E_DIRTY_SCOPE", "scope 内有未跟踪文件");
+      const lines = (args) =>
+        statusPorcelain(root, ["--untracked-files=no", ...args])
+          .split("\n")
+          .filter((l) => l.length > 3)
+          .map((l) => l.slice(3).trim().replace(/^"|"$/g, ""))
+          .filter(Boolean);
+      const dirty = lines(["--", ".", ":(exclude).devcontrol"]).filter((f) => !isVendorPath(f));
+      if (dirty.length) fail("E_DIRTY_SCOPE", `工作树有未提交改动：${dirty.slice(0, 5).join("、")}`, { files: dirty });
+
+      const untracked = statusPorcelain(root, ["--untracked-files=all", "--", ...t.scope])
+        .split("\n")
+        .filter((l) => l.length > 3)
+        .map((l) => l.slice(3).trim().replace(/^"|"$/g, ""))
+        .filter((f) => f && !f.startsWith(".devcontrol/") && !isVendorPath(f));
+      if (untracked.length) fail("E_DIRTY_SCOPE", `scope 内有未跟踪文件：${untracked.slice(0, 5).join("、")}`, { files: untracked });
     }
 
     // R2（干净检出内重跑）

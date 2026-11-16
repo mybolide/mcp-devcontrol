@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import { isIgnored, lsFiles, lsTree } from "./git.js";
+import { isVendorDir } from "./vendor.js";
 
 export const MAX_SCOPE_FILES = 2000;
 export const MAX_FILE_BYTES = 5 * 1024 * 1024;
@@ -39,6 +40,8 @@ function walk(root, dir = "", out = []) {
   }
   for (const entry of entries) {
     if (entry.name === ".git" || entry.name === ".devcontrol") continue;
+    // 依赖/构建产物不参与指纹：它们不进交付物，遍历它们只会拖慢收口、还会因装依赖而误判漂移
+    if (entry.isDirectory() && isVendorDir(dir ? `${dir}/${entry.name}` : entry.name)) continue;
     const rel = dir ? `${dir}/${entry.name}` : entry.name;
     if (entry.isDirectory()) walk(root, rel, out);
     else out.push(rel);

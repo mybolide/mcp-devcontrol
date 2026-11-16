@@ -13,6 +13,7 @@ import { FLOWS_REL, flowFromRequirement, flowToRequirement, listFlows, readFlow 
 import { getTask, mapTask, listTasks, listReqs, listPaths, listDocs, reqIntake, disciplineStats } from "./store.js";
 import { hintFor } from "./hints.js";
 import { detectTestCmds } from "./testcmd.js";
+import { isVendorPath, VENDOR_IGNORES } from "./vendor.js";
 import {
   demoteMemory,
   exportMemories,
@@ -98,6 +99,25 @@ function dropBlanketDataDirIgnore(file = ".gitignore") {
   return true;
 }
 
+/**
+ * 只保留「还没被 git 跟踪」的忽略条目。
+ * 有人特意把 dist/ 提交进仓库时，再忽略它会让 `git add` 直接失败
+ * （git 拒绝 add 已被忽略的路径），把正常提交堵死。
+ */
+function notAlreadyTracked(root, entries) {
+  if (!isRepo(root)) return entries;
+  let files = [];
+  try {
+    files = lsFiles(root);
+  } catch {
+    return entries;
+  }
+  return entries.filter((entry) => {
+    const prefix = entry.replace(/\/$/, "");
+    return !files.some((f) => f === prefix || f.startsWith(`${prefix}/`));
+  });
+}
+
 function writeIfMissing(rel, value) {
   const abs = path.join(process.cwd(), rel);
   if (fs.existsSync(abs)) return false;
@@ -141,7 +161,10 @@ export function cmdInit(args) {
   fs.mkdirSync(path.join(dataDir(root), "runs"), { recursive: true });
   fs.mkdirSync(path.join(dataDir(root), "contracts"), { recursive: true });
   const unignored = dropBlanketDataDirIgnore();
+  // 依赖/构建产物默认忽略——但项目特意提交过的（dist/ 进了 git）不能忽略，
+  // 否则 git 拒绝再 add，反而把正常提交挡住。
   appendLines(".gitignore", [
+    ...notAlreadyTracked(root, VENDOR_IGNORES),
     ".devcontrol/state.db*",
     ".devcontrol/memory.db*",
     ".devcontrol/settings.json",
@@ -268,7 +291,20 @@ export function cmdCommit(args) {
   }
   const task = getTask(db, doing[0].id);
   taskRenew(db, root, { id: task.id }, actor); // 写操作续租（契约 §5.1）
-  const dirty = statusPorcelain(root, ["--untracked-files=all"])
+  // 未跟踪的依赖/构建产物不是交付物：既不提交（scope="." 时），也不算 scope 违规（scope="src" 时）。
+  // 已经被 git 跟踪的照常参与——那是有人特意提交的，内核不翻案。
+  const trackedSet = new Set(
+    statusPorcelain(root, ["--untracked-files=no"])
+      .split("\n")
+      .filter((l) => l.length > 3)
+      .map((l) => {
+        const rest = l.slice(3).trim();
+        const arrow = rest.lastIndexOf(" -> ");
+        return (arrow >= 0 ? rest.slice(arrow + 4) : rest).replace(/^"|"$/g, "");
+      })
+      .filter(Boolean),
+  );
+  const raw = statusPorcelain(root, ["--untracked-files=all"])
     .split("\n")
     .filter((l) => l.length > 3)
     .map((l) => {
@@ -277,6 +313,11 @@ export function cmdCommit(args) {
       return (arrow >= 0 ? rest.slice(arrow + 4) : rest).replace(/^"|"$/g, "");
     })
     .filter(Boolean);
+  const dirty = raw.filter((f) => !(isVendorPath(f) && !trackedSet.has(f)));
+  const skipped = raw.filter((f) => isVendorPath(f) && !trackedSet.has(f));
+  if (skipped.length) {
+    console.error(`跳过 ${skipped.length} 个依赖/构建产物（不是交付物）：${skipped.slice(0, 3).join("、")}${skipped.length > 3 ? " …" : ""}`);
+  }
   const mine = dirty.filter((f) => inScope(f, task.scope));
   const foreign = dirty.filter((f) => !inScope(f, task.scope) && !f.startsWith(".devcontrol/"));
   if (foreign.length) {
