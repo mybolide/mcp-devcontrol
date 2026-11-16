@@ -81,10 +81,12 @@ export async function startConsole(args) {
   });
   const roots = [...new Set([root, ...extra].filter(Boolean).map((r) => path.resolve(r)))];
   const projects = roots.map((r) => ({ root: r, name: path.basename(r) || r, db: openDb(r) }));
-
-  // 控制台一启动就把 Agent 侧说明补/更新一遍：老项目 init 过也不会缺，版本升级自动跟上
+  // 控制台一启动就把 Agent 侧说明补/更新一遍：老项目 init 过也不会缺，版本升级自动跟上。
+  // 有任务在办时跳过——这些文件在任务 scope 外，改了会把工作树弄脏、把收口卡死。
   const refreshed = [];
   for (const p of projects) {
+    const busy = p.db.prepare("SELECT 1 FROM tasks WHERE status='doing' LIMIT 1").get();
+    if (busy) continue;
     for (const [rel, status] of Object.entries(installAgentFiles(p.root))) {
       if (status !== "unchanged") refreshed.push(`${rel}（${status === "created" ? "新建" : "更新"}）`);
     }

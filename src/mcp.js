@@ -198,15 +198,17 @@ export async function runMcp() {
   const root = resolveRoot();
   const db = openDb(root);
 
-  // MCP 每次连上都把 Agent 说明按当前代码对齐：升级后（哪怕版本号没变）也能自愈
-  const refreshed = Object.entries(installAgentFiles(root)).filter(([, status]) => status !== "unchanged");
-  if (refreshed.length) {
-    // stdout 是 JSON-RPC 通道，日志只能走 stderr
-    const detail = refreshed.map(([rel, status]) => `${rel}（${status === "created" ? "新建" : "更新"}）`).join("、");
-    process.stderr.write(`[devcontrol] Agent 说明已同步：${detail}（记得 commit）\n`);
+  // MCP 每次连上都把 Agent 说明按当前代码对齐：升级后（哪怕版本号没变）也能自愈。
+  // 但有任务在办时先不动——说明文件在任务 scope 外，改了会把工作树弄脏、把 commit/close 卡死。
+  const busy = db.prepare("SELECT id FROM tasks WHERE status='doing' LIMIT 1").get();
+  if (!busy) {
+    const refreshed = Object.entries(installAgentFiles(root)).filter(([, status]) => status !== "unchanged");
+    if (refreshed.length) {
+      // stdout 是 JSON-RPC 通道，日志只能走 stderr
+      const detail = refreshed.map(([rel, status]) => `${rel}（${status === "created" ? "新建" : "更新"}）`).join("、");
+      process.stderr.write(`[devcontrol] Agent 说明已同步：${detail}（记得 commit）\n`);
+    }
   }
-
-  // MCP 连接即控制台的生命周期触发器：连上就确保控制台在跑（复用同项目实例）
   const consoleReady = ensureConsole(root).catch(() => null);
   // bootstrap 时校验一次：控制台被停掉/崩了就地重建，人不该手动重启
   const consoleUrl = async () => {

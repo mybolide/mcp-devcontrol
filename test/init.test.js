@@ -55,5 +55,7 @@ test("--no-mcp：只写 AGENTS.md，不写任何客户端配置，纪律块改�
   const agents = fs.readFileSync(path.join(root, "AGENTS.md"), "utf8");
   assert.match(agents, /devcontrol status/);
   assert.match(agents, /devcontrol close/);
-  assert.match(agents, /不注册 MCP/);
+  // 说明文件不再按「有没有接 MCP」分叉（否则 init 与 MCP 启动会互相覆盖），
+  // 统一写「接了 MCP 自动拉起，没接就自己起」，所以这里断言 serve 提示而不是「不注册 MCP」
+  assert.match(agents, /devcontrol serve/);
 });

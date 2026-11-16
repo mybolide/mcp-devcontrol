@@ -15,7 +15,8 @@ const END = "<!-- devcontrol:end -->";
 
 /** Skill 正文：Agent 真正要读的「法」 */
 export function skillBody({ noMcp = false } = {}) {
-  const first = noMcp ? "`devcontrol status`" : "`bootstrap`（MCP）或 `devcontrol status`（CLI）";
+  // 内容不按「有没有接 MCP」分叉：init 与 MCP 启动写出来的必须完全一致，否则会互相覆盖
+  const first = "`bootstrap`（MCP）或 `devcontrol status`（CLI）";
   return `# devcontrol —— 本项目的研发纪律
 
 这个项目的需求、任务、验收与证据都在 \`.devcontrol/state.db\` 里，由 devcontrol 内核管。
@@ -73,11 +74,9 @@ ${skillBody(opts)}
 `;
 }
 
-export function agentsBlock(opts = {}) {
-  const open = opts.noMcp ? "`devcontrol status`" : "`bootstrap`（MCP）/ `devcontrol status`（CLI）";
-  const consoleLine = opts.noMcp
-    ? "控制台：需要时自己起 `devcontrol serve`（本模式不注册 MCP，不会自动拉起）。"
-    : "控制台地址在 `devcontrol status` 的 console 字段；MCP 连接时会自动拉起，挂掉会自动重建。";
+export function agentsBlock() {
+  const open = "`bootstrap`（MCP）/ `devcontrol status`（CLI）";
+  const consoleLine = "控制台地址在 `devcontrol status` 的 console 字段；接了 MCP 会自动拉起，没接就自己 `devcontrol serve`。";
   return `${BEGIN}
 开工先跑 ${open}：它返回的 \`next\` 就是下一件事，不要自己挑。
 改代码前必须 task.claim；不许修改 acceptance，不许自选命令；只改 scope 内的文件。
