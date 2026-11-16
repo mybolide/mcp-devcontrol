@@ -3,7 +3,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { makeRepo, BIN } from "./helpers.js";
 import { SKILL_REL, CURSOR_RULE_REL } from "../src/skill.js";
 
@@ -51,5 +51,39 @@ test("init 把自己写的 Agent 文件提交进仓库（第一次 close 不会�
   const tracked = execFileSync("git", ["ls-files"], { cwd: root, encoding: "utf8" });
   for (const f of [SKILL_REL, CURSOR_RULE_REL, "AGENTS.md", "CLAUDE.md"]) {
     assert.ok(tracked.includes(f), `${f} 应该已被提交`);
+  }
+});
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+test("控制台启动时自动补齐 Agent 说明（老项目也跟上）", async () => {
+  const root = makeRepo();
+  init(root);
+  // 模拟一个早先 init 过、但没有这些说明文件的仓库
+  fs.rmSync(path.join(root, ".agents"), { recursive: true, force: true });
+  fs.rmSync(path.join(root, ".cursor", "rules"), { recursive: true, force: true });
+  fs.rmSync(path.join(root, "CLAUDE.md"), { force: true });
+  const port = 28000 + Math.floor(Math.random() * 2000);
+  const child = spawn(process.execPath, [BIN, "serve", "--port", String(port)], {
+    cwd: root,
+    env: { ...process.env, DEVCONTROL_ROOT: root },
+    stdio: "ignore",
+  });
+  try {
+    let up = false;
+    for (let i = 0; i < 60 && !up; i += 1) {
+      await sleep(150);
+      try {
+        up = (await fetch(`http://127.0.0.1:${port}/api/meta`)).ok;
+      } catch {
+        up = false;
+      }
+    }
+    assert.ok(up, "控制台没起来");
+    assert.ok(fs.existsSync(path.join(root, SKILL_REL)), "启动后应补回 SKILL.md");
+    assert.ok(fs.existsSync(path.join(root, CURSOR_RULE_REL)), "启动后应补回 Cursor 规则");
+    assert.ok(fs.existsSync(path.join(root, "CLAUDE.md")), "启动后应补回 CLAUDE.md");
+  } finally {
+    child.kill("SIGTERM");
   }
 });

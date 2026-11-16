@@ -27,6 +27,7 @@ import {
 } from "./store.js";
 import { editMemory, listMemories, memoryConfig, promoteMemory, softDeleteMemory } from "./memory.js";
 import { effectiveSettings, readSettings, settingsFile, writeSettings } from "./settings.js";
+import { installAgentFiles } from "./skill.js";
 import { resolveRoot } from "./cli.js";
 import { sha256 } from "./fingerprint.js";
 import { listReleases, shipRelease } from "./release.js";
@@ -80,6 +81,14 @@ export async function startConsole(args) {
   });
   const roots = [...new Set([root, ...extra].filter(Boolean).map((r) => path.resolve(r)))];
   const projects = roots.map((r) => ({ root: r, name: path.basename(r) || r, db: openDb(r) }));
+
+  // 控制台一启动就把 Agent 侧说明补/更新一遍：老项目 init 过也不会缺，版本升级自动跟上
+  const refreshed = [];
+  for (const p of projects) {
+    for (const [rel, status] of Object.entries(installAgentFiles(p.root))) {
+      if (status !== "unchanged") refreshed.push(`${rel}（${status === "created" ? "新建" : "更新"}）`);
+    }
+  }
   const byRoot = new Map(projects.map((p) => [p.root, p]));
   /** 显式指定了项目就必须命中；不指定才用默认项目（防止"以为切了、其实写到默认仓库"） */
   const pickProject = (wanted) => {
@@ -266,6 +275,10 @@ export async function startConsole(args) {
     server.listen(port, "127.0.0.1", () => {
       console.log(`devcontrol 控制台：http://127.0.0.1:${port}`);
       console.log(`项目：${root}`);
+      if (refreshed.length) {
+        console.log(`Agent 说明已同步：${refreshed.join("、")}`);
+        console.log("这些文件跟仓库走，建议随手 commit 一下。");
+      }
       // 「连接即控制台生命周期」：MCP 断开后宽限期到点自己收摊，别留 PPID 1 的孤儿进程
       const parentPid = Number(process.env.DEVCONTROL_PARENT_PID ?? 0);
       if (parentPid > 0) {

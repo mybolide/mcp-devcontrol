@@ -13,7 +13,7 @@ version: "6.0.0-alpha.1"
 
 ## 一轮的唯一流程
 
-1. 开工先问内核：`devcontrol status`。返回的 `next` 就是你现在该做的那件事。
+1. 开工先问内核：`bootstrap`（MCP）或 `devcontrol status`（CLI）。返回的 `next` 就是你现在该做的那件事。
 2. 按 `next.args` **原样执行**（参数是给全的；缺参数会收到 `INVALID_ARGUMENT`）。
 3. 改代码只能动 `claim` 返回的 `scope` 里的文件。
 4. `devcontrol commit -m "..."`：只提交 scope 内的文件，自动写 Task-Id。
