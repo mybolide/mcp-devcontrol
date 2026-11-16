@@ -522,22 +522,47 @@ export async function rememberTaskPitfall(root, task, resolvedBy, lastFailure, c
 
 // ── 治理 / 观测 ──────────────────────────────────────────────────────────
 
-export function memoryStatus(cfg = memoryConfig()) {
+/**
+ * 记忆库体检。
+ *
+ * `project` 只统计「属于这个项目」的条目：每条记忆都记着出处，别的项目留下的失败
+ * 不该算在本项目头上（新项目一打开就看见十条红字，只会以为是自己坏了）。
+ * 属于本项目的判据：project 等于项目名，或者干脆没记出处（project 为空＝通用条目）。
+ *
+ * `offline` 单独标出来：向量服务没开是**环境**问题，不是知识库坏了。
+ * 这两件事混在一句话里，会让人去「修复」一个其实没坏的东西。
+ */
+export function memoryStatus(cfg = memoryConfig(), { project = null } = {}) {
   if (!cfg.enabled) return { enabled: false, reason: "DEVCONTROL_MEMORY=off" };
   let db;
   try {
     db = openMemory(cfg);
-    const byStatus = Object.fromEntries(db.prepare("SELECT status, COUNT(*) n FROM memories WHERE deleted_at IS NULL GROUP BY status").all().map((c) => [c.status, c.n]));
-    const byState = Object.fromEntries(db.prepare("SELECT index_state, COUNT(*) n FROM memories WHERE deleted_at IS NULL GROUP BY index_state").all().map((c) => [c.index_state, c.n]));
-    const byKind = Object.fromEntries(db.prepare("SELECT kind, COUNT(*) n FROM memories WHERE deleted_at IS NULL GROUP BY kind").all().map((c) => [c.kind, c.n]));
-    const total = db.prepare("SELECT COUNT(*) n FROM memories").get().n;
+    const scope = project ? " AND (project IS NULL OR project = ?)" : "";
+    const args = project ? [project] : [];
+    const tally = (column) => {
+      const rows = db.prepare(`SELECT ${column} AS k, COUNT(*) n FROM memories WHERE deleted_at IS NULL${scope} GROUP BY ${column}`).all(...args);
+      return Object.fromEntries(rows.map((c) => [c.k, c.n]));
+    };
+    const total = db
+      .prepare(`SELECT COUNT(*) n FROM memories WHERE deleted_at IS NULL${scope}`)
+      .get(...args).n;
+    // 向量服务连不上＝所有失败的 index_error 都是网络类错误；只要有一条不是，就算真失败
+    const errors = db
+      .prepare(`SELECT DISTINCT index_error FROM memories WHERE deleted_at IS NULL AND index_state='failed'${scope}`)
+      .all(...args)
+      .map((r) => String(r.index_error ?? ""));
+    const NETWORK = /fetch failed|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|socket hang up|timed? ?out|ECONNRESET/i;
+    const offline = errors.length > 0 && errors.every((e) => NETWORK.test(e));
     return {
       enabled: true,
       file: cfg.dbFile,
+      project,
       total,
-      byStatus,
-      byState,
-      byKind,
+      byStatus: tally("status"),
+      byState: tally("index_state"),
+      byKind: tally("kind"),
+      offline,
+      indexErrors: errors.slice(0, 3),
       embedding: `${cfg.provider}:${cfg.model} @ ${cfg.embeddingUrl}`,
       qdrant: `${cfg.qdrantUrl}/${cfg.collection}`,
     };

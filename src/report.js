@@ -1,7 +1,7 @@
 // devcontrol — doctor 对账 + markdown 导出
 import fs from "node:fs";
 import path from "node:path";
-import { memoryStatus } from "./memory.js";
+import { memoryConfig, memoryStatus } from "./memory.js";
 import { metaGet } from "./db.js";
 import { listTasks, listReqs, listBugs, listDocs, listPaths } from "./store.js";
 import { head, isAncestor, statusPorcelain } from "./git.js";
@@ -55,12 +55,23 @@ export function doctor(db, root) {
   if (weak) {
     items.push({ severity: "warn", code: "WEAK_MODE", detail: "弱模式（无 git）：只跑验收，没有提交归属/scope/预算校验" });
   }
-  const mem = memoryStatus();
+  // 只报「属于这个项目」的记忆：别的项目留下的失败不该算在本项目头上，
+  // 新项目一打开就看见十条红字，只会以为是自己坏了。
+  const mem = memoryStatus(memoryConfig(process.env, root), { project: path.basename(root) });
   if (mem.enabled) {
     const failed = mem.byState?.failed ?? 0;
     const pending = mem.byState?.pending ?? 0;
-    if (failed) items.push({ severity: "warn", code: "MEMORY_INDEX_FAILED", detail: `${failed} 条坑没进向量索引（devcontrol memory reindex 可重建）` });
-    if (pending) items.push({ severity: "warn", code: "MEMORY_INDEX_PENDING", detail: `${pending} 条坑等待索引` });
+    if (failed && mem.offline) {
+      // 向量服务没开是环境问题，不是知识库坏了：说清楚，别让人去修一个没坏的东西
+      items.push({
+        severity: "info",
+        code: "MEMORY_INDEX_OFFLINE",
+        detail: `向量服务连不上（${mem.embedding}），${failed} 条经验暂未建索引；检索会退回关键词匹配，不影响收口`,
+      });
+    } else if (failed) {
+      items.push({ severity: "warn", code: "MEMORY_INDEX_FAILED", detail: `${failed} 条经验没进向量索引（devcontrol memory reindex 可重建）` });
+    }
+    if (pending) items.push({ severity: "info", code: "MEMORY_INDEX_PENDING", detail: `${pending} 条经验等待建索引` });
   }
   for (const d of listDocs(db)) {
     const abs = path.join(root, d.path);

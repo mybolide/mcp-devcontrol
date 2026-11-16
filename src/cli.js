@@ -585,7 +585,9 @@ export function cmdDoctor() {
   const db = openDb(root);
   const items = doctor(db, root);
   if (!items.length) console.log("doctor: 一切正常");
-  for (const it of items) console.log(`${it.severity === "error" ? "ERROR" : "warn "} ${it.code} ${it.taskId ?? ""} ${it.detail}`);
+  // 三档要分清楚：error=坏了必须处理，warn=纪律上的提醒，info=环境状况（不是你的错，也不用修）
+  const LABEL = { error: "ERROR", warn: "warn ", info: "note " };
+  for (const it of items) console.log(`${LABEL[it.severity] ?? "warn "} ${it.code} ${it.taskId ?? ""} ${it.detail}`);
   return items.some((i) => i.severity === "error") ? 1 : 0;
 }
 
