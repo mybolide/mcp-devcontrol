@@ -409,16 +409,24 @@ export function cmdTask(args) {
     const pathId = flag("path");
     const title = flag("title");
     if (!req || !pathId || !title) {
-      console.error('用法：devcontrol task create --req FR-001 --path P-001 --title "一言说清" [--kind fix] [--scope src,test] [--accept "npm test :: exit==0"]');
+      console.error(
+        '用法：devcontrol task create --req FR-001 --path P-001 --title "一言说清" [--kind fix] [--scope src,test] [--accept "npm test :: exit==0"] [--depends T-001[,T-002]]',
+      );
       return 2;
     }
     const accepts = every("accept");
     const deriveFrom = Number(flag("derive") ?? 0);
     const acceptance = (accepts.length ? accepts : ["npm test :: exit==0"]).map((assertion) => ({ deriveFrom, assertion }));
     const scope = flag("scope") ? flag("scope").split(",").map((s) => s.trim()).filter(Boolean) : undefined;
-    const task = taskCreate(db, root, { requirementId: req, pathId, kind: flag("kind") ?? "feature", title, scope, acceptance });
+    // 依赖：MCP 侧叫 dependsOn，CLI 这边用 --depends（可重复，也可逗号分隔）——纯 CLI 用户也要能表达「前端等后端」
+    const dependsOn = every("depends")
+      .flatMap((v) => String(v).split(","))
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const task = taskCreate(db, root, { requirementId: req, pathId, kind: flag("kind") ?? "feature", title, scope, acceptance, dependsOn });
     console.log(`${task.id}  已建  ${task.title}`);
     console.log(`scope: ${(task.scope ?? []).join(", ")}`);
+    if (task.dependsOn?.length) console.log(`前置: ${task.dependsOn.join(", ")}`);
     return 0;
   }
   if (sub === "claim") {
@@ -799,7 +807,7 @@ export async function main(argv) {
   devcontrol run -- <cmd>            采证执行（记录退出码与耗时）
   devcontrol commit -m "<msg>"       只提交 scope 内文件，自动写 Task-Id trailer
   devcontrol renew [T-00x]          续租（TTL 45 分钟；commit 等写操作也会自动续期）
-  devcontrol task create --req FR-001 --path P-001 --title "…"   纯 CLI 建任务（--kind/--scope/--accept 可选）
+  devcontrol task create --req FR-001 --path P-001 --title "…"   纯 CLI 建任务（--kind/--scope/--accept/--depends 可选）
   devcontrol task claim T-00x       领取任务（纯 CLI，租约 45 分钟）
   devcontrol task list              任务清单
   devcontrol next                   内核认为你现在该做的那一件事（参数可直接照抄）
