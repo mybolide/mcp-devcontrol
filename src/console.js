@@ -2,7 +2,6 @@
 import http from "node:http";
 import fs from "node:fs";
 import os from "node:os";
-import crypto from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { readConsoleMeta } from "./console-boot.js";
@@ -137,16 +136,13 @@ export async function startConsole(args) {
 
   const LOOPBACK = /^(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/;
   /**
-   * 绑到局域网时，「谁能连」必须由令牌回答，而不是由网线回答。
-   * 非回环绑定一律要令牌：没给就现生成一个，打印在启动日志里。
-   * 宁可多一步「复制这个链接」，也不要出现一个谁打开都能批准需求的页面。
+   * 令牌是**可选**加固，不是进门门槛。
+   * 这是研发工作台：Owner 大概率就在自己家的局域网里，为了打开一个页面先复制一条
+   * 二十多位的链接，摩擦大于收益。所以默认不校验；想加固的人自己设
+   * DEVCONTROL_OWNER_TOKEN，设了才生效。
+   * （仍然保留的是 Host 白名单：它零成本，且挡的是 DNS rebinding 这类不需要你配合的攻击。）
    */
-  let token = process.env.DEVCONTROL_OWNER_TOKEN ?? null;
-  let generatedToken = false;
-  if (!IS_LOOPBACK_BIND && !token) {
-    token = crypto.randomBytes(18).toString("base64url");
-    generatedToken = true;
-  }
+  const token = process.env.DEVCONTROL_OWNER_TOKEN ?? null;
   // 允许的 Host：回环永远允许；绑了局域网就把本机各网卡 IP 一起放进来（挡 DNS rebinding 用）
   const allowedHosts = new Set();
   {
@@ -372,11 +368,10 @@ export async function startConsole(args) {
         }
       }
       console.log(`devcontrol 控制台：http://127.0.0.1:${port}`);
-      if (!IS_LOOPBACK_BIND && generatedToken) {
-        for (const u of lanUrls) console.log(`  局域网（带令牌，别外传）：${u}/?token=${token}`);
-        console.log("  这个链接等同于 Owner 身份：谁拿到谁就能批准需求、放行门禁。用完 devcontrol serve --stop 就断。");
-      } else if (!IS_LOOPBACK_BIND) {
-        for (const u of lanUrls) console.log(`  局域网：${u}/?token=<你设的 DEVCONTROL_OWNER_TOKEN>`);
+      if (!IS_LOOPBACK_BIND) {
+        for (const u of lanUrls) console.log(`  局域网（另一台电脑直接打开）：${u}/`);
+        if (token) console.log(`  已启用令牌：打开时带上 ?token=${token}（或设了 DEVCONTROL_OWNER_TOKEN 的那个人知道）`);
+        else console.log("  同一局域网的人都能打开。用完 devcontrol serve --stop 就断。");
       }
       console.log(`项目：${root}`);
       if (refreshed.length) {

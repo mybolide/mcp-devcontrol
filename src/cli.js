@@ -861,8 +861,8 @@ export async function main(argv) {
   devcontrol release [list|create|plan|ship]  发布：一组任务全 done 才能 ship
   devcontrol export                  markdown 快照
   devcontrol serve [--port 7373] [--host 127.0.0.1] [--project <path>…]  Owner 控制台
-                                     --host 0.0.0.0 会让局域网里别的机器也能打开：这时必须带令牌
-                                     （没设 DEVCONTROL_OWNER_TOKEN 就现生成，打印成带 ?token= 的链接）
+                                     --host 0.0.0.0 让局域网里别的机器也能打开（默认只听本机）；
+                                     想加一道门就设 DEVCONTROL_OWNER_TOKEN，设了才校验
   devcontrol mcp                     MCP stdio 服务（13 个动作，启动时顺带拉起控制台）
 `);
         return 0;

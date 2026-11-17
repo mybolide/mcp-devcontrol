@@ -120,19 +120,23 @@ devcontrol serve --stop     # 停掉本项目自己的控制台（不会误杀�
 ```bash
 devcontrol serve --host 0.0.0.0
 # devcontrol 控制台：http://127.0.0.1:7373
-#   局域网（带令牌，别外传）：http://192.168.0.107:7373/?token=gaZzTM6s8xTjnpjWIAKFEbU5
+#   局域网（另一台电脑直接打开）：http://192.168.0.107:7373/
+#   同一局域网的人都能打开。用完 devcontrol serve --stop 就断。
 ```
 
-那个页面上每个按钮都是 Owner 的权力（批准需求冻契约、放行门禁、调预算、发布打 tag），
-而且它没有登录。所以绑到局域网时**必须**带令牌：
+就这样，没有令牌、没有登录、没有额外一步。
 
-- 没设 `DEVCONTROL_OWNER_TOKEN` 就现生成一个，打印成带 `?token=` 的链接——**那条链接就是钥匙**，等同于你的身份。
-- 想固定下来（多台机器不用每次换链接）：`DEVCONTROL_OWNER_TOKEN=xxx devcontrol serve --host 0.0.0.0`。
-- 页面把令牌存 `localStorage` 并放进 `X-Owner-Token` 头，不用 cookie——别的站点发的请求带不上它，CSRF 不成立。
-- Host 只认回环和本机网卡地址，陌生 Host 一律 403（挡 DNS rebinding），令牌对也不行。
-- 用完 `devcontrol serve --stop`；令牌只活在这个进程里。
+想加固就设一个环境变量，设了才校验：
 
-不想开端口的话，SSH 隧道同样可行，且不暴露局域网：
+```bash
+DEVCONTROL_OWNER_TOKEN=随手定一串 devcontrol serve --host 0.0.0.0
+# 之后打开 http://192.168.0.107:7373/?token=随手定一串
+# 页面把令牌存 localStorage 并放进 X-Owner-Token 头（不用 cookie，别的站点发的请求带不上）
+```
+
+始终保留的一条边界：Host 只认回环和本机网卡地址，陌生 Host 一律 403（挡 DNS rebinding）——它零成本，且挡的是不需要你配合就能发生的攻击。
+
+不想开端口也行，SSH 隧道等价且不暴露局域网：
 `ssh -L 7373:127.0.0.1:7373 you@192.168.0.107`，然后在本机开 `http://127.0.0.1:7373/`。
 
 ### 3.3 控制台由 MCP 全权托管（和 v5 一样，人不用启动也不用重启）
