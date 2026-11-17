@@ -118,6 +118,11 @@ export function taskClaim(db, root, input, actor = "agent") {
     const t = getTask(db, input.id);
     if (!t) fail("NOT_FOUND", `任务不存在：${input.id}`);
     if (t.status === "done") fail("E_ILLEGAL_TRANSITION", `${t.id} 已完成`);
+    // 终态要各说各的：abandoned 是「需求作废连带放弃」，不是「有人占着」。
+    // 走到 CAS 的兜底会被报成「由他人持有」——那条消息既错又荒谬（根本没人持有）。
+    if (t.status === "abandoned") {
+      fail("E_ABANDONED", `${t.id} 已随需求作废，不能再领`, { taskId: t.id, status: t.status });
+    }
     const req = getReq(db, t.requirement_id);
     if (!req || ["draft", "parked"].includes(req.status)) fail("E_NEED_APPROVED", `需求状态 ${req?.status}`);
     const p = getPath(db, t.path_id);
@@ -156,9 +161,13 @@ export function taskClaim(db, root, input, actor = "agent") {
       .run(actor, now(), exp, fp, p.hash, p.contract_commit ?? "", p.contract_commit ?? "", now(), t.id, now());
     if (res.changes !== 1) {
       const cur = getTask(db, t.id);
-      fail("E_CLAIMED_BY_OTHER", `${t.id} 由 ${cur?.claimed_by ?? "他人"} 持有（租约到 ${cur?.claim_expires_at ?? "?"}）`, {
-        holder: cur?.claimed_by ?? null,
-        expiresAt: cur?.claim_expires_at ?? null,
+      if (!cur?.claimed_by) {
+        // 没有具体的人持有它：真实原因只能是「状态不对」，不要编一个持有者出来
+        fail("E_ILLEGAL_TRANSITION", `${t.id} 当前 ${cur?.status ?? "?"}，不是可领取状态`, { taskId: t.id, status: cur?.status ?? null });
+      }
+      fail("E_CLAIMED_BY_OTHER", `${t.id} 由 ${cur.claimed_by} 持有（租约到 ${cur.claim_expires_at ?? "?"}）`, {
+        holder: cur.claimed_by,
+        expiresAt: cur.claim_expires_at ?? null,
       });
     }
     logEvent(db, { action: "task.claim", taskId: t.id, detail: actor });

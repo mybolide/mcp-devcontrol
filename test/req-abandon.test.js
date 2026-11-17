@@ -83,9 +83,10 @@ test("放弃的任务不会再被领走", async () => {
   const task = newTask(db, root, reqId);
   await parkTask(db, root, task);
   reqAbandon(db, root, { requirementId: reqId, reason: REASON });
+  // 现在有专门的码了：以前是 E_CLAIMED_BY_OTHER（「由他人持有」，根本没人持有）
   await assert.rejects(
     async () => taskClaim(db, root, { id: task.id }, "agent"),
-    (e) => ["E_ILLEGAL_TRANSITION", "E_NEED_APPROVED", "E_PARKED", "E_CLAIMED_BY_OTHER", "E_CLAIM_STALE"].includes(e.code),
+    (e) => e.code === "E_ABANDONED",
   );
 });
 
@@ -107,4 +108,28 @@ test("doctor 不把 abandoned / archived 当成异常", () => {
   reqAbandon(db, root, { requirementId: reqId, reason: REASON });
   const bad = doctor(db, root).filter((i) => i.severity === "error");
   assert.deepEqual(bad.map((i) => i.code), [], "作废是正常终态，不该报错");
+});
+test("领一条已放弃的任务：报 E_ABANDONED，不能编出「由他人持有」", async () => {
+  const root = makeRepo();
+  const { db, reqId } = initFlow(root);
+  const task = newTask(db, root, reqId);
+  reqAbandon(db, root, { requirementId: reqId, reason: REASON });
+
+  // 这里曾经报 "T-001 由 他人 持有（租约到 ?）"——没人持有它，状态是 abandoned
+  await assert.rejects(
+    async () => taskClaim(db, root, { id: task.id }, "agent"),
+    (e) => e.code === "E_ABANDONED" && !/他人/.test(e.message),
+  );
+});
+
+test("CAS 没命中且没人持有时，别硬说「他人持有」", async () => {
+  // 兜底分支：状态不是可领取、claimed_by 为空 → 应该说「当前状态不可领」，而不是编个持有者
+  const root = makeRepo();
+  const { db, reqId } = initFlow(root);
+  const task = newTask(db, root, reqId);
+  db.prepare("UPDATE tasks SET status='parked' WHERE id=?").run(task.id);
+  await assert.rejects(
+    async () => taskClaim(db, root, { id: task.id }, "agent"),
+    (e) => e.code === "E_PARKED" || e.code === "E_ILLEGAL_TRANSITION",
+  );
 });
