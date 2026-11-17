@@ -29,7 +29,7 @@ CREATE TABLE IF NOT EXISTS tasks(
   id TEXT PRIMARY KEY, requirement_id TEXT NOT NULL, path_id TEXT NOT NULL,
   kind TEXT NOT NULL, title TEXT NOT NULL, status TEXT NOT NULL,
   scope_json TEXT NOT NULL, acceptance_json TEXT NOT NULL, depends_on_json TEXT NOT NULL DEFAULT '[]',
-  budget_lines INTEGER NOT NULL DEFAULT 400, changed_lines INTEGER NOT NULL DEFAULT 0,
+  budget_lines INTEGER NOT NULL DEFAULT 1200, changed_lines INTEGER NOT NULL DEFAULT 0,
   rank INTEGER NOT NULL DEFAULT 0,
   base_head TEXT NOT NULL, contract_hash TEXT NOT NULL, contract_commit TEXT NOT NULL,
   claimed_by TEXT, claimed_at TEXT, claim_expires_at TEXT,

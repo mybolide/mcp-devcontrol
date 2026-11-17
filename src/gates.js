@@ -159,7 +159,10 @@ export function taskCreate(db, root, input, actor = "agent") {
       JSON.stringify(scope),
       JSON.stringify(acceptance),
       JSON.stringify(dependsOn),
-      Number(input.budgetLines ?? 400),
+      // 预算默认跟 Path 契约走，不写死：早先这里硬编码 400，而 init 给 Path 写的是 1200、
+      // Owner 调过的可能是 12000。于是 claim 下发的规范说「不超过 12000 行」，
+      // 同一个响应里的 budgetLines 却是 400——Agent 照大的写，收口被内核自己数落（T-101）。
+      Number(input.budgetLines ?? body.budgetLines ?? p.budget_lines ?? 1200),
       p.contract_commit ?? "",
       p.hash,
       p.contract_commit ?? "",
