@@ -620,9 +620,17 @@ export function cmdNext() {
   console.log(`${digest.next.action}  ${digest.next.why ?? ""}`);
   // 纯 CLI 用户要的不是 MCP 的参数名，是一条能粘进终端的命令。
   // 内核知道两边怎么对应，就别让人自己翻（T-102）。
-  const cmd = cliCommand(digest.next.action, digest.next.args);
-  if (cmd) console.log(`\n${cmd}`);
-  else console.log(JSON.stringify(digest.next.args ?? {}, null, 2));
+  const cmd = digest.next.cli ?? cliCommand(digest.next.action, digest.next.args);
+  if (cmd) {
+    console.log(`\n${cmd}`);
+  } else if (digest.next.steps?.length) {
+    // 有些步骤没有「一条命令」可给（写代码就是写代码）。
+    // 这时把顺序摆清楚，比硬编一条跑不通的命令诚实。
+    console.log("\n按顺序：");
+    digest.next.steps.forEach((s, i) => console.log(`  ${i + 1}. ${s}`));
+  } else if (Object.keys(digest.next.args ?? {}).length) {
+    console.log(JSON.stringify(digest.next.args, null, 2));
+  }
   return 0;
 }
 

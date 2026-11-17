@@ -1,6 +1,6 @@
 // devcontrol — bootstrap digest：内核自己决定「下一步该做什么」，不让人挑
 import { listReqs, listPaths, listTasks, getTask, now, disciplineStats } from "./store.js";
-import { head } from "./git.js";
+import { git, head } from "./git.js";
 import { metaGet } from "./db.js";
 import { releaseSummary } from "./release.js";
 import { cliCommand } from "./nextcmd.js";
@@ -51,6 +51,7 @@ export function availableActions(db) {
   const acts = new Set(["bootstrap", "bug.report"]);
   if (doing.length) {
     acts.add("task.close");
+    acts.add("task.work"); // 还没写码 / 没留证据时，该做的是干活，不是收口
     acts.add("task.renew");
     acts.add("ask");
   } else if (approvedReq && approvedPath) {
@@ -60,6 +61,27 @@ export function availableActions(db) {
     else acts.add("task.create");
   }
   return [...acts];
+}
+
+/**
+ * 在办任务进行到哪了：只看事实，不做判断。
+ *
+ * 为什么需要它：早先 close 之前 next 一律说「继续做完 T-00x 并收口」，
+ * 而这时往往一行代码都还没写。照抄 next 必然撞 E_NO_DELIVERY——
+ * 引导链把「写码 → 跑测试 → 提交」整段跳过了（黑盒实测发现）。
+ * 内核知道这三件事有没有发生（提交链、证据表），就该按真相说下一步。
+ */
+function shipped(db, root, task) {
+  try {
+    const out = git(root, ["log", "--format=%H", `--grep=Task-Id: ${task.id}`, `${task.base_head || "HEAD"}..HEAD`]);
+    return out.trim() ? out.trim().split("\n").length : 0;
+  } catch {
+    return 0; // 弱模式没有 git：没有提交这回事，交给下面的证据判断
+  }
+}
+
+function hasEvidence(db, task) {
+  return db.prepare("SELECT COUNT(*) c FROM runs WHERE task_id=?").get(task.id).c > 0;
 }
 
 export function bootstrap(db, root, extra = {}) {
@@ -110,7 +132,52 @@ export function bootstrap(db, root, extra = {}) {
   const approvedPath = (reqId) =>
     paths.find((p) => p.status === "approved" && p.requirement_id === reqId) ?? paths.find((p) => p.status === "approved");
   const next = (() => {
-    if (current) return { action: "task.close", args: { id: current.id }, why: `继续做完 ${current.id} 并收口` };
+    if (current) {
+      // 一条在办任务要按顺序走三步，next 每一步都要说对，不能一上来就催收口：
+      //   ① 写代码 → ② 自己跑验收留证据 → ③ commit → ④ close
+      // 「有没有提交」「有没有证据」是内核**数得出来**的事实，不是猜的。
+      const weak = (metaGet(db, "mode") ?? "git") === "weak";
+      const commits = weak ? 1 : shipped(db, root, current);
+      const evidence = hasEvidence(db, current);
+      const pathRow = paths.find((p) => p.id === current.path_id);
+      const cmds = pathRow?.testCmds ?? [];
+      const runCmd = cmds.length ? cmds[0] : "<契约里的验收命令>";
+      const scopeText = `（只动 scope: ${(current.scope ?? []).join(", ") || "."}）`;
+      if (!weak && !commits) {
+        // 用 task.work 而不是 task.close：这一步没有「照抄就成功」的命令可给，
+        // 硬给一条 close 等于教人撞墙（黑盒实测里，第一次照抄必然 E_NO_DELIVERY）。
+        // 已经留了证据的情况单说：那时候不是「去写码」，是「去提交」。
+        if (evidence) {
+          return {
+            action: "task.work",
+            args: { id: current.id },
+            why: `${current.id} 代码和证据都有了，但还没提交：提交完就能收口`,
+            steps: [`devcontrol commit -m "…"`, `devcontrol close ${current.id}`],
+          };
+        }
+        return {
+          action: "task.work",
+          args: { id: current.id },
+          why: `${current.id} 还没提交任何代码：先写，再自己跑验收留证据，然后 commit，最后才 close`,
+          steps: [
+            `写代码${scopeText}`,
+            `devcontrol run -- ${runCmd}`,
+            `devcontrol commit -m "…"`,
+            `devcontrol close ${current.id}`,
+          ],
+        };
+      }
+      if (!evidence) {
+        return {
+          action: "task.work",
+          args: { id: current.id },
+          why: `${current.id} 已经提交，但还没有验收证据：先自己跑一遍（内核不替你跑）`,
+          steps: [`devcontrol run -- ${runCmd}`, `devcontrol close ${current.id}`],
+          cli: cmds.length ? `devcontrol run -- ${cmds[0]}` : null,
+        };
+      }
+      return { action: "task.close", args: { id: current.id }, why: `${current.id} 代码和证据都齐了，收口` };
+    }
     if (ready[0]) return { action: "task.claim", args: { id: ready[0].id }, why: `依赖已满足，下一个可领取：${ready[0].title}` };
     if (gaps.length) {
       const gap = gaps[0];
@@ -212,7 +279,7 @@ export function bootstrap(db, root, extra = {}) {
     blockers: blockers.slice(0, 5),
     // 同时给「照抄用的参数」（MCP）和「照抄用的命令行」（纯 CLI）：
     // 只给参数的话，CLI 用户还得自己把 requirementId 翻成 --req（T-102）。
-    next: { ...next, cli: cliCommand(next.action, next.args) },
+    next: { ...next, cli: next.cli ?? cliCommand(next.action, next.args) },
     counts: {
       todo: backlog.length,
       doing: doing.length,

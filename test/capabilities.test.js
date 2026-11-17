@@ -77,7 +77,7 @@ test("控制台侧：登记的 Owner 动作必须真的注册了", () => {
 test("MCP 的每个动作都在对照表里有归属（新动作不能悄悄长出来）", () => {
   const known = new Set(CAPABILITIES.filter((c) => c.action).map((c) => c.action));
   // 这几个不是「能力」，是生命周期动作，单独列出而不是漏掉
-  const LIFECYCLE = new Set(["bootstrap", "wait", "task.renew", "bug.report", "ask", "release.create", "release.plan", "release.ship"]);
+  const LIFECYCLE = new Set(["bootstrap", "wait", "task.work", "task.renew", "bug.report", "ask", "release.create", "release.plan", "release.ship"]);
   const orphans = ACTIONS.filter((a) => !known.has(a) && !LIFECYCLE.has(a));
   assert.deepEqual(orphans, [], `这些 MCP 动作没在 capabilities.js 里登记：${orphans.join(", ")}`);
 });

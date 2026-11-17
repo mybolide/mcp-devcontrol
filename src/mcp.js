@@ -28,6 +28,9 @@ export const INSTRUCTIONS = `你是本项目的编码 Agent。工作纪律（由
 export const ACTIONS = [
   "bootstrap",
   "wait",
+  // 在办、但还没写码/没留证据：这一步没有内核动作可调（活是 Agent 自己干的），
+  // 但必须是合法枚举——否则 next 让它做 task.work，它一调就报「非法动作」。
+  "task.work",
   "task.create",
   "task.claim",
   "task.renew",
@@ -103,8 +106,11 @@ export async function dispatch(db, root, args, ctx = {}) {
       const memory = await recallMemories(root, doing ? mapTask(doing) : null);
       return bootstrap(db, root, { console: ctx.consoleUrl ? await ctx.consoleUrl() : null, memories: memory.memories });
     }
-    case "wait": {
-      // next.action 可能就是 wait：允许 Agent 调它，返回当前状态而不是让 schema 报“非法枚举”
+    case "wait":
+    case "task.work": {
+      // next.action 可能就是 wait / task.work：允许 Agent 调它们，返回当前状态
+      // 而不是让 schema 报「非法枚举」。task.work 的内核回答是「该你干活了」，
+      // 而不是代替它干活——所以这里只回现状与步骤。
       const doing = db.prepare("SELECT * FROM tasks WHERE status='doing' ORDER BY id LIMIT 1").get();
       return bootstrap(db, root, { console: ctx.consoleUrl ? await ctx.consoleUrl() : null, memories: (await recallMemories(root, doing ? mapTask(doing) : null)).memories });
     }

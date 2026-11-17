@@ -69,8 +69,10 @@ test("next.args 可以直接执行：task.create → task.claim 都不报错", (
   assert.doesNotThrow(() => taskClaim(db, root, second.args, "agent"));
   assert.equal(getTask(db, created.id).status, "doing");
 
-  // 在办：next 应该是 task.close
-  assert.equal(bootstrap(db, root).next.action, "task.close");
+  // 在办但还没写码：next 指向在办的那条，且不会一上来就催收口
+  const third = bootstrap(db, root).next;
+  assert.ok(["task.close", "task.work"].includes(third.action), `在办时的动作：${third.action}`);
+  assert.equal(third.args.id, created.id);
 });
 
 test("纯 CLI 能建任务与领任务（init --no-mcp 之后）", () => {
@@ -92,7 +94,8 @@ test("纯 CLI 能建任务与领任务（init --no-mcp 之后）", () => {
   assert.ok(listTasks(db).some((t) => t.id === id));
 
   const next = cli("next");
-  assert.match(next, /task\.close/, "在办时 next 应该是收口");
+  // 刚领任务、还没写码：说的是「去干活」，不是「收口」（照抄 close 必撞 E_NO_DELIVERY）
+  assert.match(next, /task\.(close|work)/, "在办时 next 要指向手头这条任务");
   assert.ok(fs.existsSync(path.join(root, ".devcontrol", "state.db")));
 });
 

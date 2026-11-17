@@ -72,7 +72,9 @@ test("依赖排序：前置没完成时内核说「等」，而不是把阻塞�
   // T1 在办，T2 阻塞 → 不该被推荐领取
   taskClaim(db, root, { id: t1.id }, "agent");
   const blocked = bootstrap(db, root);
-  assert.equal(blocked.next.action, "task.close", "在办任务优先收口");
+  // 在办任务优先，但刚领、还没写码时说的是「去干活」（task.work），不是「收口」
+  assert.ok(["task.close", "task.work"].includes(blocked.next.action), `在办任务优先：${blocked.next.action}`);
+  assert.equal(blocked.next.args.id, t1.id, "指向的必须是在办的那条");
 
   await finish(db, root, t1);
   const after = bootstrap(db, root);

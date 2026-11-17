@@ -27,8 +27,9 @@ export function skillBody({ noMcp = false } = {}) {
 1. 开工先问内核：${first}。返回的 \`next\` 就是你现在该做的那件事。
 2. **原样执行** next：走 MCP 用 \`next.args\`（缺参数会收到 \`INVALID_ARGUMENT\`）；走 CLI 就用 \`next.cli\` 那一行，粘进终端直接能跑。
 3. 改代码只能动 \`claim\` 返回的 \`scope\` 里的文件。
-4. \`devcontrol commit -m "..."\`：只提交 scope 内的文件，自动写 Task-Id。
-5. 改完 \`devcontrol commit\`，**自己跑验收留证据**：CLI 用 \`devcontrol run -- <契约里的命令>\`；走 MCP 就用自己的 shell 跑，然后把结果交给 \`evidence.record\`（command + exit）。跑几次都行，内核取当前代码上的那份。\n6. \`devcontrol close\`：内核**不执行测试**，只核验你留下的证据（命令对不对、跑的是不是当前这份代码、退出码满足断言）。
+4. **先自己跑验收**：CLI 用 \`devcontrol run -- <契约里的命令>\`；走 MCP 就用自己的 shell 跑，然后把结果交给 \`evidence.record\`（command + exit）。跑几次都行，内核取当前代码上的那份。
+5. \`devcontrol commit -m "..."\`：只提交 scope 内的文件，自动写 Task-Id。
+6. \`devcontrol close\`：内核**不执行测试**，只核验你留下的证据（命令对不对、跑的是不是当前这份代码、退出码满足断言）。
 
 ## Owner 的动作不在 MCP 里
 
@@ -107,7 +108,7 @@ export function agentsBlock() {
   return `${BEGIN}
 开工先跑 ${open}：它返回的 \`next\` 就是下一件事，不要自己挑。
 改代码前必须 task.claim；不许修改 acceptance，不许自选命令；只改 scope 内的文件。
-改完 \`devcontrol commit -m "..."\`（只提交 scope 内文件）；**自己跑** \`devcontrol run -- <验收命令>\` 留证据；再 \`devcontrol close\`（只核验证据）。
+**先自己跑** \`devcontrol run -- <验收命令>\` 留证据；再 \`devcontrol commit -m "..."\`（只提交 scope 内文件）；最后 \`devcontrol close\`（只核验证据）。
 遇到歧义用 ask，不要猜。
 ${consoleLine}
 多 Agent 并行时，每个 Agent 用自己的 \`DEVCONTROL_ACTOR\`，否则会被 WIP=1 挡住。
@@ -125,7 +126,7 @@ alwaysApply: true
 
 1. 开工先 \`devcontrol status\`（MCP 里是 \`bootstrap\`），照它给的 \`next\` 做。
 2. 改代码前 \`task.claim\`；只改 scope 内的文件。
-3. 改完 \`devcontrol commit\`，自己跑 \`devcontrol run -- <命令>\` 留证据，再 \`devcontrol close\`（只核验证据）。
+3. 自己跑 \`devcontrol run -- <命令>\` 留证据 → \`devcontrol commit\` → \`devcontrol close\`（只核验证据）。
 `;
 }
 

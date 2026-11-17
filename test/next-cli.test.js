@@ -67,9 +67,11 @@ test("领任务 / 收口：命令同样是可执行的", async () => {
   assert.equal(a.cli, `devcontrol task claim ${a.args.id}`);
   runLine(root, a.cli);
 
+  // 领完还没写码：不给一条「照抄必挂」的 close，而是给步骤
   const b = bootstrap(db, root).next;
-  assert.equal(b.action, "task.close");
-  assert.match(b.cli, /^devcontrol close T-\d+$/);
+  assert.equal(b.action, "task.work");
+  assert.equal(b.cli, null, "这一步没有单条命令可给，就不要编一条");
+  assert.ok(b.steps?.length, `要给步骤：${JSON.stringify(b)}`);
 });
 
 test("带空格和中文的标题被引号包住，不会被 shell 拆散", () => {
