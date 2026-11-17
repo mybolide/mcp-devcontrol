@@ -60,16 +60,34 @@ test("README 的 MCP 动作表覆盖了每个真实动作，且没有多余的�
   assert.deepEqual(extra, [], `README 列了代码里没有的动作：${extra.join(", ")}`);
 });
 
-test("没有地方再写死动作的个数", () => {
-  // 早先 README 写「十四个动作」、src/mcp.js 头部写「13 个动作」，
+test("没有地方再写死动作的个数（全仓扫描，不只 README）", async () => {
+  // 早先 README 写「十四个动作」、src/mcp.js 头部写「13 个动作」、
+  // src/cli.js 的 --help 写「13 个动作」、契约文档还写「7 个动作」，
   // 每加一个动作就漂一次，而没人会去数。数量由 ACTIONS 决定，正文不写死。
   // 注意：别误伤「第一个动作必须是 bootstrap」这种正常的序数用法。
-  const files = { "src/mcp.js": read("../src/mcp.js"), "README.md": read("../README.md") };
-  for (const [name, body] of Object.entries(files)) {
-    assert.doesNotMatch(
-      body,
-      /\b\d+\s*个动作|十[一二三四五六七八九]?个动作|二十个动作/,
-      `${name} 又写死了动作个数；改成"动作用 action 区分"，让 ACTIONS 当唯一事实源`,
-    );
-  }
+  const fsx = await import("node:fs");
+  const path = await import("node:path");
+  const rootDir = new URL("..", import.meta.url).pathname;
+  const bad = /\b\d+\s*个动作|十[一二三四五六七八九]?个动作|二十个动作/;
+  const hits = [];
+
+  const walk = (dir) => {
+    for (const e of fsx.readdirSync(dir, { withFileTypes: true })) {
+      if (e.name === "node_modules" || e.name.startsWith(".git")) continue;
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (/\.(js|mjs|md)$/.test(e.name) && e.name !== "instructions.test.js") {
+        const body = fsx.readFileSync(p, "utf8");
+        const m = body.match(bad);
+        if (m) hits.push(`${path.relative(rootDir, p)}: ${m[0]}`);
+      }
+    }
+  };
+  walk(path.join(rootDir, "src"));
+  walk(path.join(rootDir, "docs"));
+  walk(path.join(rootDir, "public"));
+  const readme = fsx.readFileSync(path.join(rootDir, "README.md"), "utf8");
+  if (bad.test(readme)) hits.push(`README.md: ${readme.match(bad)[0]}`);
+
+  assert.deepEqual(hits, [], `这些地方又写死了动作个数，让 ACTIONS 当唯一事实源：\n${hits.join("\n")}`);
 });
