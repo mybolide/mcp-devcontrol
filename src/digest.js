@@ -209,12 +209,19 @@ export function bootstrap(db, root, extra = {}) {
       };
     }
     if (!reqs.some((r) => ["approved", "building"].includes(r.status))) {
+      const draft = reqs.find((r) => r.status === "draft");
+      // 有草稿就别只说「等 Owner」：批准这一步在终端也能做（T-104），
+      // 后面那条命令直接给出来，纯 CLI 的人照着敲就能往下走（T-112）。
+      const p = draftPaths[0] ?? approvedPaths[0];
       return {
         action: "wait",
         args: {},
-        why: reqs.some((r) => r.status === "draft")
-          ? `等 Owner 批准需求（${where}）`
-          : `还没有需求，需要人收件并批准：控制台「收件箱」，或终端 devcontrol intake "要做什么" --accept "npm test :: exit==0" 然后 devcontrol approve`,
+        why: draft
+          ? p
+            ? `需求 ${draft.id} 还是草稿，需要人批准（会冻结验收，Agent 改不了）：devcontrol approve ${draft.id} --path ${p.id}（${where}）`
+            : `需求 ${draft.id} 还没有 Path——先 devcontrol init 建一个草稿 Path，再 approve（${where}）`
+          : `还没有需求，需要人收件并批准：控制台「收件箱」，或终端 devcontrol intake "要做什么" --accept "npm test :: exit==0"`,
+        ...(draft && p ? { cli: `devcontrol approve ${draft.id} --path ${p.id}` } : {}),
       };
     }
     if (!paths.some((p) => p.status === "approved")) {
