@@ -16,3 +16,9 @@ node_modules/
 .devcontrol/r2-wt/
 .devcontrol/r2-wt-legacy/
 .devcontrol/console.lock
+dist/
+build/
+coverage/
+__pycache__/
+.venv/
+target/
