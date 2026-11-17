@@ -335,6 +335,8 @@ export async function taskClose(db, root, input, opts = {}) {
     let files = [];
     let lines = 0;
     let owned = [];
+    // 规范观测：内核只报事实，不判违规（弱模式也要有，所以放在 if (!weak) 外面）
+    const observations = [];
     if (!weak) {
 
     // R0
@@ -441,28 +443,36 @@ export async function taskClose(db, root, input, opts = {}) {
     // 预算不是安全边界（安全边界是 scope 和验收），只是"任务是不是太大了"的提醒：
     // 所以取「领取时 pin 的」与「当前 Path 契约」的较大者——Owner 放宽预算立即生效，
     // 收紧则只影响之后领取的任务，不会把人卡在半路。
+    // ── 规范：内核把事实摆出来，但不判违规 ───────────────────────────────────
+    //
+    // 预算、标记残留、测试配置、依赖与既有测试——这四条都是「代码写得好不好」，
+    // 判断题留给 Owner（控制台上看得到）。内核只负责数清楚、记下来。
+    // 唯一继续拦的是 scope：那不是质量，是「这行代码属于哪个任务」的事实问题，
+    // 内核不判它就没人能判，归属链会断。
     const curBudget = Number(readContract(root, p.contract_commit, p.id).body?.budgetLines ?? 0);
     const pathBudget = Math.max(Number(body.budgetLines ?? 1200), curBudget);
-    if (pathUsed + lines > pathBudget && !waiveFor(db, t.id, "E_DIFF_BUDGET")) fail("E_DIFF_BUDGET", `Path 累计 ${pathUsed + lines} 行 > ${pathBudget}`, { scope: "path", used: pathUsed + lines, budget: pathBudget });
-    if (lines > t.budget_lines && !waiveFor(db, t.id, "E_DIFF_BUDGET")) fail("E_DIFF_BUDGET", `任务累计 ${lines} 行 > ${t.budget_lines}`);
+    if (pathUsed + lines > pathBudget) {
+      observations.push({ id: "budget", detail: `Path 累计 ${pathUsed + lines} 行 > 预算 ${pathBudget}`, used: pathUsed + lines, budget: pathBudget });
+    }
+    if (lines > t.budget_lines) {
+      observations.push({ id: "budget", detail: `本任务改了 ${lines} 行 > 预算 ${t.budget_lines}`, used: lines, budget: t.budget_lines });
+    }
     // 只认「注释开头的标记」：斜杠注释、井号注释、块注释、HTML 注释后面紧跟标记词。
-    // 早先只看词根，结果凡是在文案/文档里**提到**那个词也会被拦
-    // （内核自己写了一条讲它的提示，就被自己的门禁挡住了）。
-    // 注意：这段注释本身也不能写出「注释符+标记词」的字面量，否则会被自己拦住——
-    // 这不是妥协，是这条规则必然的后果，测试文件里同样要绕。
+    // 只看词根会把「提到这个词」也算成「留下标记」，连内核自己的文案都会被误伤。
     const MARK = /(?:\/\/|#|\/\*|\*|<!--)\s*(TODO|FIXME|HACK|XXX)\b/;
     const todos = owned
       .flatMap((c) => git(root, ["diff", "-m", "--first-parent", `${c.sha}^..${c.sha}`]).split("\n"))
-      .filter((l) => /^\+/.test(l) && MARK.test(l) && !l.includes(t.id));
-    if (todos.length) fail("E_LINT_TODO", `新增 TODO/FIXME 标记未带任务号（写在注释里就得带 ${t.id}）`, { lines: todos.slice(0, 5) });
+      .filter((l) => /^\+/.test(l) && MARK.test(l));
+    if (todos.length) {
+      observations.push({ id: "todo", detail: `留下 ${todos.length} 处 TODO/FIXME 标记`, samples: todos.slice(0, 3).map((x) => x.trim().slice(0, 80)) });
+    }
     const cfg = files.filter(isTestConfig);
-    if (cfg.length && !waiveFor(db, t.id, "E_TEST_CONFIG_TOUCH")) fail("E_TEST_CONFIG_TOUCH", "改动了测试配置", { files: cfg });
-    // 新增测试文件是 TDD 的正常动作，它不削弱任何既有断言；
-    // 真正要 Owner 签字的是「动了既有的测试」——那条路能悄悄放宽断言。
+    if (cfg.length) observations.push({ id: "testconf", detail: `动了测试配置：${cfg.slice(0, 3).join("、")}`, files: cfg });
+    // 新增测试文件是 TDD 的正常动作，它不削弱任何既有断言——所以只有「动既有测试」才记一笔。
     const addedFilesSet = new Set(owned.flatMap((c) => addedFiles(root, c.sha)));
     const depOrTest = files.filter((f) => isPkg(f) || (isTestPath(f) && t.kind !== "test" && !addedFilesSet.has(f)));
-    if (depOrTest.length && !waiveFor(db, t.id, "E_DEP_OR_TEST_TOUCH")) {
-      fail("E_DEP_OR_TEST_TOUCH", "改动了依赖或既有测试", { files: depOrTest });
+    if (depOrTest.length) {
+      observations.push({ id: "tests", detail: `动了依赖/既有测试：${depOrTest.slice(0, 3).join("、")}`, files: depOrTest });
     }
     } // ← 闭合上面 324 行的 if (!weak)：这段故意不缩进，别当成多余括号删掉（删了弱模式会跑 R0）
 
@@ -546,11 +556,19 @@ export async function taskClose(db, root, input, opts = {}) {
       .prepare("UPDATE tasks SET status='done', changed_lines=?, closed_by='rerun', closed_at=?, closing_at=NULL, closing_token=NULL, updated_at=? WHERE id=? AND status='doing' AND closing_token=?")
       .run(lines, now(), now(), t.id, token);
     if (done.changes !== 1) throw new DFError("E_BUSY", "任务状态已被改变");
-    for (const code of ["E_TEST_CONFIG_TOUCH", "E_DEP_OR_TEST_TOUCH", "E_DIFF_BUDGET"]) consumeWaive(db, t.id, code);
     for (const c of owned) {
       if (c.patch) db.prepare("INSERT OR REPLACE INTO patch_ids(patch_id,task_id,commit_sha) VALUES(?,?,?)").run(c.patch, t.id, c.sha);
     }
-    logEvent(db, { action: "close", taskId: t.id, detail: weak ? `弱模式 · ${runs.length} 断言` : `${lines} 行 / ${files.length} 文件 / ${runs.length} 断言` });
+    if (observations.length) {
+      logEvent(db, { action: "close.observed", taskId: t.id, detail: observations.map((o) => o.detail).join("；") });
+    }
+    logEvent(db, {
+      action: "close",
+      taskId: t.id,
+      detail: weak
+        ? `弱模式 · ${runs.length} 断言`
+        : `${lines} 行 / ${files.length} 文件 / ${runs.length} 断言${observations.length ? ` / ${observations.length} 条规范提醒` : ""}`,
+    });
     mark("done", `${t.id} 收口完成，用时 ${Math.round((Date.now() - startedAt) / 100) / 10}s`);
     // 失败过才记坑：现象取最近一次失败事件，解法取 resolvedBy（上面已强制）
     let memory = null;
@@ -559,7 +577,20 @@ export async function taskClose(db, root, input, opts = {}) {
       memory = await rememberTaskPitfall(root, t, resolvedBy, lastFail ? `${lastFail.code}: ${lastFail.detail}` : null, memoryConfig(process.env, root));
     }
     if (memory?.status === "candidate") memory.hint = generalizeHint(memory.reasons ?? []);
-    return { id: t.id, lines, files: files.length, runs, closedBy: "rerun", commits: weak ? [] : owned.map((c) => c.sha), fingerprint: fpNow, memory, memoryHint: memory?.hint ?? null, weak };
+    return {
+      id: t.id,
+      lines,
+      files: files.length,
+      runs,
+      closedBy: "rerun",
+      commits: weak ? [] : owned.map((c) => c.sha),
+      fingerprint: fpNow,
+      // 规范对照：内核只报事实，不判违规。Owner 看这个决定要不要打回。
+      observations,
+      memory,
+      memoryHint: memory?.hint ?? null,
+      weak,
+    };
   } catch (error) {
     last = last ?? error.code ?? "E_INTERNAL";
     mark("failed", `${last}：${String(error.message).slice(0, 120)}`);

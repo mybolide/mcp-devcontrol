@@ -9,9 +9,6 @@ const HINTS = {
   E_SCOPE_VIOLATION: "改到任务 scope 之外了。要么把这些文件加进 scope（Owner 可调），要么另开一个任务。",
   E_UNREGISTERED_FILES: "新增的文件不在 scope 内。把目录写进 scope，别往仓库里塞计划外的东西。",
   E_DIRTY_SCOPE: "scope 里还有没提交的改动。先 commit，再收口。",
-  E_DEP_OR_TEST_TOUCH: "改了依赖或测试。这需要 Owner 放行：他在控制台「任务」里点放行并写理由（≥12 字）。Agent 不能自助。",
-  E_TEST_CONFIG_TOUCH: "改了测试配置。这需要 Owner 放行：控制台「任务」里点放行。",
-  E_DIFF_BUDGET: "改动量超预算。Owner 可以在控制台放行，或者把任务拆小——后者通常才是对的。",
   E_NO_EVIDENCE: "收口只核验证据，不替你跑测试。先自己跑出来：devcontrol run -- <契约里的验收命令>，然后再 devcontrol close。",
   E_EVIDENCE_STALE: "上次跑测试之后代码又改了，那份证据已经不作数。重跑一遍：devcontrol run -- <命令>。",
   E_ASSERTION_FAILED: "验收命令没通过。看证据：devcontrol evidence run-xxxx（不给编号看最近 8 次），或控制台「证据」页。",
@@ -43,7 +40,6 @@ const HINTS = {
   E_DEP_OPEN: "前置任务还没收口。先把它做完（devcontrol close），或者换一个不依赖它的任务。",
   E_CLAIM_STALE: "租约过期了，这个任务已经回到待领队列。重新 task.claim 一次即可（超过 45 分钟没动静就会这样）。",
   E_UNMERGED_WORK: "你的提交不在当前分支的祖先链上（被 rebase 掉了，或者提交在别的分支）。把它们合回来再收口。",
-  E_LINT_TODO: "代码里还留着 TODO/FIXME 标记。先把它做成真实现，或者写进 issue 再删掉标记。",
   INVALID_ARGUMENT: "参数不合法。看 message 里说的允许取值，照着改一个再重试。",
   E_NO_TASK: "手上没有在办任务。先 devcontrol task claim T-00x（devcontrol next 会告诉你该做哪个）。",
 };

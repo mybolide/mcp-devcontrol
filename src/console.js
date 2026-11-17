@@ -250,11 +250,11 @@ export async function startConsole(args) {
         requirements: listReqs(adb),
         // 规范也一起给前端：Owner 批准时得看得见「这条 Path 上要守什么」
         paths: listPaths(adb).map((pth) => {
-          let standards = [];
+          let standards = null;
           try {
-            standards = readContract(active.root, pth.contract_commit, pth.id).body?.standards ?? [];
+            standards = readContract(active.root, pth.contract_commit, pth.id).body?.standards ?? null;
           } catch {
-            standards = [];
+            standards = null;
           }
           return { ...pth, standards };
         }),

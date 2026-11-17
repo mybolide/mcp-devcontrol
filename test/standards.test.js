@@ -1,63 +1,82 @@
-// devcontrol — 规范要写在契约里，不能只藏在内核代码里
+// devcontrol — 规范：内核下发，但不执行
 //
-// 之前这几条规范（不许改既有测试、不许超预算、不许留 TODO…）散在 gates.js 里：
-// Owner 批准 Path 时看不见、Agent 开工时不知道，被拦了才第一次听说。
-// 更糟的是有些规范（比如「TODO 必须带任务号」）连内核自己的文案都会被误伤。
+// 分工线是这么划的：
+//   · 规范随任务下发 —— Owner 批准时看得见，Agent 领任务时拿到同一份
+//   · 内核不判违规 —— 它只把事实数出来（改了多少行、动没动测试、留没留标记），
+//     判断权留给 Owner。**工作台摆事实，人下结论。**
+//   · 唯一硬拦的是 scope —— 那不是代码质量，是「这行代码属于哪个任务」的事实问题
 //
-// 现在它们被冻进契约：Owner 批准时能看见自己要守什么，Agent claim 时拿到同一份，
-// 被拦时错误码能对上其中一条。这是 Jira 没有的那一半——Jira 只管「功能做对了没」，
-// 不管「代码写成什么样」；我们这边没人 review，只能由内核兜。
+// 这条线之前是反的：内核把四条质量规范都做成了拦截，Agent 收口被拦了才第一次
+// 听说有这条规则，Owner 批准时也看不见。规范该说在前面，而不是罚在后面。
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import { buildStandards, ruleOf } from "../src/standards.js";
+import { buildStandards, compareStandards } from "../src/standards.js";
 import { makeRepo, initFlow, newTask } from "./helpers.js";
-import { openDb } from "../src/db.js";
 import { taskClaim } from "../src/gates.js";
 
 const SRC = path.join(import.meta.dirname, "..", "src");
 
-test("契约里带着规范清单，每条都有 code 和 rule", () => {
+test("契约里带着规范：规则清单 + 哪些是内核会拦的", () => {
   const root = makeRepo();
   initFlow(root);
-  const file = path.join(root, ".devcontrol/contracts/P-001.json");
-  assert.ok(fs.existsSync(file), "批准时应该已经把契约提交出来");
-  const body = JSON.parse(fs.readFileSync(file, "utf8"));
-  assert.ok(Array.isArray(body.standards), "契约里必须有 standards");
-  assert.ok(body.standards.length >= 5, `规范条目太少：${body.standards.length}`);
-  for (const s of body.standards) {
-    assert.match(s.code, /^E_[A-Z_]+$/, `规范条目缺错误码：${JSON.stringify(s)}`);
-    assert.ok(s.rule && s.rule.length > 4, `规范条目缺说明：${JSON.stringify(s)}`);
+  const body = JSON.parse(fs.readFileSync(path.join(root, ".devcontrol/contracts/P-001.json"), "utf8"));
+  assert.ok(body.standards, "契约里必须有 standards");
+  assert.ok(Array.isArray(body.standards.rules) && body.standards.rules.length >= 5);
+  assert.deepEqual(body.standards.enforced, ["scope"], "硬拦的只有 scope 这一类");
+  for (const r of body.standards.rules) {
+    assert.ok(r.id && r.text && r.text.length > 4, `规范条目不完整：${JSON.stringify(r)}`);
   }
 });
 
-test("预算数字进规范原文（不是一句含糊的「别改太多」）", () => {
-  const withBudget = buildStandards({ budgetLines: 350 }).find((s) => s.code === "E_DIFF_BUDGET");
-  assert.match(withBudget.rule, /350 行/);
+test("预算数字进条文（不是一句含糊的「别改太多」）", () => {
+  const std = buildStandards({ budgetLines: 350 });
+  assert.match(std.rules.find((r) => r.id === "budget").text, /350 行/);
 });
 
-test("Agent 领取任务时也拿到这份规范", () => {
+test("Agent 领取任务时拿到这份规范", () => {
   const root = makeRepo();
   const { db, reqId } = initFlow(root);
   const t = newTask(db, root, reqId);
   const claimed = taskClaim(db, root, { id: t.id }, "agent");
-  assert.ok(Array.isArray(claimed.standards) && claimed.standards.length >= 5, "开工时就要知道边界在哪");
-  assert.ok(claimed.standards.some((s) => s.code === "E_DIFF_BUDGET"));
+  assert.ok(claimed.standards?.rules?.length >= 5, "开工时就要知道边界在哪");
+  assert.deepEqual(claimed.standards.enforced, ["scope"]);
 });
 
-test("每条规范都对应一个内核真的会抛的错误码（不许写安慰性条款）", () => {
+test("enforced 里的每一条都真的有内核拦截对应（不能写了不拦）", () => {
   const codes = new Set();
   for (const f of fs.readdirSync(SRC).filter((x) => x.endsWith(".js"))) {
     const body = fs.readFileSync(path.join(SRC, f), "utf8");
     for (const m of body.matchAll(/fail\(\s*"([A-Z][A-Z0-9_]+)"/g)) codes.add(m[1]);
     for (const m of body.matchAll(/new DFError\(\s*"([A-Z][A-Z0-9_]+)"/g)) codes.add(m[1]);
   }
-  const ghosts = buildStandards({ budgetLines: 100 }).filter((s) => !codes.has(s.code));
-  assert.deepEqual(ghosts.map((s) => s.code), [], "这些规范写的错误码内核根本不会抛，等于没写");
+  // scope 这一类对应两个码：改动越界、新增文件越界
+  assert.ok(codes.has("E_SCOPE_VIOLATION"), "scope 规范说了会拦，就必须真的有这条拦截");
+  assert.ok(codes.has("E_UNREGISTERED_FILES"));
 });
 
-test("ruleOf 能把错误码翻回规范原文", () => {
-  assert.match(ruleOf("E_LINT_TODO"), /TODO/);
-  assert.equal(ruleOf("NOT_A_CODE"), null);
+test("质量类规范不再有对应拦截（说了只下发，就不能偷偷罚）", () => {
+  const codes = new Set();
+  for (const f of fs.readdirSync(SRC).filter((x) => x.endsWith(".js"))) {
+    const body = fs.readFileSync(path.join(SRC, f), "utf8");
+    for (const m of body.matchAll(/fail\(\s*"([A-Z][A-Z0-9_]+)"/g)) codes.add(m[1]);
+    for (const m of body.matchAll(/new DFError\(\s*"([A-Z][A-Z0-9_]+)"/g)) codes.add(m[1]);
+  }
+  assert.ok(!codes.has("E_LINT_TODO"), "标记残留不该再拦人");
+  assert.ok(!codes.has("E_DIFF_BUDGET"), "行数预算不该再拦人");
+  assert.ok(!codes.has("E_DEP_OR_TEST_TOUCH"), "改依赖/既有测试不该再拦人");
+  assert.ok(!codes.has("E_TEST_CONFIG_TOUCH"), "改测试配置不该再拦人");
+});
+
+test("compareStandards：把观测到的和规范对成一张表", () => {
+  const std = buildStandards({ budgetLines: 100 });
+  const table = compareStandards(std, [
+    { id: "budget", detail: "本任务改了 312 行 > 预算 100" },
+    { id: "todo", detail: "留下 2 处标记" },
+  ]);
+  assert.equal(table.length, std.rules.length);
+  const budget = table.find((r) => r.id === "budget");
+  assert.match(budget.touched[0], /312 行/);
+  assert.deepEqual(table.find((r) => r.id === "scope").touched, [], "没观测到 = 这条没问题");
 });

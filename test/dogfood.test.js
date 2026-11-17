@@ -94,81 +94,25 @@ test("ship：别人手上还有在办任务时不许发布（半成品会上线�
   assert.equal(shipRelease(db, { id: r.id }).status, "shipped");
 });
 
-test("新增测试文件放行，改既有测试仍要 Owner 签字", async () => {
+test("新增测试不记，改既有测试记一笔（但都不拦）", async () => {
   const root = makeRepo();
   const { db, reqId } = initFlow(root);
-  // ① 只新增一个测试文件：这是 TDD 的正常动作，不该要 Owner 放行
+  // ① 只新增一个测试文件：TDD 的正常动作，连记录都不该有
   const a = newTask(db, root, reqId, { title: "补新测试", scope: ["src"] });
   taskClaim(db, root, { id: a.id }, "agentA");
-  fs.writeFileSync(path.join(root, "src/new.test.js"), "import test from \"node:test\";\ntest(\"x\", () => {});\n");
+  fs.writeFileSync(path.join(root, "src/new.test.js"), 'import test from "node:test";\ntest("x", () => {});\n');
   commitFiles(root, ["src/new.test.js"], `feat\n\nTask-Id: ${a.id}\nDevControl-Base: ${a.base_head}`, { author: "agentA" });
-  const res = await closeProven(db, root, { id: a.id });
-  assert.equal(res.runs[0].passed, true, "新增测试文件不应该被拦");
+  const resA = await closeProven(db, root, { id: a.id });
+  assert.equal(resA.runs[0].passed, true);
+  assert.deepEqual((resA.observations ?? []).filter((o) => o.id === "tests"), [], "新增测试不算「动了既有测试」");
 
-  // ② 改既有测试：这才是能悄悄放宽断言的路，仍然要签字
+  // ② 改既有测试：记一笔给 Owner 看，但仍然不拦——判不判是人的事
   const b = newTask(db, root, reqId, { title: "改老测试", scope: ["src"] });
   taskClaim(db, root, { id: b.id }, "agentA");
-  fs.writeFileSync(path.join(root, "src/new.test.js"), "import test from \"node:test\";\ntest(\"x\", () => {});\n// 顺手放宽\n");
+  fs.writeFileSync(path.join(root, "src/new.test.js"), 'import test from "node:test";\ntest("x", () => {});\n// 顺手放宽\n');
   commitFiles(root, ["src/new.test.js"], `chore\n\nTask-Id: ${b.id}\nDevControl-Base: ${b.base_head}`, { author: "agentA" });
-  await assert.rejects(() => closeProven(db, root, { id: b.id }), (e) => e.code === "E_DEP_OR_TEST_TOUCH");
-});
-
-test("Path 预算能调（项目会长大），改的是契约本身且留痕", () => {
-  const root = makeRepo();
-  const { db } = initFlow(root);
-  assert.equal(listPaths(db).find((p) => p.id === "P-001").budget_lines, 1200);
-
-  const r = pathAdjust(db, root, { pathId: "P-001", budgetLines: 4000, reason: "项目进入第二个季度，新增模块的正常体量已超过初始预算" });
-  assert.equal(r.from, 1200);
-  assert.equal(r.to, 4000);
-  // 契约是事实源：新提交里必须能读到新预算
-  assert.equal(readContract(root, r.contractCommit, "P-001").body.budgetLines, 4000);
-  assert.equal(listPaths(db).find((p) => p.id === "P-001").budget_lines, 4000);
-
-  assert.throws(
-    () => pathAdjust(db, root, { pathId: "P-001", budgetLines: 50, reason: "预算太小会误伤正常改动" }),
-    (e) => e.code === "E_CONTRACT",
-  );
-  assert.throws(
-    () => pathAdjust(db, root, { pathId: "P-001", budgetLines: 2000, reason: "太短" }),
-    (e) => e.code === "E_CONTRACT" && /现在 2 字/.test(e.message),
-  );
-});
-
-test("放宽 Path 预算对在办任务立即生效（不用先收了重开）", async () => {
-  const root = makeRepo();
-  const { db, reqId } = initFlow(root);
-  // 先占住预算：造一条"已完成"的大任务，让剩余空间只剩 1 行
-  db.prepare(
-    "INSERT INTO tasks(id,requirement_id,path_id,kind,title,status,scope_json,acceptance_json,depends_on_json,budget_lines,base_head,contract_hash,contract_commit,created_at,updated_at,changed_lines) VALUES('T-900',?,'P-001','feature','占位','done','[\"src\"]','[]','[]',400,'x','h','c',0,0,1199)",
-  ).run(reqId);
-  const t = newTask(db, root, reqId);
-  taskClaim(db, root, { id: t.id }, "agentA");
-  fs.writeFileSync(path.join(root, "src/a.js"), "export const big = 1;\nexport const more = 2;\n");
-  commitFiles(root, ["src/a.js"], `feat\n\nTask-Id: ${t.id}\nDevControl-Base: ${t.base_head}`, { author: "agentA" });
-
-  // 领取之后 Owner 才放宽：应该立即生效，不用重新领取
-  pathAdjust(db, root, { pathId: "P-001", budgetLines: 5000, reason: "项目体量增长，原预算已不够用，按实际情况放宽" });
-  const res = await closeProven(db, root, { id: t.id });
-  assert.equal(res.runs[0].passed, true);
-  assert.equal(getTask(db, t.id).status, "done");
-});
-
-test("hint 覆盖所有会被 Agent 撞到的门禁码（漏了就返回 null，不会瞎编）", () => {
-  const codes = [
-    "E_NEED_APPROVED",
-    "E_NO_DELIVERY",
-    "E_UNOWNED_COMMIT",
-    "E_SCOPE_VIOLATION",
-    "E_DEP_OR_TEST_TOUCH",
-    "E_DIFF_BUDGET",
-    "E_ASSERTION_FAILED",
-    "E_WIP_LIMIT",
-    "E_SCOPE_OVERLAP",
-    "E_NEED_RESOLUTION",
-    "E_RELEASE_OPEN",
-  ];
-  for (const code of codes) assert.ok(hintFor({ code }), `${code} 缺一句提示`);
-  assert.equal(hintFor({ code: "E_NOT_A_REAL_CODE" }), null);
-  assert.equal(hintFor({}), null);
+  const resB = await closeProven(db, root, { id: b.id, resolvedBy: "按规范对照确认过" });
+  const obs = (resB.observations ?? []).filter((o) => o.id === "tests");
+  assert.equal(obs.length, 1, "动了既有测试要如实记下来");
+  assert.match(obs[0].detail, /new\.test\.js/);
 });

@@ -497,9 +497,9 @@ export function cmdTask(args) {
     console.log(`scope: ${claimed.scope.join(", ")}`);
     for (const cmd of claimed.testCmds) console.log(`验收命令: ${cmd}`);
     // 规范也印出来：开工时就该知道边界，而不是收口被拦才第一次听说
-    if (claimed.standards?.length) {
-      console.log("规范：");
-      for (const st of claimed.standards) console.log(`  · ${st.rule}`);
+    if (claimed.standards?.rules?.length) {
+      console.log(`规范（${claimed.standards.enforced?.length ? `内核会拦：${claimed.standards.enforced.join("、")}；` : ""}其余靠自觉）：`);
+      for (const st of claimed.standards.rules) console.log(`  · ${st.text}`);
     }
     return 0;
   }
@@ -579,6 +579,13 @@ export async function cmdClose(args) {
     };
     const res = await taskClose(db, root, { id, resolvedBy }, { onProgress });
     if (tty) process.stderr.write("\n");
+    // 规范对照只走 stderr（人读）：内核报事实，判不判由人。
+    // stdout 仍然是一整段 JSON，observations 在里面，脚本能自己用。
+    if (res.observations?.length) {
+      process.stderr.write("\n规范对照（内核只报事实，判断在你）：\n");
+      for (const o of res.observations) process.stderr.write(`  · ${o.detail}\n`);
+      process.stderr.write("  要打回：控制台「任务」里 reopen，或者核一下是不是该拆得更小。\n");
+    }
     // 成功也带 ok:true：脚本只要看一个字段就知道结果，不用猜"有没有 ok 字段"
     console.log(JSON.stringify({ ok: true, ...res }, null, 2));
     return 0;
