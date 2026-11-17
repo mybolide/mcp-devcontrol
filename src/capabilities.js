@@ -81,6 +81,20 @@ export const CAPABILITIES = [
     console: "override",
   },
   {
+    name: "提问（遇到歧义别猜）",
+    action: "ask",
+    mcp: ["taskId", "question", "options"],
+    cli: { sub: "ask", flags: ["question", "options", "task"] },
+    console: "answer",
+  },
+  {
+    name: "上报 bug",
+    action: "bug.report",
+    mcp: ["title", "symptom", "expected", "repro", "severity", "requirementId"],
+    cli: { sub: "bug", flags: ["title", "symptom", "expected", "repro", "severity", "req"] },
+    console: "decide",
+  },
+  {
     name: "记经验",
     action: "memory.write",
     mcp: ["title", "body", "kind", "tags", "project"],

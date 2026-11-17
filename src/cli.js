@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { metaGet, metaSet, openDb, dataDir, dbPath } from "./db.js";
-import { fileClashes, recordEvidence, taskClose, taskRenew, taskCreate, taskClaim } from "./gates.js";
+import { ask, bugReport, fileClashes, recordEvidence, taskClose, taskRenew, taskCreate, taskClaim } from "./gates.js";
 import { git, head, isRepo, toplevel, statusPorcelain, commitFiles, lsFiles } from "./git.js";
 import { inScope, sha256 } from "./fingerprint.js";
 import { bootstrap } from "./digest.js";
@@ -852,6 +852,90 @@ export function cmdDoc(args) {
   return 2;
 }
 
+/**
+ * devcontrol ask "问题" [--options a,b] [--task T-00x]
+ *
+ * 为什么需要它：AGENTS.md 把「遇到歧义用 ask，不要猜」写成硬规则，
+ * 而 ask 只在 MCP 里。纯 CLI 用户照规矩办事，却发现无路可走——
+ * 要么违反规则自己猜，要么被迫去开控制台（而那是 Owner 的地盘）（T-103）。
+ */
+export function cmdAsk(args) {
+  const root = resolveRoot();
+  const db = openDb(root);
+  const flag = (name) => {
+    const i = args.indexOf(`--${name}`);
+    return i >= 0 ? args[i + 1] : undefined;
+  };
+  const question = flag("question") ?? args.find((a) => !a.startsWith("--"));
+  if (!question) {
+    return failCli('用法：devcontrol ask "你的问题" [--options 选项A,选项B] [--task T-00x]', "E_USAGE");
+  }
+  const actor = flag("actor") ?? process.env.DEVCONTROL_ACTOR ?? "agent";
+  // 不给 --task 就用手上正在办的那条：问到哪条任务头上，Agent 本来就知道
+  let taskId = flag("task");
+  if (!taskId) {
+    const held = db.prepare("SELECT id FROM tasks WHERE status='doing' AND claimed_by=? AND closing_token IS NULL").all(actor);
+    if (held.length !== 1) {
+      return failCli(
+        held.length ? `你手上有 ${held.length} 条在办任务，用 --task 指定问哪一条` : `${actor} 手上没有在办任务，用 --task T-00x 指定`,
+        "E_NO_TASK",
+        { holding: held.map((t) => t.id) },
+        1,
+      );
+    }
+    taskId = held[0].id;
+  }
+  const options = (flag("options") ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const res = ask(db, { taskId, question, options });
+  if (!res.questionId) {
+    console.log("配额已满（同时最多 3 个未答问题），这次只记了事件。等 Owner 回答后在控制台看。");
+    return 0;
+  }
+  console.log(`${res.questionId}  已提问（${taskId} 已暂停，等 Owner 回答后自动回到待领）`);
+  if (options.length) console.log(`选项：${options.join(" / ")}`);
+  console.log(`回答后继续：devcontrol task claim ${taskId}`);
+  return 0;
+}
+
+/**
+ * devcontrol bug "标题" --repro "第一步" --repro "第二步" [--symptom …] [--expected …]
+ *
+ * 同 ask：Agent 撞到「不是自己该修的东西」时需要一条上报的路。
+ * 之前只有 MCP 有，纯 CLI 的 Agent 只能把 bug 写进 commit message（没人看得见）。
+ */
+export function cmdBug(args) {
+  const root = resolveRoot();
+  const db = openDb(root);
+  const flag = (name) => {
+    const i = args.indexOf(`--${name}`);
+    return i >= 0 ? args[i + 1] : undefined;
+  };
+  const every = (name) => args.flatMap((a, i) => (a === `--${name}` && args[i + 1] ? [args[i + 1]] : []));
+  const title = flag("title") ?? args.find((a) => !a.startsWith("--"));
+  if (!title) {
+    return failCli('用法：devcontrol bug "一句话说清什么坏了" --repro "第一步" --repro "第二步" [--symptom …] [--expected …] [--severity P1]', "E_USAGE");
+  }
+  const actor = flag("actor") ?? process.env.DEVCONTROL_ACTOR ?? "agent";
+  const res = bugReport(
+    db,
+    {
+      title,
+      symptom: flag("symptom"),
+      expected: flag("expected"),
+      repro: every("repro"),
+      severity: flag("severity") ?? "P2",
+      requirementId: flag("req"),
+    },
+    actor,
+  );
+  console.log(`${res.bugId}  已上报：${title}`);
+  console.log("Owner 在控制台「收件箱」裁决（转任务 / 不改）；用 devcontrol status 看有没有结论。");
+  return 0;
+}
+
 export function cmdRelease(args) {
   const root = resolveRoot();
   const db = openDb(root);
@@ -936,7 +1020,7 @@ export async function main(argv) {
   try {
     // 没有项目库就别往下走：openDb 会凭空建一个空库，用户看到「0 个任务」
     // 还以为自己初始化过了。init / help / 版本号天然不需要库（T-098）。
-    const NEEDS_DB = new Set(["run", "commit", "renew", "next", "task", "flow", "close", "status", "bootstrap", "stats", "report", "memory", "doctor", "evidence", "doc", "release", "export", "serve", "mcp"]);
+    const NEEDS_DB = new Set(["run", "commit", "renew", "next", "task", "ask", "bug", "flow", "close", "status", "bootstrap", "stats", "report", "memory", "doctor", "evidence", "doc", "release", "export", "serve", "mcp"]);
     if (NEEDS_DB.has(cmd)) {
       const root = resolveRoot();
       if (!fs.existsSync(dbPath(root))) {
@@ -956,6 +1040,10 @@ export async function main(argv) {
         return cmdNext();
       case "task":
         return cmdTask(args);
+      case "ask":
+        return cmdAsk(args);
+      case "bug":
+        return cmdBug(args);
       case "flow":
         return cmdFlow(args);
       case "close":
@@ -1006,6 +1094,8 @@ export async function main(argv) {
   devcontrol next                   内核认为你现在该做的那一件事（参数可直接照抄）
   devcontrol stats                  纪律三数：被拦 / 返工 / 绕过（内核到底有没有在起作用）
   devcontrol report [--days 7] [--json]  周报：这一周收口几条、拦在哪、净改动多少（默认 markdown）
+  devcontrol ask "问题" [--options a,b] [--task T-00x]   遇到歧义就问，别猜（任务会暂停等 Owner 回答）
+  devcontrol bug "标题" --repro "第一步" [--repro …]   上报不属于本任务的 bug（Owner 在控制台裁决）
   devcontrol flow <list|show|save|apply>  流程模板：把做过的交付沉淀下来复用（存 .devcontrol/flows/）
   devcontrol close [T-00x] [--resolved-by "…"]  收口：核验 Agent 留下的测试证据（内核不跑测试）
   devcontrol status                  摘要：next / actions / plan / 记忆命中（bootstrap 是它的别名）
