@@ -1,3 +1,6 @@
+import fs from "node:fs";
+import path from "node:path";
+
 // devcontrol — 依赖与构建产物：它们永远不是交付物
 //
 // 为什么内核要自己认这件事，而不是指望项目写对 .gitignore：
@@ -9,6 +12,11 @@
 //
 // 判定只对「未跟踪」生效：已经被 git 跟踪的 dist/ 是有人特意提交的，
 // 内核不去翻案（那条路径照常参与 scope 与提交）。
+//
+// 有些目录名跟着语言走，不能一刀切：
+//   Go 的 `go build -o bin/inv` 把二进制放在 bin/，那是产物；
+//   但 npm 包的 `bin/` 是**源码**（package.json 的 bin 入口，内核自己就是 bin/devcontrol.js）。
+//   所以 bin/ 只有在这个项目真有 go.mod 时才当产物。
 
 /** 纯生成物目录名：出现在路径任意一段，就视为依赖/构建产物 */
 export const VENDOR_DIRS = new Set([
@@ -47,6 +55,10 @@ export const VENDOR_DIRS = new Set([
  * `src/build/` 是源码，误判会让人白丢一次提交。
  */
 const BUILD_DIR_NAMES = new Set(["dist", "build", "out"]);
+/** 跟着语言走的产物目录名 → 判定条件（缺省不认） */
+const LANG_BUILD_DIRS = {
+  bin: (root) => Boolean(root) && fs.existsSync(path.join(root, "go.mod")),
+};
 const WORKSPACE_DIRS = new Set(["packages", "apps", "libs", "modules", "services"]);
 
 const segs = (p) =>
@@ -60,21 +72,29 @@ const segs = (p) =>
  * 这条「目录」路径是不是依赖/构建产物？
  * `dist`/`build`/`out` 只在两种位置算：仓库根（`dist/`），或 monorepo 包目录下（`packages/web/dist`）。
  */
-export function isVendorDir(rel) {
+export function isVendorDir(rel, root = null) {
   const seg = segs(rel);
   if (!seg.length) return false;
   if (VENDOR_DIRS.has(seg[0])) return true;
   for (let i = 1; i < seg.length; i += 1) if (VENDOR_DIRS.has(seg[i])) return true;
-  if (BUILD_DIR_NAMES.has(seg[0])) return true;
-  if (seg.length === 3 && WORKSPACE_DIRS.has(seg[0]) && BUILD_DIR_NAMES.has(seg[2])) return true;
+  const langBuild = (name) => LANG_BUILD_DIRS[name]?.(root) ?? false;
+  if (BUILD_DIR_NAMES.has(seg[0]) || langBuild(seg[0])) return true;
+  if (seg.length === 3 && WORKSPACE_DIRS.has(seg[0]) && (BUILD_DIR_NAMES.has(seg[2]) || langBuild(seg[2]))) return true;
   return false;
 }
 
 /** 这条「文件」路径是不是依赖/构建产物？只看它所在的目录 */
-export function isVendorPath(file) {
+export function isVendorPath(file, root = null) {
   const seg = segs(file);
   if (seg.length < 2) return false;
-  return isVendorDir(seg.slice(0, -1).join("/"));
+  return isVendorDir(seg.slice(0, -1).join("/"), root);
+}
+
+/** 语言相关的忽略条目：只有认得出语言才写，免得把源码目录忽略掉 */
+export function vendorIgnores(root) {
+  const extra = [];
+  if (root && fs.existsSync(path.join(root, "go.mod"))) extra.push("bin/");
+  return [...VENDOR_IGNORES, ...extra];
 }
 
 /** .gitignore 里建议补的条目（init 写一次；已经有的不重复写） */

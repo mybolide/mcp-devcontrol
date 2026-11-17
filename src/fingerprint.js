@@ -41,7 +41,7 @@ function walk(root, dir = "", out = []) {
   for (const entry of entries) {
     if (entry.name === ".git" || entry.name === ".devcontrol") continue;
     // 依赖/构建产物不参与指纹：它们不进交付物，遍历它们只会拖慢收口、还会因装依赖而误判漂移
-    if (entry.isDirectory() && isVendorDir(dir ? `${dir}/${entry.name}` : entry.name)) continue;
+    if (entry.isDirectory() && isVendorDir(dir ? `${dir}/${entry.name}` : entry.name, root)) continue;
     const rel = dir ? `${dir}/${entry.name}` : entry.name;
     if (entry.isDirectory()) walk(root, rel, out);
     else out.push(rel);

@@ -13,7 +13,7 @@ import { FLOWS_REL, flowFromRequirement, flowToRequirement, listFlows, readFlow 
 import { getTask, mapTask, listTasks, listReqs, listPaths, listDocs, reqIntake, disciplineStats } from "./store.js";
 import { hintFor } from "./hints.js";
 import { assertionCommand, detectTestCmds } from "./testcmd.js";
-import { isVendorPath, VENDOR_IGNORES } from "./vendor.js";
+import { isVendorPath, vendorIgnores } from "./vendor.js";
 import {
   demoteMemory,
   exportMemories,
@@ -170,7 +170,7 @@ export function cmdInit(args) {
   // 依赖/构建产物默认忽略——但项目特意提交过的（dist/ 进了 git）不能忽略，
   // 否则 git 拒绝再 add，反而把正常提交挡住。
   appendLines(".gitignore", [
-    ...notAlreadyTracked(root, VENDOR_IGNORES),
+    ...notAlreadyTracked(root, vendorIgnores(root)),
     ".devcontrol/state.db*",
     ".devcontrol/memory.db*",
     ".devcontrol/settings.json",
@@ -335,8 +335,8 @@ export function cmdCommit(args) {
       return (arrow >= 0 ? rest.slice(arrow + 4) : rest).replace(/^"|"$/g, "");
     })
     .filter(Boolean);
-  const dirty = raw.filter((f) => !(isVendorPath(f) && !trackedSet.has(f)));
-  const skipped = raw.filter((f) => isVendorPath(f) && !trackedSet.has(f));
+  const dirty = raw.filter((f) => !(isVendorPath(f, root) && !trackedSet.has(f)));
+  const skipped = raw.filter((f) => isVendorPath(f, root) && !trackedSet.has(f));
   if (skipped.length) {
     console.error(`跳过 ${skipped.length} 个依赖/构建产物（不是交付物）：${skipped.slice(0, 3).join("、")}${skipped.length > 3 ? " …" : ""}`);
   }
@@ -453,7 +453,12 @@ export function cmdTask(args) {
     // 内核随后一直让 Agent 「去建任务覆盖 npm run build」，而那条任务明明已经做了。
     const reqRow = db.prepare("SELECT acceptance_json FROM requirements WHERE id=?").get(req);
     const reqAcceptance = reqRow ? JSON.parse(reqRow.acceptance_json) : [];
-    const acceptance = (accepts.length ? accepts : ["npm test :: exit==0"]).map((assertion) => {
+    // 默认验收不能写死 npm test：这是给多语言用的内核，Go 项目的默认值应该是
+    // 它自己契约里的第一条命令（go test ./...），否则建任务在第一句就失败。
+    const pathRow = db.prepare("SELECT test_cmds_json FROM paths WHERE id=?").get(pathId);
+    const pathCmds = pathRow ? JSON.parse(pathRow.test_cmds_json) : [];
+    const fallback = pathCmds.length ? [`${pathCmds[0]} :: exit==0`] : [];
+    const acceptance = (accepts.length ? accepts : fallback).map((assertion) => {
       if (deriveFlag !== undefined) return { deriveFrom: Number(deriveFlag), assertion };
       const cmd = assertionCommand(assertion);
       const idx = reqAcceptance.findIndex((a) => assertionCommand(a) === cmd);

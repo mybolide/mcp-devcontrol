@@ -256,6 +256,23 @@ devcontrol release list
 | `E_NO_TASK` / `E_WEAK_NO_GIT` / `NOT_FOUND` | 手上没任务、弱模式不能提交、找不到那个编号 |
 | `E_INTERNAL` | 兜底 |
 
+## 4b. 多语言
+
+内核不假设你是 npm 项目。验收命令从项目现状采（见 `src/testcmd.js`）：
+
+| 项目里有 | 采到的命令 |
+|---|---|
+| `package.json` 的 `scripts.test` | `npm test`（有 pnpm/yarn/bun 锁文件就跟着换） |
+| `Cargo.toml` | `cargo test` |
+| `go.mod` | `go test ./...` |
+| `pytest.ini` / `pyproject.toml` / `tox.ini` | `pytest -q` |
+| `Makefile` 里的 `test:` | `make test` |
+
+两条约定：
+
+- **依赖与构建产物**：`node_modules/`、`dist/`、`build/`、`out/`、`target/`、`coverage/`、`__pycache__/` 之类在任何项目里都算产物（未跟踪时）；**`bin/` 只在 Go 项目里算**——npm 包的 `bin/` 是源码（`package.json` 的 bin 入口）。判据在 `src/vendor.js`，只对未跟踪文件生效，已被 git 跟踪的不翻案。
+- **建任务的默认验收**：不给 `--accept` 时用契约里的第一条命令，不是写死的 `npm test`。
+
 ## 5. 数据模型（9 表 + meta）
 
 `requirements` `paths` `tasks` `bugs` `docs` `questions` `events` `runs` `patch_ids`，外加 `meta`（schema 版本、单调 ID 计数器、一次性 waive 标记）。

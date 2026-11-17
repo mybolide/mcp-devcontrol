@@ -27,10 +27,28 @@ export function makeRepo({ failTest = false } = {}) {
   return dir;
 }
 
-export function initFlow(root, { testCmd = "npm test" } = {}) {
+/** 一个最小的 Go 项目仓库：go.mod + main.go + 一个必定通过的 go test */
+export function makeGoRepo() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "mpk-go-"));
+  fs.mkdirSync(path.join(dir, "cmd/app"), { recursive: true });
+  fs.writeFileSync(path.join(dir, "go.mod"), "module example.com/demo\n\ngo 1.21\n");
+  fs.writeFileSync(path.join(dir, "cmd/app/main.go"), "package main\n\nfunc main() {}\n");
+  fs.writeFileSync(
+    path.join(dir, "cmd/app/main_test.go"),
+    'package main\n\nimport "testing"\n\nfunc TestOK(t *testing.T) {}\n',
+  );
+  sh(dir, "git", "init", "-q", ".");
+  sh(dir, "git", "config", "user.email", "g@g");
+  sh(dir, "git", "config", "user.name", "g");
+  sh(dir, "git", "add", "-A");
+  sh(dir, "git", "commit", "-qm", "init");
+  return dir;
+}
+
+export function initFlow(root, { testCmd = "npm test", allowed = ["src"] } = {}) {
   const db = openDb(root);
   db.prepare("INSERT INTO paths(id,allowed_paths_json,allow_new_files,budget_lines,test_cmds_json,status) VALUES('P-001',?,0,1200,?,'draft')").run(
-    JSON.stringify(["src"]),
+    JSON.stringify(allowed),
     JSON.stringify([testCmd]),
   );
   const req = reqIntake(db, root, { type: "requirement", title: "r", goal: "g", acceptance: [`${testCmd} :: exit==0`] });

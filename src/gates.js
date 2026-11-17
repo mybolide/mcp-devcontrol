@@ -468,14 +468,14 @@ export async function taskClose(db, root, input, opts = {}) {
           .filter((l) => l.length > 3)
           .map((l) => l.slice(3).trim().replace(/^"|"$/g, ""))
           .filter(Boolean);
-      const dirty = lines(["--", ".", ":(exclude).devcontrol"]).filter((f) => !isVendorPath(f));
+      const dirty = lines(["--", ".", ":(exclude).devcontrol"]).filter((f) => !isVendorPath(f, root));
       if (dirty.length) fail("E_DIRTY_SCOPE", `工作树有未提交改动：${dirty.slice(0, 5).join("、")}`, { files: dirty });
 
       const untracked = statusPorcelain(root, ["--untracked-files=all", "--", ...t.scope])
         .split("\n")
         .filter((l) => l.length > 3)
         .map((l) => l.slice(3).trim().replace(/^"|"$/g, ""))
-        .filter((f) => f && !f.startsWith(".devcontrol/") && !isVendorPath(f));
+        .filter((f) => f && !f.startsWith(".devcontrol/") && !isVendorPath(f, root));
       if (untracked.length) fail("E_DIRTY_SCOPE", `scope 内有未跟踪文件：${untracked.slice(0, 5).join("、")}`, { files: untracked });
     }
 
