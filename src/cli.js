@@ -7,6 +7,7 @@ import { fileClashes, recordEvidence, taskClose, taskRenew, taskCreate, taskClai
 import { git, head, isRepo, toplevel, statusPorcelain, commitFiles, lsFiles } from "./git.js";
 import { inScope, sha256 } from "./fingerprint.js";
 import { bootstrap } from "./digest.js";
+import { cliCommand } from "./nextcmd.js";
 import { doctor, exportMarkdown } from "./report.js";
 import { createRelease, getRelease, listReleases, planRelease, shipRelease } from "./release.js";
 import { FLOWS_REL, flowFromRequirement, flowToRequirement, listFlows, readFlow } from "./flow.js";
@@ -617,7 +618,11 @@ export function cmdNext() {
   const digest = bootstrap(db, root);
   if (!digest.next) return 0;
   console.log(`${digest.next.action}  ${digest.next.why ?? ""}`);
-  console.log(JSON.stringify(digest.next.args ?? {}, null, 2));
+  // 纯 CLI 用户要的不是 MCP 的参数名，是一条能粘进终端的命令。
+  // 内核知道两边怎么对应，就别让人自己翻（T-102）。
+  const cmd = cliCommand(digest.next.action, digest.next.args);
+  if (cmd) console.log(`\n${cmd}`);
+  else console.log(JSON.stringify(digest.next.args ?? {}, null, 2));
   return 0;
 }
 

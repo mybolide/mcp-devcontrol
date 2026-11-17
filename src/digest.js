@@ -3,6 +3,7 @@ import { listReqs, listPaths, listTasks, getTask, now, disciplineStats } from ".
 import { head } from "./git.js";
 import { metaGet } from "./db.js";
 import { releaseSummary } from "./release.js";
+import { cliCommand } from "./nextcmd.js";
 
 /**
  * 需求覆盖度：每条需求验收有没有任务在管。
@@ -177,7 +178,9 @@ export function bootstrap(db, root, extra = {}) {
         }
       : null,
     blockers: blockers.slice(0, 5),
-    next,
+    // 同时给「照抄用的参数」（MCP）和「照抄用的命令行」（纯 CLI）：
+    // 只给参数的话，CLI 用户还得自己把 requirementId 翻成 --req（T-102）。
+    next: { ...next, cli: cliCommand(next.action, next.args) },
     counts: {
       todo: backlog.length,
       doing: doing.length,
