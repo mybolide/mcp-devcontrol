@@ -2,7 +2,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { logEvent, metaGet, tx } from "./db.js";
+import { logEvent, metaGet, metaSet, tx } from "./db.js";
 import {
   DFError,
   fail,
@@ -260,6 +260,21 @@ export function taskClaim(db, root, input, actor = "agent") {
       });
     }
     logEvent(db, { actor, action: "task.claim", taskId: t.id, detail: actor });
+    // 接活那一刻工作区里已经有的改动，不是这个任务干的（多半是上一任留下的）。
+    // 记下来，commit 时才分得清「我写的」和「我继承的」——否则接手的人把前任的活
+    // 一起提交，盖上自己的 Task-Id，归属就说不清了（T-095）。
+    try {
+      // 必须带 --untracked-files=all：上一任留下的半成品多半是新建文件，
+      // 只用 --untracked-files=no 会看不见它们，快照就成了摆设。
+      const dirtyNow = statusPorcelain(root, ["--untracked-files=all"])
+        .split("\n")
+        .filter((line) => line.length > 3)
+        .map((line) => line.slice(3).trim().replace(/^"|"$/g, ""))
+        .filter((f) => f && !f.startsWith(".devcontrol/") && !isVendorPath(f, root));
+      metaSet(db, `dirty-at-claim:${t.id}`, JSON.stringify(dirtyNow));
+    } catch {
+      // 弱模式没有 git：没有继承的概念
+    }
     return {
       id: t.id,
       title: t.title,

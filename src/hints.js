@@ -4,7 +4,6 @@
 const HINTS = {
   E_NEED_APPROVED: "需求还没批准。这是 Owner 的动作：他在控制台「收件箱」批准后，你才能建任务。",
   E_NEED_RESOLUTION: "这个任务返工过。收口时补一句 --resolved-by \"这次是怎么解决的\"，让下一个人看得懂。",
-  E_NO_DELIVERY: "scope 里还没有属于这个任务的提交。先用 devcontrol commit -m \"…\" 提交（它会自动写 Task-Id）。",
   E_UNOWNED_COMMIT: "提交里没有 Task-Id trailer，内核不认。用 devcontrol commit 而不是 git commit。",
   E_SCOPE_VIOLATION: "改到任务 scope 之外了。要么把这些文件加进 scope（Owner 可调），要么另开一个任务。",
   E_UNREGISTERED_FILES: "新增的文件不在 scope 内。把目录写进 scope，别往仓库里塞计划外的东西。",
@@ -33,7 +32,9 @@ const HINTS = {
   E_USAGE: "命令写错了。devcontrol --help 看可用命令与参数；别人给的示例可以直接抄。",
   E_WEAK_NO_GIT: "弱模式没有 git 就没有提交链。改动留在工作树里，直接 devcontrol close 跑验收。",
   NOT_FOUND: "找不到你要的东西。先 devcontrol status 看清当前有什么，再挑一个真实存在的编号。",
-  E_NO_DELIVERY: "scope 内没有可提交的改动：要么代码还没写，要么写到了 scope 外面（先看 devcontrol status 里的 scope）。",
+  E_NO_DELIVERY: "scope 里没有本任务的可提交改动：要么还没写，要么写到了 scope 外面（先看 devcontrol status 的 scope）。commit 之后才有 Task-Id 归属；收口靠的就是它。",
+  E_INHERITED_CHANGE:
+    "这些改动在你接活之前就存在，不是这个任务干的（多半是上一任留下的）。确认要一起提交就加 --take-over；不想背这个锅就先 git stash 或让上一任提交掉。",
   E_HASH_MISMATCH: "需求内容在你看到之后被改过。刷新控制台，按最新的内容重新批准。",
   E_BUSY: "任务状态正在被另一个进程改。等一秒重试；重复出现说明有两个 Agent 在抢同一个任务。",
   E_INTERNAL: "内核内部错误。带上 devcontrol 版本和刚才的命令去开 issue；DEVCONTROL_DEBUG=1 能看到堆栈。",

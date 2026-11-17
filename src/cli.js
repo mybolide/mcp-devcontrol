@@ -304,7 +304,7 @@ export function cmdCommit(args) {
   const msgIdx = args.indexOf("-m");
   const message = msgIdx >= 0 ? args[msgIdx + 1] : null;
   if (!message) {
-    return failCli('用法：devcontrol commit -m "<message>" [--actor name]', "E_USAGE");
+    return failCli('用法：devcontrol commit -m "<message>" [--actor name] [--take-over]', "E_USAGE");
     return 2;
   }
   const actorIdx = args.indexOf("--actor");
@@ -372,6 +372,27 @@ export function cmdCommit(args) {
     );
     return 1;
   }
+  // 这批改动是不是我干的？接活那一刻工作区里就已经脏的，不是我写的。
+  // 接手别人的半成品很正常，但把别人的活记在自己 Task-Id 下，归属就说不清了（T-095）。
+  const inherited = (() => {
+    try {
+      return JSON.parse(metaGet(db, `dirty-at-claim:${task.id}`) ?? "[]").filter((f) => mine.includes(f));
+    } catch {
+      return [];
+    }
+  })();
+  if (inherited.length && !args.includes("--take-over")) {
+    return failCli(
+      `${inherited.length} 个文件在你接活之前就有改动（可能是上一任留下的）：${inherited.slice(0, 5).join("、")}${inherited.length > 5 ? ` …共 ${inherited.length} 个` : ""}。确认要一起提交就加 --take-over`,
+      "E_INHERITED_CHANGE",
+      { taskId: task.id, files: inherited },
+      1,
+    );
+  }
+  if (inherited.length) {
+    console.error(`接管 ${inherited.length} 个接活前就存在的改动：${inherited.slice(0, 5).join("、")}`);
+  }
+
   // 提交前先看一眼：这些文件有没有已经被别的在办任务改过（真撞车，不是共享目录那种提醒）
   const clashes = fileClashes(db, root, task.id, mine);
   if (clashes.length) {
@@ -929,6 +950,8 @@ export async function main(argv) {
   devcontrol init [--weak] [--no-mcp]  建 .devcontrol/、Path 草稿、MCP 配置（--no-mcp 则不写）、AGENTS.md
   devcontrol run -- <cmd>            跑一条命令并记为测试证据（有在办任务时生效）
   devcontrol commit -m "<msg>"       只提交 scope 内文件，自动写 Task-Id trailer
+                                    接活前就存在的改动会拦住（那是上一任留下的），
+                                    确认要一起提交就加 --take-over
   devcontrol renew [T-00x]          续租（TTL 45 分钟；commit 等写操作也会自动续期）
   devcontrol task create --req FR-001 --path P-001 --title "…"   纯 CLI 建任务（--kind/--scope/--accept/--depends 可选）
   devcontrol task claim T-00x       领取任务（纯 CLI，租约 45 分钟）
