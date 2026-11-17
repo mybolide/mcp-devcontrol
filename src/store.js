@@ -81,12 +81,40 @@ export function listDocs(db) {
  * 纪律三数：被拦多少次、返工多少轮、绕过多少次。
  * 这是「内核到底有没有生效」的可核对证据，不靠人回忆。
  */
+/**
+ * 哪些拒绝算「补一步就好」，不算纪律问题。
+ * 忘了跑测试、工作树脏这类不该和「改到 scope 外面」记在同一个数里。
+ */
+export const ENV_ONLY_CODES = new Set([
+  "E_DIRTY_SCOPE",
+  "E_BUSY",
+  "E_TIMEOUT",
+  "E_NO_EVIDENCE",
+  "E_EVIDENCE_STALE",
+  "E_NO_DELIVERY",
+]);
+
+/**
+ * 记一次拒绝。CLI 和 MCP 都走这里，否则「被拦」只算得到一半路径上的事。
+ * 记账失败不能把错误提示也弄丢，所以调用方一律用 try 包住。
+ */
+export function logRejection(db, actor, code) {
+  logEvent(db, { actor: actor || "agent", action: "rejected", code, detail: ENV_ONLY_CODES.has(code) ? "env-only" : "" });
+}
+
 export function disciplineStats(db) {
-  const blocked = db.prepare("SELECT COUNT(*) AS c FROM events WHERE action='close.fail'").get().c;
+  // 「被拦」= 所有实质拒绝 + 收口失败。早先只数 close.fail，于是 claim/commit 阶段
+  // 的拒绝一次都不进这个数，指标恒为 0，等于自证无效（T-097）。
+  const blocked = db
+    .prepare(
+      "SELECT COUNT(*) AS c FROM events WHERE action='close.fail' OR (action='rejected' AND COALESCE(detail,'') <> 'env-only')",
+    )
+    .get().c;
+  const envOnly = db.prepare("SELECT COUNT(*) AS c FROM events WHERE action='rejected' AND detail='env-only'").get().c;
   const rework = db.prepare("SELECT COALESCE(SUM(review_round),0) AS c FROM tasks").get().c;
   const bypassed = db.prepare("SELECT COUNT(*) AS c FROM events WHERE action='override'").get().c;
   const done = db.prepare("SELECT COUNT(*) AS c FROM tasks WHERE status='done'").get().c;
-  return { blocked, rework, bypassed, done };
+  return { blocked, envOnly, rework, bypassed, done };
 }
 
 /** 证据流：Agent 跑过的验收命令/退出码/HEAD/指纹，可复核 */

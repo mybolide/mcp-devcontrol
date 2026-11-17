@@ -10,7 +10,7 @@ import { bootstrap } from "./digest.js";
 import { doctor, exportMarkdown } from "./report.js";
 import { createRelease, getRelease, listReleases, planRelease, shipRelease } from "./release.js";
 import { FLOWS_REL, flowFromRequirement, flowToRequirement, listFlows, readFlow } from "./flow.js";
-import { getTask, mapTask, listTasks, listReqs, listPaths, listDocs, reqIntake, disciplineStats } from "./store.js";
+import { getTask, mapTask, listTasks, listReqs, listPaths, listDocs, reqIntake, disciplineStats, logRejection } from "./store.js";
 import { hintFor } from "./hints.js";
 import { assertionCommand, detectTestCmds } from "./testcmd.js";
 import { isVendorPath, vendorIgnores } from "./vendor.js";
@@ -288,7 +288,25 @@ export async function cmdRun(args) {
  * Agent 想分支处理就得先撞一遍。约定很简单：**失败也是 JSON，`ok:false` 且必带 code**。
  * exit 2 留给「用法写错了」，1 留给「动作被拒」。
  */
+/**
+ * 这次失败要能算进 stats 的「被拦」，否则那个数永远是 0——而它正是产品自证
+ * 「内核到底有没有在起作用」的唯一指标（T-097）。
+ *
+ * 两类分开记：env-only 是「补一步就好」（忘了跑测试、工作树脏），不算纪律问题。
+ * 记账本身失败不能把错误提示也弄丢，所以整块吞异常。
+ */
+function noteRejection(code) {
+  try {
+    const root = resolveRoot();
+    if (!fs.existsSync(dbPath(root))) return; // 还没有项目库，别为了记账凭空建一个
+    logRejection(openDb(root), process.env.DEVCONTROL_ACTOR, code);
+  } catch {
+    /* 记不上就算了 */
+  }
+}
+
 function failCli(message, code = "E_USAGE", data = null, exit = 2) {
+  noteRejection(code);
   const hint = hintFor({ code });
   console.log(JSON.stringify({ ok: false, code, message, data, hint }, null, 2));
   console.error(`${code}: ${message}`);
@@ -413,7 +431,8 @@ export function cmdStats() {
   const root = resolveRoot();
   const db = openDb(root);
   const s = disciplineStats(db);
-  console.log(`被拦 ${s.blocked} 次 · 返工 ${s.rework} 轮 · 绕过 ${s.bypassed} 次 · 已完成 ${s.done} 个任务`);
+  const tail = s.envOnly ? `（另有 ${s.envOnly} 次缺证据/工作树脏这类补一步就好）` : "";
+  console.log(`被拦 ${s.blocked} 次${tail} · 返工 ${s.rework} 轮 · 绕过 ${s.bypassed} 次 · 已完成 ${s.done} 个任务`);
   return 0;
 }
 /**

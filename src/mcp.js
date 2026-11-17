@@ -11,7 +11,7 @@ import { recordEvidence, taskCreate, taskClaim, taskRenew, taskClose, bugReport,
 import { hintFor } from "./hints.js";
 import { resolveRoot } from "./cli.js";
 import { ensureConsole, readConsoleMeta } from "./console-boot.js";
-import { fail, getTask, mapTask } from "./store.js";
+import { fail, getTask, logRejection, mapTask } from "./store.js";
 import { generalizeHint, memoryConfig, openMemory, recallMemories, rememberAndIndex, searchMemories } from "./memory.js";
 import { createRelease, planRelease, shipRelease } from "./release.js";
 
@@ -210,6 +210,12 @@ export function createServer({ db, root, consoleUrl }) {
         const result = await dispatch(db, root, args, { consoleUrl, signal: extra?.signal });
         return { content: [{ type: "text", text: compact(result) }] };
       } catch (error) {
+        // 记一笔拒绝：stats 的「被拦」靠它。CLI 那边走 failCli，这边是唯一入口。
+        try {
+          logRejection(db, process.env.DEVCONTROL_ACTOR, error.code ?? "E_INTERNAL");
+        } catch {
+          /* 记不上不能影响错误返回 */
+        }
         // 失败的样子必须和 CLI 一模一样：ok/code/message/data/hint。
         // Agent 主要走 MCP，这里少一个 hint，等于把「下一步该干什么」丢在了另一条路上。
         const payload = {

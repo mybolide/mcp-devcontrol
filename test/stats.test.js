@@ -17,7 +17,7 @@ test("三数：被拦、返工、绕过都能算出来", async () => {
   const task = newTask(db, root, reqId);
   taskClaim(db, root, { id: task.id }, "agentA");
 
-  assert.deepEqual(disciplineStats(db), { blocked: 0, rework: 0, bypassed: 0, done: 0 });
+  assert.deepEqual(disciplineStats(db), { blocked: 0, envOnly: 0, rework: 0, bypassed: 0, done: 0 });
 
   // 提交里夹带 scope 外的文件 → 收口被拦一次，同时记一轮返工
   fs.writeFileSync(path.join(root, "src/a.js"), "export const a = 2;\n");

@@ -61,6 +61,13 @@ export function weekly(db, { days = 7, now = new Date() } = {}) {
       // 「返工」= 同一任务失败后又收口成功；这里先按失败次数记，够用且不骗人
       totals.reworks += 1;
       if (e.code) blockedCodes.set(e.code, (blockedCodes.get(e.code) ?? 0) + 1);
+    } else if (e.action === "rejected" && e.detail !== "env-only") {
+      // 被拒绝也是「被拦」：claim/commit/create 阶段的拒绝和收口失败一样进这个数。
+      // 只统计 env-only 以外的，那类属于「补一步就好」（T-097）。
+      totals.blocked += 1;
+      bump(byDay, d, "blocked");
+      bumpActor(e.actor, "blocked");
+      if (e.code) blockedCodes.set(e.code, (blockedCodes.get(e.code) ?? 0) + 1);
     } else if (e.action === "override") {
       totals.overridden += 1;
       bump(byDay, d, "overridden");
