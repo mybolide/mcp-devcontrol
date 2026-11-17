@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { metaGet, metaSet, openDb, dataDir, dbPath } from "./db.js";
-import { recordEvidence, taskClose, taskRenew, taskCreate, taskClaim } from "./gates.js";
+import { fileClashes, recordEvidence, taskClose, taskRenew, taskCreate, taskClaim } from "./gates.js";
 import { git, head, isRepo, toplevel, statusPorcelain, commitFiles, lsFiles } from "./git.js";
 import { inScope, sha256 } from "./fingerprint.js";
 import { bootstrap } from "./digest.js";
@@ -369,6 +369,17 @@ export function cmdCommit(args) {
       1,
     );
     return 1;
+  }
+  // 提交前先看一眼：这些文件有没有已经被别的在办任务改过（真撞车，不是共享目录那种提醒）
+  const clashes = fileClashes(db, root, task.id, mine);
+  if (clashes.length) {
+    const who = [...new Set(clashes.map((c) => c.task))].join("、");
+    return failCli(
+      `和 ${who} 改了同一个文件：${clashes.slice(0, 3).map((c) => c.file).join("、")}`,
+      "E_FILE_OVERLAP",
+      { files: clashes.map((c) => c.file), tasks: [...new Set(clashes.map((c) => c.task))] },
+      1,
+    );
   }
   const body = `${message}\n\nTask-Id: ${task.id}\nDevControl-Base: ${task.base_head}`;
   const sha = commitFiles(root, mine, body, { author: actor });

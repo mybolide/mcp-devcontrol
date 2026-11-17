@@ -51,6 +51,40 @@ export function conflicts(a, b) {
   return covers(a, b) || covers(b, a);
 }
 
+/**
+ * 别的**在办**任务已经改过的文件。
+ *
+ * claim 时按目录粗判（conflicts），共享目录（多半是 test/）放行——那是提醒级别的。
+ * 但两个 Agent 真改到同一个文件就不是"小心点"能解决的了：
+ * 后提交的会把先提交的盖掉，或者留下半截，而且没人看得出来。
+ *
+ * 只看在办任务：别人收口之后的文件是历史，顺序修改是正常的。
+ */
+export function foreignFiles(db, root, taskId) {
+  const others = db
+    .prepare("SELECT id, base_head FROM tasks WHERE status='doing' AND id<>? AND base_head<>''")
+    .all(taskId);
+  const out = new Map();
+  for (const o of others) {
+    let list = "";
+    try {
+      list = git(root, ["log", "--format=", "--name-only", `${o.base_head}..HEAD`, `--grep=Task-Id: ${o.id}`]);
+    } catch {
+      continue;
+    }
+    for (const f of list.split("\n").map((x) => x.trim()).filter(Boolean)) {
+      if (!out.has(f)) out.set(f, o.id);
+    }
+  }
+  return out;
+}
+
+/** 我和谁撞了文件；返回 [{ file, task }] */
+export function fileClashes(db, root, taskId, files) {
+  const foreign = foreignFiles(db, root, taskId);
+  return files.filter((f) => foreign.has(f)).map((f) => ({ file: f, task: foreign.get(f) }));
+}
+
 function within(scope, allowed) {
   for (const s of scope) if (!inScope(`${String(s).replace(/\/+$/, "")}/x`, allowed)) fail("E_CONTRACT", `scope ${s} 超出 allowed_paths`);
 }
@@ -478,6 +512,16 @@ export async function taskClose(db, root, input, opts = {}) {
     // 预算不是安全边界（安全边界是 scope 和验收），只是"任务是不是太大了"的提醒：
     // 所以取「领取时 pin 的」与「当前 Path 契约」的较大者——Owner 放宽预算立即生效，
     // 收紧则只影响之后领取的任务，不会把人卡在半路。
+    // 文件级撞车：目录相交可以共用（test/），真改到同一个文件就会互相覆盖
+    const clash = fileClashes(db, root, t.id, files);
+    if (clash.length) {
+      const who = [...new Set(clash.map((c) => c.task))].join("、");
+      fail("E_FILE_OVERLAP", `和 ${who} 改了同一个文件：${clash.slice(0, 3).map((c) => c.file).join("、")}`, {
+        files: clash.map((c) => c.file),
+        tasks: [...new Set(clash.map((c) => c.task))],
+      });
+    }
+
     // ── 规范：内核把事实摆出来，但不判违规 ───────────────────────────────────
     //
     // 预算、标记残留、测试配置、依赖与既有测试——这四条都是「代码写得好不好」，
