@@ -496,6 +496,11 @@ export function cmdTask(args) {
     console.log(`${claimed.id} 已领取（租约到 ${claimed.claimExpiresAt}）`);
     console.log(`scope: ${claimed.scope.join(", ")}`);
     for (const cmd of claimed.testCmds) console.log(`验收命令: ${cmd}`);
+    // 规范也印出来：开工时就该知道边界，而不是收口被拦才第一次听说
+    if (claimed.standards?.length) {
+      console.log("规范：");
+      for (const st of claimed.standards) console.log(`  · ${st.rule}`);
+    }
     return 0;
   }
   if (sub === "list") {
