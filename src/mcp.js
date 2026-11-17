@@ -109,7 +109,7 @@ export async function dispatch(db, root, args, ctx = {}) {
       return bootstrap(db, root, { console: ctx.consoleUrl ? await ctx.consoleUrl() : null, memories: (await recallMemories(root, doing ? mapTask(doing) : null)).memories });
     }
     case "task.create":
-      return taskCreate(db, root, args);
+      return taskCreate(db, root, args, args.actor ?? process.env.DEVCONTROL_ACTOR ?? "agent");
     case "task.claim":
       return taskClaim(db, root, args, args.actor ?? process.env.DEVCONTROL_ACTOR ?? "agent");
     case "task.renew":

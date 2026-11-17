@@ -523,7 +523,7 @@ export function cmdTask(args) {
       .flatMap((v) => String(v).split(","))
       .map((s) => s.trim())
       .filter(Boolean);
-    const task = taskCreate(db, root, { requirementId: req, pathId, kind: flag("kind") ?? "feature", title, scope, acceptance, dependsOn });
+    const task = taskCreate(db, root, { requirementId: req, pathId, kind: flag("kind") ?? "feature", title, scope, acceptance, dependsOn }, actor);
     console.log(`${task.id}  已建  ${task.title}`);
     console.log(`scope: ${(task.scope ?? []).join(", ")}`);
     if (task.dependsOn?.length) console.log(`前置: ${task.dependsOn.join(", ")}`);

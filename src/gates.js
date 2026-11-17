@@ -25,6 +25,15 @@ import { isVendorPath } from "./vendor.js";
 // 后面每次收口都得补 --resolved-by，纯属噪音。
 const ENV_ONLY = new Set(["E_DIRTY_SCOPE", "E_BUSY", "E_TIMEOUT", "E_NO_EVIDENCE", "E_EVIDENCE_STALE", "E_NO_DELIVERY"]);
 
+/**
+ * 事件流的 actor：任务在谁手上，这条事就是谁干的。
+ * 早先一律记 system，于是「多 Agent 谁做了什么」和「按人周报」全成了摆设（T-088）。
+ */
+const actorOf = (db, taskId) => {
+  if (!taskId) return "agent";
+  return db.prepare("SELECT claimed_by FROM tasks WHERE id=?").get(taskId)?.claimed_by || "agent";
+};
+
 /** 路径 a 是否覆盖路径 b；"." 表示根，覆盖一切（和 fingerprint 里的 inScope 保持一致） */
 function coversPath(a, b) {
   const p = String(a).replace(/\/+$/, "");
@@ -108,7 +117,7 @@ function checkAcceptance(acceptance, body) {
 
 // ── task.create ─────────────────────────────────────────────────────────────
 
-export function taskCreate(db, root, input) {
+export function taskCreate(db, root, input, actor = "agent") {
   return tx(db, () => {
     const req = getReq(db, input.requirementId);
     if (!req || req.status !== "approved") fail("E_NEED_APPROVED", `需求未批准：${input.requirementId}`);
@@ -158,7 +167,7 @@ export function taskCreate(db, root, input) {
       now(),
     );
     db.prepare("INSERT INTO meta(key,value) VALUES('counter:T',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(String(n));
-    logEvent(db, { action: "task.create", taskId: id, detail: title });
+    logEvent(db, { actor, action: "task.create", taskId: id, detail: title });
     return getTask(db, id);
   });
 }
@@ -250,7 +259,7 @@ export function taskClaim(db, root, input, actor = "agent") {
         expiresAt: cur.claim_expires_at ?? null,
       });
     }
-    logEvent(db, { action: "task.claim", taskId: t.id, detail: actor });
+    logEvent(db, { actor, action: "task.claim", taskId: t.id, detail: actor });
     return {
       id: t.id,
       title: t.title,
@@ -353,7 +362,7 @@ export function recordEvidence(db, root, { taskId, command, result, scope = ["."
   db.prepare(
     "INSERT INTO runs(id,task_id,assertion_idx,command,exit_code,head,fingerprint,log_sha256,output,started_at,duration_ms) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
   ).run(id, taskId, -1, command, result.exit, h, fp, sha256(out), out.slice(0, 20000), now(), result.durationMs ?? 0);
-  logEvent(db, { action: "run.evidence", taskId, detail: `${command} → exit ${result.exit}` });
+  logEvent(db, { actor: actorOf(db, taskId), action: "run.evidence", taskId, detail: `${command} → exit ${result.exit}` });
   return { id, fingerprint: fp, exit: result.exit, command };
 }
 
@@ -639,9 +648,10 @@ export async function taskClose(db, root, input, opts = {}) {
       if (c.patch) db.prepare("INSERT OR REPLACE INTO patch_ids(patch_id,task_id,commit_sha) VALUES(?,?,?)").run(c.patch, t.id, c.sha);
     }
     if (observations.length) {
-      logEvent(db, { action: "close.observed", taskId: t.id, detail: observations.map((o) => o.detail).join("；") });
+      logEvent(db, { actor: actorOf(db, t.id), action: "close.observed", taskId: t.id, detail: observations.map((o) => o.detail).join("；") });
     }
     logEvent(db, {
+      actor: actorOf(db, t.id),
       action: "close",
       taskId: t.id,
       detail: weak
@@ -684,7 +694,7 @@ export async function taskClose(db, root, input, opts = {}) {
       } else {
         db.prepare("UPDATE tasks SET review_round=?, status='doing' WHERE id=?").run(n, cur.id);
       }
-      logEvent(db, { action: "close.fail", taskId: cur.id, code: last, detail: `第 ${n} 次` });
+      logEvent(db, { actor: actorOf(db, cur.id), action: "close.fail", taskId: cur.id, code: last, detail: `第 ${n} 次` });
     }
     db.prepare("UPDATE tasks SET closing_at=NULL, closing_token=NULL WHERE id=? AND closing_token=?").run(t0.id, token);
   }
