@@ -80,7 +80,7 @@ const RAW_ACTIONS = {
   override: (db, root, p) => override(db, p),
   "path.adjust": (db, root, p) => pathAdjust(db, root, p),
   "path.retest": (db, root, p) => pathRetest(db, root, p),
-  handoff: (db, root, p) => handoff(db, p),
+  handoff: (db, root, p) => handoff(db, p, root),
   release: (db, root, p) => taskRelease(db, p),
   // Owner 直接下单：单人场景里人心里已经知道要做什么，没必要非得等 Agent 拆出机器标题。
   // 校验走的是同一个 taskCreate —— 需求没批准、验收不在白名单，Owner 也一样过不去。

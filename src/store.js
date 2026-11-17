@@ -4,6 +4,7 @@ import path from "node:path";
 import { logEvent, metaGet, metaSet, nextId, tx } from "./db.js";
 import { commitContract, contractBody, parseAssertion, readContract } from "./contract.js";
 import { inScope } from "./fingerprint.js";
+import { logCommits, numstat, trailers } from "./git.js";
 import { sha256 } from "./fingerprint.js";
 import { assertionCommand, detectTestCmds, retargetAssertion } from "./testcmd.js";
 
@@ -549,7 +550,40 @@ export function taskRelease(db, input) {
   });
 }
 
-export function handoff(db, input) {
+/**
+ * 这张任务已经干到哪了。
+ *
+ * 以前卡片写的是 changed_lines——那个字段只在收口时才写，于是在办任务永远显示「已用 0 行」。
+ * 交接时给接手的人一条假进度，比不给更坏：他会以为这是从零开始的活。
+ * 所以这里改从真账本取：带 Task-Id 的提交、它们的行数、以及最近一次被拦。
+ */
+function progressOf(db, root, t) {
+  const out = [];
+  if (root && t.base_head) {
+    try {
+      const mine = logCommits(root, `${t.base_head}..HEAD`).filter((c) => trailers(c.body, "Task-Id").includes(t.id));
+      if (mine.length) {
+        let lines = 0;
+        const files = new Set();
+        for (const c of mine) {
+          for (const s of numstat(root, c.sha)) {
+            lines += s.added + s.deleted;
+            files.add(s.file);
+          }
+        }
+        out.push(`已提交 ${mine.length} 个（${lines} 行 / ${files.size} 处文件）`);
+      }
+    } catch {
+      // 弱模式或没有 git：进度说不准就别说
+    }
+  }
+  const lastFail = db.prepare("SELECT code, detail FROM events WHERE task_id=? AND action='close.fail' ORDER BY id DESC LIMIT 1").get(t.id);
+  if (lastFail) out.push(`上次被拦 ${lastFail.code}（${lastFail.detail}）`);
+  if (!out.length) out.push("还没有提交，从头做");
+  return out;
+}
+
+export function handoff(db, input, root = null) {
   const t = getTask(db, input.taskId);
   if (!t) fail("NOT_FOUND", `任务不存在：${input.taskId}`);
   // 交接 = 释放 + 卡片。只给卡片不释放，等于让人拿着票根去坐一张还被人占着的车：
@@ -561,7 +595,8 @@ export function handoff(db, input) {
     `【${t.id}】${t.title}`,
     `需求 ${req?.id ?? "?"} · Path ${p?.id ?? "?"} · scope: ${t.scope.join(", ") || "(未设)"}`,
     `验收: ${t.acceptance.map((a) => a.assertion).join("；") || "(未设)"}`,
-    `前置: ${t.dependsOn.length ? t.dependsOn.join(", ") : "无"} · 预算: ${t.budget_lines} 行（已用 ${t.changed_lines}）`,
+    `前置: ${t.dependsOn.length ? t.dependsOn.join(", ") : "无"} · 预算: ${t.budget_lines} 行`,
+    `进度: ${progressOf(db, root, t).join(" · ")}`,
     released ? "（已释放：下面这张卡拿给谁，谁就能接）" : "",
     `起步: devcontrol mcp → task.claim(${t.id})`,
   ].filter(Boolean);
