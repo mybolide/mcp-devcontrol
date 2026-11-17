@@ -711,7 +711,8 @@
               .join(" ");
             return `<tr><td class="mono">${esc(r.id)}</td><td>${esc(r.title)}</td><td>${tag(r.status)}</td>
               <td class="mono">${canAbandon(r) ? `<button class="btn danger" data-abandon="${esc(r.id)}" title="这件事不做了：需求归档，连带还挂着的任务一起放弃">作废</button> ` : ""}${pth ? `${esc(pth.id)} <button class="btn" data-budget="${pth.id}" data-cur="${pth.budget_lines ?? ""}" data-used="${s.tasks.filter((t) => t.path_id === pth.id && t.status === "done").reduce((n, t) => n + (t.changed_lines ?? 0), 0)}" title="改这条 Path 的改动预算">${pth.budget_lines ?? "?"} 行</button>` : "—"}
-                ${pth && (pth.testCmds || []).length ? `<div class="mu" style="margin-top:4px">验收：${pth.testCmds.map(esc).join(" · ")} <button class="btn" data-retest="${pth.id}" data-cmds="${esc((pth.testCmds || []).join(" | "))}" title="项目改了 test 脚本，重新采一次验收命令">重采</button></div>` : ""}</td>
+                ${pth && (pth.testCmds || []).length ? `<div class="mu" style="margin-top:4px">验收：${pth.testCmds.map(esc).join(" · ")} <button class="btn" data-retest="${pth.id}" data-cmds="${esc((pth.testCmds || []).join(" | "))}" title="项目改了 test 脚本，重新采一次验收命令">重采</button></div>` : ""}
+                ${pth && (pth.standards || []).length ? `<div class="mu" style="margin-top:2px" title="${esc(pth.standards.map((s) => s.code + "：" + s.rule).join("\n"))}">规范 ${pth.standards.length} 条 · 点开看</div>` : ""}</td>
               <td>${cov}${miss}<div class="mu">${r.acceptance.map((a) => esc(a)).join(" · ")}</div></td>
               <td>${tasks || `<span class="mu">—</span>`}</td></tr>`;
           })

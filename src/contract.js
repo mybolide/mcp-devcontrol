@@ -4,12 +4,13 @@ import path from "node:path";
 import { commitFiles, git, showFile } from "./git.js";
 import { dataDir } from "./db.js";
 import { sha256 } from "./fingerprint.js";
+import { buildStandards } from "./standards.js";
 
 export function contractRel(pathId) {
   return `.devcontrol/contracts/${pathId}.json`;
 }
 
-export function contractBody({ pathId, requirementId, allowedPaths, allowNewFiles, testCmds, budgetLines }) {
+export function contractBody({ pathId, requirementId, allowedPaths, allowNewFiles, testCmds, budgetLines, standards }) {
   return {
     pathId,
     requirementId: requirementId ?? null,
@@ -17,6 +18,9 @@ export function contractBody({ pathId, requirementId, allowedPaths, allowNewFile
     allowNewFiles: Boolean(allowNewFiles),
     testCmds,
     budgetLines,
+    // 规范也冻进契约：Owner 批准时看得见，Agent claim 时拿得到，被拦时能对上号。
+    // 这是「比 Jira 强一点」的那一半——Jira 只有验收，没有「代码该怎么写」。
+    standards: standards ?? buildStandards({ budgetLines }),
     note: "批准时冻结；Agent 只读，改动必须由 Owner 重新批准",
   };
 }

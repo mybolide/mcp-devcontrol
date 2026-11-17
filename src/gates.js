@@ -190,6 +190,8 @@ export function taskClaim(db, root, input, actor = "agent") {
       scope: t.scope,
       acceptance: t.acceptance,
       dependsOn: t.dependsOn,
+      // Agent 开工时就该知道「代码要怎么写」，而不是收口被拦才第一次听说
+      standards: body.standards ?? [],
       contractHash: p.hash,
       contractCommit: p.contract_commit,
       baseHead: p.contract_commit ?? "",

@@ -6,6 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { readConsoleMeta } from "./console-boot.js";
 import { dbPath, openDb } from "./db.js";
+import { readContract } from "./contract.js";
 import { VERSION } from "./protocol.js";
 import { bootstrap } from "./digest.js";
 import {
@@ -247,7 +248,16 @@ export async function startConsole(args) {
         projects: projects.map((p) => ({ name: p.name, root: p.root, current: p.root === active.root })),
         digest: bootstrap(adb, active.root, { console: `http://${IS_LOOPBACK_BIND ? "127.0.0.1" : bindHost}:${port}/` }),
         requirements: listReqs(adb),
-        paths: listPaths(adb),
+        // 规范也一起给前端：Owner 批准时得看得见「这条 Path 上要守什么」
+        paths: listPaths(adb).map((pth) => {
+          let standards = [];
+          try {
+            standards = readContract(active.root, pth.contract_commit, pth.id).body?.standards ?? [];
+          } catch {
+            standards = [];
+          }
+          return { ...pth, standards };
+        }),
         tasks: listTasks(adb),
         bugs: listBugs(adb),
         docs: listDocs(adb).map((d) => {

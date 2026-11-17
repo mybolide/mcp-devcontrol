@@ -234,6 +234,38 @@ devcontrol close                # 内核只核验，不执行
 能防「跑的是别的命令」（白名单），但**防不了蓄意伪造**。这是设计取舍：
 工作台管流程，不管人品。
 
+## 3.6 规范：Jira 没有的那一半
+
+Jira 只有**验收**（Acceptance，功能做对了没）。代码写得怎么样，靠人 review。
+我们这边是 AI 写代码、没人 review，所以这一层必须由内核兜——这就是「比 Jira 强一点」的地方。
+
+判断标准很干脆：
+
+| 靠什么判断 | 归谁 | 例子 |
+|---|---|---|
+| **要执行才知道** | Agent 跑、交证据 | 测试过没过、构建成不成 |
+| **看 diff 就知道** | 内核自己判 | 改到哪片、多少行、动没动测试和依赖、留没留 TODO |
+
+规范不是藏在代码里的，它**冻在契约文件里**（`.devcontrol/contracts/P-xxx.json` 的 `standards`）：
+
+```json
+"standards": [
+  { "code": "E_SCOPE_VIOLATION",    "rule": "只改任务 scope 内的文件" },
+  { "code": "E_DIFF_BUDGET",        "rule": "单个任务改动不超过 1200 行；超了通常是该拆任务" },
+  { "code": "E_DEP_OR_TEST_TOUCH",  "rule": "不动依赖与既有测试；新增测试文件不受限（TDD 是正常动作）" },
+  { "code": "E_TEST_CONFIG_TOUCH",  "rule": "不动测试配置（runner、覆盖率阈值之类）" },
+  { "code": "E_LINT_TODO",          "rule": "不留 TODO / FIXME / HACK 标记" }
+]
+```
+
+三个地方看得到同一份：
+
+- **Owner 批准时**：控制台「需求」页的 Path 列显示「规范 N 条」
+- **Agent 开工时**：`task.claim` 的返回值里带 `standards`
+- **被拦时**：错误码正好是其中一条的 `code`
+
+规范是冻结的，改它要走 Owner 重新批准；单次违反可以 Owner 放行（`override`，一次一条）。
+
 ## 4. 拦截点（这就是"法"）
 
 `task.close` 按顺序判定，任一失败即返回错误码并写事件：
