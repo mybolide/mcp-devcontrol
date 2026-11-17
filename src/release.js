@@ -92,7 +92,12 @@ export function shipRelease(db, { id, root } = {}) {
 
   const sha = head(root);
   const stamp = new Date().toISOString().slice(0, 10);
-  const slug = String(r.title).trim().replace(/[^\w.-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || id;
+  // tag 里必须有版本号：发布号是唯一的，标题不是。
+  // 早先用标题当 slug，纯中文标题会退回 id（release/R-004-…），
+  // 标题里带英文时又变成 release/CLI-… ——同一个仓库两套命名，
+  // 回滚时得先猜「那次到底叫什么」（T-113）。
+  const titleSlug = String(r.title).trim().replace(/[^\w.-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);
+  const slug = titleSlug ? `${id}-${titleSlug}` : id;
   // 同名 tag 已存在就别覆盖：它可能是上一次真实发布的回滚点
   let tag = `release/${slug}-${stamp}`;
   for (let n = 2; tagExists(root, tag); n += 1) tag = `release/${slug}-${stamp}-${n}`;

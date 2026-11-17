@@ -28,7 +28,9 @@ test("发布留下可回滚点：ship 打 annotated tag，记 git_tag / git_sha"
 
   const shipped = shipRelease(db, { id: r.id, root });
   assert.equal(shipped.status, "shipped");
-  assert.ok(shipped.git_tag?.startsWith("release/v1.0-"), `tag 应指向这次发布：${shipped.git_tag}`);
+  // 版本号必须在 tag 里：回滚点得能一眼看出是哪一次发布
+  assert.ok(shipped.git_tag?.startsWith(`release/${r.id}-`), `tag 里要有发布号：${shipped.git_tag}`);
+  assert.ok(shipped.git_tag?.includes("v1.0"), `标题里能用的部分也该留着，方便人认：${shipped.git_tag}`);
   assert.match(shipped.git_sha ?? "", /^[0-9a-f]{40}$/);
   // 回滚点是真的：git 里查得到这个 tag，且它指的就是发布时的 HEAD
   assert.equal(sh(root, "git", "rev-parse", `${shipped.git_tag}^{commit}`).trim(), sh(root, "git", "rev-parse", "HEAD").trim());
@@ -108,4 +110,49 @@ test("弱模式发布：明确写出没有回滚点，不假装能回滚", () =>
   assert.equal(shipped.status, "shipped");
   assert.equal(shipped.git_tag ?? null, null);
   assert.match(shipped.note ?? "", /弱模式/);
+});
+test("纯中文标题也得带上发布号（不许退回成只剩日期）", async () => {
+  const root = makeRepo();
+  const { db, reqId } = initFlow(root);
+  const t1 = newTask(db, root, reqId);
+  const r = createRelease(db, { title: "说同一套话" });
+  planRelease(db, { id: r.id, tasks: [t1.id] });
+  await finish(db, root, t1);
+
+  const shipped = shipRelease(db, { id: r.id, root });
+  assert.ok(shipped.git_tag?.startsWith(`release/${r.id}-`), `中文标题不该把发布号挤掉：${shipped.git_tag}`);
+});
+
+test("标题里有英文时，发布号也不能被挤掉（T-113 的老毛病）", async () => {
+  // 早先 slug 直接用标题，纯中文会退回 id、带英文就变成 release/CLI-…
+  // 同一个仓库两套命名，回滚时得先猜那次叫什么。
+  const root = makeRepo();
+  const { db, reqId } = initFlow(root);
+  const t1 = newTask(db, root, reqId);
+  const r = createRelease(db, { title: "纯 CLI 一路到底" });
+
+  planRelease(db, { id: r.id, tasks: [t1.id] });
+  await finish(db, root, t1);
+  const shipped = shipRelease(db, { id: r.id, root });
+  assert.ok(shipped.git_tag?.startsWith(`release/${r.id}-`), `发布号被标题挤掉了：${shipped.git_tag}`);
+  assert.match(shipped.git_tag, /CLI/, "标题里的英文仍然可以作为后缀保留");
+});
+
+test("每个发布号的 tag 都互不相同（连发两次不会互相覆盖）", async () => {
+  const root = makeRepo();
+  const { db, reqId } = initFlow(root);
+  const t1 = newTask(db, root, reqId);
+  const t2 = newTask(db, root, reqId);
+  const r1 = createRelease(db, { title: "第一次" });
+  const r2 = createRelease(db, { title: "第一次" }); // 故意同名：slug 撞车要靠发布号区分
+
+  planRelease(db, { id: r1.id, tasks: [t1.id] });
+  await finish(db, root, t1);
+  const s1 = shipRelease(db, { id: r1.id, root });
+
+  planRelease(db, { id: r2.id, tasks: [t2.id] });
+  await finish(db, root, t2);
+  const s2 = shipRelease(db, { id: r2.id, root });
+
+  assert.notEqual(s1.git_tag, s2.git_tag, "两个发布不能打同一个 tag，否则第一个回滚点就丢了");
 });
