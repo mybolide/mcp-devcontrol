@@ -12,7 +12,7 @@ import { createRelease, getRelease, listReleases, planRelease, shipRelease } fro
 import { FLOWS_REL, flowFromRequirement, flowToRequirement, listFlows, readFlow } from "./flow.js";
 import { getTask, mapTask, listTasks, listReqs, listPaths, listDocs, reqIntake, disciplineStats } from "./store.js";
 import { hintFor } from "./hints.js";
-import { detectTestCmds } from "./testcmd.js";
+import { assertionCommand, detectTestCmds } from "./testcmd.js";
 import { isVendorPath, VENDOR_IGNORES } from "./vendor.js";
 import {
   demoteMemory,
@@ -447,8 +447,18 @@ export function cmdTask(args) {
       );
     }
     const accepts = every("accept");
-    const deriveFrom = Number(flag("derive") ?? 0);
-    const acceptance = (accepts.length ? accepts : ["npm test :: exit==0"]).map((assertion) => ({ deriveFrom, assertion }));
+    const deriveFlag = flag("derive");
+    // deriveFrom 指「这条断言对应需求验收里的第几条」。默认按命令自己匹配，
+    // 否则一次 --accept 两条（测试 + 构建）会双双写成 0，覆盖率永远认为第二条没人管：
+    // 内核随后一直让 Agent 「去建任务覆盖 npm run build」，而那条任务明明已经做了。
+    const reqRow = db.prepare("SELECT acceptance_json FROM requirements WHERE id=?").get(req);
+    const reqAcceptance = reqRow ? JSON.parse(reqRow.acceptance_json) : [];
+    const acceptance = (accepts.length ? accepts : ["npm test :: exit==0"]).map((assertion) => {
+      if (deriveFlag !== undefined) return { deriveFrom: Number(deriveFlag), assertion };
+      const cmd = assertionCommand(assertion);
+      const idx = reqAcceptance.findIndex((a) => assertionCommand(a) === cmd);
+      return { deriveFrom: idx >= 0 ? idx : 0, assertion };
+    });
     const scope = flag("scope") ? flag("scope").split(",").map((s) => s.trim()).filter(Boolean) : undefined;
     // 依赖：MCP 侧叫 dependsOn，CLI 这边用 --depends（可重复，也可逗号分隔）——纯 CLI 用户也要能表达「前端等后端」
     const dependsOn = every("depends")
@@ -474,7 +484,10 @@ export function cmdTask(args) {
     return 0;
   }
   if (sub === "list") {
-    for (const t of db.prepare("SELECT id,status,kind,title FROM tasks ORDER BY id").all()) console.log(`${t.id}  ${t.status.padEnd(8)}${t.kind.padEnd(8)}${t.title}`);
+    // 列宽要容得下最长的状态（abandoned = 9），否则 "abandonedfeature" 粘成一坨
+    for (const t of db.prepare("SELECT id,status,kind,title FROM tasks ORDER BY id").all()) {
+      console.log(`${t.id}  ${t.status.padEnd(10)}${t.kind.padEnd(9)}${t.title}`);
+    }
     return 0;
   }
   return failCli("用法：devcontrol task <create|claim|list> ...", "E_USAGE");
