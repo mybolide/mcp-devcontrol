@@ -38,6 +38,7 @@ import { effectiveSettings, readSettings, settingsFile, writeSettings } from "./
 import { installAgentFiles } from "./skill.js";
 import { resolveRoot } from "./cli.js";
 import { sha256 } from "./fingerprint.js";
+import { weekly } from "./weekly.js";
 import { listReleases, shipRelease } from "./release.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -296,6 +297,13 @@ export async function startConsole(args) {
       const active = pickProject(url.searchParams.get("project"));
       if (!active) return json(400, { ok: false, code: "INVALID_ARGUMENT", message: "未知 project" });
       const adb = freshDb(active);
+      // 周报：Owner 不看命令行，所以这一段必须出现在页面上。
+      // 天数走 ?days=，边界写死在这里而不是交给前端——前端算错了就是另一套口径。
+      const rawDays = url.searchParams.get("days");
+      const days = rawDays === null || rawDays === "" ? 7 : Number(rawDays);
+      if (!Number.isInteger(days) || days < 1 || days > 365) {
+        return json(400, { ok: false, code: "INVALID_ARGUMENT", message: `days 要是 1–365 的整数（收到 ${JSON.stringify(rawDays)}）` });
+      }
       return json(200, {
         project: { root: active.root, name: active.name },
         projects: projects.map((p) => ({ name: p.name, root: p.root, current: p.root === active.root })),
@@ -323,6 +331,7 @@ export async function startConsole(args) {
         memoriesActive: listMemories(memoryConfig(process.env, active.root), 30, null, "active"),
         runs: listRuns(active.db, 30),
         releases: listReleases(adb),
+        weekly: weekly(adb, { days }),
       });
     }
     if (req.method === "POST" && url.pathname === "/api/owner") {
