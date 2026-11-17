@@ -8,7 +8,7 @@ import { reqIntake, reqApprove, getTask } from "../src/store.js";
 import { taskCreate, taskClaim, taskClose } from "../src/gates.js";
 import { commitFiles } from "../src/git.js";
 import { bootstrap } from "../src/digest.js";
-import { makeRepo } from "./helpers.js";
+import { makeRepo, closeProven } from "./helpers.js";
 
 function setup(root, acceptance = ["npm test :: exit==0", "npm test :: exit==0"]) {
   const db = openDb(root);
@@ -36,7 +36,7 @@ const finish = async (db, root, task) => {
   if (getTask(db, task.id).status === "backlog") taskClaim(db, root, { id: task.id }, "agent");
   fs.writeFileSync(path.join(root, "src/a.js"), `export const a = "${task.id}";\n`);
   commitFiles(root, ["src/a.js"], `feat\n\nTask-Id: ${task.id}`, { author: "agent" });
-  return taskClose(db, root, { id: task.id, resolvedBy: "按模板补齐" });
+  return closeProven(db, root, { id: task.id, resolvedBy: "按模板补齐" });
 };
 
 test("覆盖度：验收没被任务覆盖时，内核让 Agent 去补拆，而不是自己去挑", async () => {

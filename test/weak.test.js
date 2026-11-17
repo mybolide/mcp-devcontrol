@@ -10,7 +10,7 @@ import { reqIntake, reqApprove, getTask } from "../src/store.js";
 import { taskCreate, taskClaim, taskClose } from "../src/gates.js";
 import { doctor } from "../src/report.js";
 import { bootstrap } from "../src/digest.js";
-import { BIN } from "./helpers.js";
+import { BIN, closeProven } from "./helpers.js";
 
 function makePlainDir() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "mpk-weak-"));
@@ -55,7 +55,7 @@ test("没有 git 也能 init --weak、领任务、收口（只跑验收）", asy
   assert.equal(task.base_head, "", "弱模式 base_head 为空");
   taskClaim(db, root, { id: task.id }, "agent");
 
-  const res = await taskClose(db, root, { id: task.id });
+  const res = await closeProven(db, root, { id: task.id });
   assert.equal(res.weak, true);
   assert.equal(res.runs[0].passed, true);
   assert.equal(getTask(db, task.id).status, "done");

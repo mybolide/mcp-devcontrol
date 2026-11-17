@@ -28,6 +28,14 @@ export const CAPABILITIES = [
     console: null,
   },
   {
+    name: "交测试证据",
+    action: "evidence.record",
+    mcp: ["id", "command", "exit", "output"],
+    // CLI 的做法是 devcontrol run -- <cmd>：自己跑完顺手记账
+    cli: { sub: "run", flags: [] },
+    console: null,
+  },
+  {
     name: "收口",
     action: "task.close",
     mcp: ["id", "resolvedBy"],

@@ -10,6 +10,7 @@ import { openDb } from "../src/db.js";
 import { reqIntake, reqApprove, getTask } from "../src/store.js";
 import { taskCreate, taskClaim, taskClose } from "../src/gates.js";
 import { commitFiles } from "../src/git.js";
+import { prove, closeProven } from "./helpers.js";
 import { memoryConfig, openMemory, promoteMemory, recallMemories, rememberAndIndex, searchMemories } from "../src/memory.js";
 
 const sh = (cwd, ...args) => execFileSync(args[0], args.slice(1), { cwd, encoding: "utf8" });
@@ -122,14 +123,14 @@ test("失败过的任务必须给 resolvedBy，否则 E_NEED_RESOLUTION；给了
 
     fs.writeFileSync(path.join(root, "src/a.js"), "export const a = 2;\n");
     commitFiles(root, ["src/a.js"], `feat\n\nTask-Id: ${task.id}`, { author: "agent" });
-    await assert.rejects(() => taskClose(db, root, { id: task.id }), (e) => e.code === "E_ASSERTION_FAILED");
+    await assert.rejects(() => closeProven(db, root, { id: task.id }, { exit: 1 }), (e) => e.code === "E_ASSERTION_FAILED");
     assert.equal(getTask(db, task.id).review_round, 1);
 
-    await assert.rejects(() => taskClose(db, root, { id: task.id }), (e) => e.code === "E_NEED_RESOLUTION");
+    await assert.rejects(() => closeProven(db, root, { id: task.id }), (e) => e.code === "E_NEED_RESOLUTION");
 
     fs.writeFileSync(path.join(root, "src/ok"), "ok\n");
     commitFiles(root, ["src/ok"], `fix\n\nTask-Id: ${task.id}`, { author: "agent" });
-    const res = await taskClose(db, root, { id: task.id, resolvedBy: "验收脚本要求 src/ok 存在，补上这个标记文件就好了" });
+    const res = await closeProven(db, root, { id: task.id, resolvedBy: "验收脚本要求 src/ok 存在，补上这个标记文件就好了" });
     assert.equal(getTask(db, task.id).status, "done");
     assert.equal(res.memory.recorded, true);
     assert.equal(res.memory.indexed, true, res.memory.indexError ?? "");
@@ -163,11 +164,11 @@ test("向量栈挂了也不阻塞收口：落库成功、索引失败、检索�
     const { db, task } = setupFlow(root);
     fs.writeFileSync(path.join(root, "src/a.js"), "export const a = 3;\n");
     commitFiles(root, ["src/a.js"], `feat\n\nTask-Id: ${task.id}`, { author: "agent" });
-    await assert.rejects(() => taskClose(db, root, { id: task.id }), (e) => e.code === "E_ASSERTION_FAILED");
+    await assert.rejects(() => closeProven(db, root, { id: task.id }, { exit: 1 }), (e) => e.code === "E_ASSERTION_FAILED");
 
     fs.writeFileSync(path.join(root, "src/ok"), "ok\n");
     commitFiles(root, ["src/ok"], `fix\n\nTask-Id: ${task.id}`, { author: "agent" });
-    const res = await taskClose(db, root, { id: task.id, resolvedBy: "补 src/ok 标记文件" });
+    const res = await closeProven(db, root, { id: task.id, resolvedBy: "补 src/ok 标记文件" });
     assert.equal(getTask(db, task.id).status, "done");
     assert.equal(res.memory.recorded, true);
     assert.equal(res.memory.indexed, false);
@@ -192,11 +193,11 @@ test("DEVCONTROL_MEMORY=off：不强制 resolvedBy，也不落坑", async () => 
     const { db, task } = setupFlow(root);
     fs.writeFileSync(path.join(root, "src/a.js"), "export const a = 4;\n");
     commitFiles(root, ["src/a.js"], `feat\n\nTask-Id: ${task.id}`, { author: "agent" });
-    await assert.rejects(() => taskClose(db, root, { id: task.id }), (e) => e.code === "E_ASSERTION_FAILED");
+    await assert.rejects(() => closeProven(db, root, { id: task.id }, { exit: 1 }), (e) => e.code === "E_ASSERTION_FAILED");
 
     fs.writeFileSync(path.join(root, "src/ok"), "ok\n");
     commitFiles(root, ["src/ok"], `fix\n\nTask-Id: ${task.id}`, { author: "agent" });
-    const res = await taskClose(db, root, { id: task.id });
+    const res = await closeProven(db, root, { id: task.id });
     assert.equal(getTask(db, task.id).status, "done");
     assert.equal(res.memory, null);
   } finally {
@@ -211,11 +212,11 @@ test("一次性手滑没有资格进记忆：落成候选，不进索引也不�
     const { db, task } = setupFlow(root);
     fs.writeFileSync(path.join(root, "src/a.js"), "export const a = 9;\n");
     commitFiles(root, ["src/a.js"], `feat\n\nTask-Id: ${task.id}`, { author: "agent" });
-    await assert.rejects(() => taskClose(db, root, { id: task.id }), (e) => e.code === "E_ASSERTION_FAILED");
+    await assert.rejects(() => closeProven(db, root, { id: task.id }, { exit: 1 }), (e) => e.code === "E_ASSERTION_FAILED");
 
     fs.writeFileSync(path.join(root, "src/ok"), "ok\n");
     commitFiles(root, ["src/ok"], `fix\n\nTask-Id: ${task.id}`, { author: "agent" });
-    const res = await taskClose(db, root, { id: task.id, resolvedBy: "漏了 src/ok 这个标记文件" });
+    const res = await closeProven(db, root, { id: task.id, resolvedBy: "漏了 src/ok 这个标记文件" });
     assert.equal(getTask(db, task.id).status, "done");
     assert.equal(res.memory.recorded, true);
     assert.equal(res.memory.status, "candidate");

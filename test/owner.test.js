@@ -23,7 +23,7 @@ import {
 } from "../src/store.js";
 import { taskClaim, taskClose, ask } from "../src/gates.js";
 import { commitFiles } from "../src/git.js";
-import { makeRepo, initFlow, newTask, BIN } from "./helpers.js";
+import { makeRepo, initFlow, newTask, BIN, closeProven } from "./helpers.js";
 import { memoryConfig, openMemory, remember } from "../src/memory.js";
 
 function startMcp(root, extraEnv = {}) {
@@ -380,6 +380,8 @@ test("CLI 全链路：init → claim → commit → close → status", async () 
   assert.equal(commit.code, 0, commit.out);
   assert.match(commit.out, new RegExp(task.id));
 
+  const evidence = await run(["run", "--", "npm test"]);
+  assert.equal(evidence.code, 0, evidence.out);
   const close = await run(["close"]);
   assert.equal(close.code, 0, close.out);
   assert.equal(getTask(db, task.id).status, "done");
@@ -416,7 +418,7 @@ test("Owner amend：契约前移、在办任务回 backlog，重领后仍能收�
   taskClaim(db, root, { id: task.id }, "agentA");
   fs.writeFileSync(path.join(root, "src/a.js"), "export const a = 7;\n");
   commitFiles(root, ["src/a.js"], `feat\n\nTask-Id: ${task.id}`, { author: "agentA" });
-  const res = await taskClose(db, root, { id: task.id });
+  const res = await closeProven(db, root, { id: task.id });
   assert.equal(res.runs[0].passed, true);
   assert.equal(getTask(db, task.id).status, "done");
 });
@@ -555,7 +557,7 @@ test("控制台证据屏：每次重跑都能看到命令/退出码/HEAD/指纹"
   taskClaim(db, root, { id: task.id }, "agent");
   fs.writeFileSync(path.join(root, "src/a.js"), "export const a = 11;\n");
   commitFiles(root, ["src/a.js"], `feat\n\nTask-Id: ${task.id}`, { author: "agent" });
-  const res = await taskClose(db, root, { id: task.id, resolvedBy: "补齐" });
+  const res = await closeProven(db, root, { id: task.id, resolvedBy: "补齐" });
   assert.equal(res.runs[0].passed, true);
 
   const svc = await startConsole(root);
@@ -627,7 +629,7 @@ test("挂起再回来的任务，自己的提交仍能收口（B-006）", async 
   taskClaim(db, root, { id: task.id }, "agentA");
 
   // 早先那次提交仍属本任务：不能因为重新领取就判成无主
-  const res = await taskClose(db, root, { id: task.id });
+  const res = await closeProven(db, root, { id: task.id });
   assert.equal(res.runs[0].passed, true);
   assert.equal(getTask(db, task.id).status, "done");
 });

@@ -5,7 +5,8 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { openDb } from "../src/db.js";
 import { reqIntake, reqApprove } from "../src/store.js";
-import { taskCreate } from "../src/gates.js";
+import { recordEvidence, taskCreate } from "../src/gates.js";
+import { assertionCommand } from "../src/testcmd.js";
 
 export const BIN = path.join(import.meta.dirname, "..", "bin", "devcontrol.js");
 
@@ -66,4 +67,30 @@ export function newTask(db, root, reqId, extra = {}) {
     scope: ["src"],
     ...extra,
   });
+}
+/**
+ * 模拟「Agent 自己跑完测试、留下证据」。
+ *
+ * 内核不执行测试（工具只核验证据），所以测试里要让 close 通过，必须先把证据造出来。
+ * exit 默认 0；要模拟验收失败就传 1。
+ */
+export function prove(db, root, taskId, { exit = 0, command = null, output = "" } = {}) {
+  const task = db.prepare("SELECT scope_json, acceptance_json FROM tasks WHERE id=?").get(taskId);
+  const scope = task ? JSON.parse(task.scope_json) : ["."];
+  const cmds = command
+    ? [command]
+    : task
+      ? JSON.parse(task.acceptance_json).map((a) => assertionCommand(a.assertion))
+      : [];
+  return cmds.map((c) =>
+    recordEvidence(db, root, { taskId, command: c, result: { exit, stdout: output, stderr: "", durationMs: 1 }, scope }),
+  );
+}
+
+/** 先交证据再收口：等价于 Agent 的正常动作顺序 */
+export async function closeProven(db, root, input, { exit = 0, output = "", ...closeOpts } = {}) {
+  const id = typeof input === "string" ? input : input.id;
+  prove(db, root, id, { exit, output });
+  const { taskClose } = await import("../src/gates.js");
+  return taskClose(db, root, input, closeOpts);
 }

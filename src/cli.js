@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { metaGet, metaSet, openDb, dataDir, dbPath } from "./db.js";
-import { taskClose, taskRenew, taskCreate, taskClaim } from "./gates.js";
+import { recordEvidence, taskClose, taskRenew, taskCreate, taskClaim } from "./gates.js";
 import { git, head, isRepo, toplevel, statusPorcelain, commitFiles, lsFiles } from "./git.js";
 import { inScope, sha256 } from "./fingerprint.js";
 import { bootstrap } from "./digest.js";
@@ -261,13 +261,23 @@ export async function cmdRun(args) {
   const command = idx >= 0 ? args.slice(idx + 1).join(" ") : args.join(" ");
   if (!command) {
     return failCli("用法：devcontrol run -- <command>", "E_USAGE");
-    return 2;
   }
   const root = resolveRoot();
+  const db = openDb(root);
+  const actor = process.env.DEVCONTROL_ACTOR || "agent";
+  // 有在办任务时，这条命令的结果就是「测试证据」：内核只记账，不替项目跑测试。
+  const doing = db.prepare("SELECT id FROM tasks WHERE status='doing' AND claimed_by=? AND closing_token IS NULL").all(actor);
   const result = await execCommand(root, command);
-  process.stdout.write(result.stdout);
-  process.stderr.write(result.stderr);
-  console.log(`\n[devcontrol] exit ${result.exit} · ${result.durationMs}ms`);
+  process.stdout.write(result.stdout ?? "");
+  process.stderr.write(result.stderr ?? "");
+  if (doing.length === 1) {
+    const t = getTask(db, doing[0].id);
+    const ev = recordEvidence(db, root, { taskId: t.id, command, result, scope: t.scope });
+    console.log(`\n[devcontrol] exit ${result.exit} · ${result.durationMs}ms · 已记为 ${t.id} 的证据 ${ev.id}`);
+  } else {
+    console.log(`\n[devcontrol] exit ${result.exit} · ${result.durationMs}ms`);
+    if (doing.length === 0) console.log("[devcontrol] 没有在办任务，这条结果没有记为证据（先 devcontrol task claim）");
+  }
   return result.exit;
 }
 
@@ -860,7 +870,7 @@ export async function main(argv) {
         console.log(`devcontrol ${VERSION} — 极小的研发纪律内核
 
   devcontrol init [--weak] [--no-mcp]  建 .devcontrol/、Path 草稿、MCP 配置（--no-mcp 则不写）、AGENTS.md
-  devcontrol run -- <cmd>            采证执行（记录退出码与耗时）
+  devcontrol run -- <cmd>            跑一条命令并记为测试证据（有在办任务时生效）
   devcontrol commit -m "<msg>"       只提交 scope 内文件，自动写 Task-Id trailer
   devcontrol renew [T-00x]          续租（TTL 45 分钟；commit 等写操作也会自动续期）
   devcontrol task create --req FR-001 --path P-001 --title "…"   纯 CLI 建任务（--kind/--scope/--accept/--depends 可选）
@@ -869,7 +879,7 @@ export async function main(argv) {
   devcontrol next                   内核认为你现在该做的那一件事（参数可直接照抄）
   devcontrol stats                  纪律三数：被拦 / 返工 / 绕过（内核到底有没有在起作用）
   devcontrol flow <list|show|save|apply>  流程模板：把做过的交付沉淀下来复用（存 .devcontrol/flows/）
-  devcontrol close [T-00x] [--resolved-by "…"]  收口：干净检出内重跑验收（R0–R5）
+  devcontrol close [T-00x] [--resolved-by "…"]  收口：核验 Agent 留下的测试证据（内核不跑测试）
   devcontrol status                  摘要：next / actions / plan / 记忆命中（bootstrap 是它的别名）
   devcontrol help                    就是这份说明（--help / -h 同义）
   devcontrol evidence [run-xxxx]    看验收证据（退出码与输出；不给编号看最近 8 次）

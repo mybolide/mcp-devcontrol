@@ -7,13 +7,13 @@ import { getTask } from "../src/store.js";
 import { taskClaim, taskClose } from "../src/gates.js";
 import { commitFiles } from "../src/git.js";
 import { createRelease, planRelease, shipRelease, getRelease, releaseSummary, listReleases } from "../src/release.js";
-import { makeRepo, initFlow, newTask } from "./helpers.js";
+import { makeRepo, initFlow, newTask, closeProven } from "./helpers.js";
 
 const finish = async (db, root, task) => {
   if (getTask(db, task.id).status === "backlog") taskClaim(db, root, { id: task.id }, "agent");
   fs.writeFileSync(path.join(root, "src/a.js"), `export const a = "${task.id}";\n`);
   commitFiles(root, ["src/a.js"], `feat\n\nTask-Id: ${task.id}`, { author: "agent" });
-  return taskClose(db, root, { id: task.id });
+  return closeProven(db, root, { id: task.id });
 };
 
 test("发布门禁：没挂任务不能 ship，任务没全 done 不能 ship", async () => {

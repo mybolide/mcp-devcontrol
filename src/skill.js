@@ -28,7 +28,7 @@ export function skillBody({ noMcp = false } = {}) {
 2. 按 \`next.args\` **原样执行**（参数是给全的；缺参数会收到 \`INVALID_ARGUMENT\`）。
 3. 改代码只能动 \`claim\` 返回的 \`scope\` 里的文件。
 4. \`devcontrol commit -m "..."\`：只提交 scope 内的文件，自动写 Task-Id。
-5. \`devcontrol close\`：内核在**干净检出**里重跑验收，全过才算 done。
+5. 改完 \`devcontrol commit\`，**自己跑验收留证据**：CLI 用 \`devcontrol run -- <契约里的命令>\`；走 MCP 就用自己的 shell 跑，然后把结果交给 \`evidence.record\`（command + exit）。跑几次都行，内核取当前代码上的那份。\n6. \`devcontrol close\`：内核**不执行测试**，只核验你留下的证据（命令对不对、跑的是不是当前这份代码、退出码满足断言）。
 
 ## Owner 的动作不在 MCP 里
 
@@ -63,7 +63,9 @@ MCP 工具列表里**没有**批准需求、放行、打回、改预算这些动
 | \`E_CLAIMED_BY_OTHER\` / \`E_SCOPE_OVERLAP\` / \`E_WIP_LIMIT\` | 等别人收口，或换一个不冲突的任务 |
 | \`E_NO_DELIVERY\` | 还没有本任务的提交，先 commit |
 | \`E_SCOPE_VIOLATION\` | 改了 scope 外的文件，撤掉 |
-| \`E_ASSERTION_FAILED\` | 验收没过，去控制台「证据」看退出码 |
+| \`E_NO_EVIDENCE\` | 还没跑过验收：\`devcontrol run -- <命令>\` |
+| \`E_EVIDENCE_STALE\` | 跑完之后又改了代码，重跑一次 |
+| \`E_ASSERTION_FAILED\` | 证据里的退出码没过，去控制台「证据」看输出 |
 | \`E_NEED_RESOLUTION\` | 补 \`--resolved-by\` 再 close |
 | \`E_MEMORY_CANDIDATE\` | 记忆写得太具体，按提示模板改写后再写一次 |
 
@@ -90,7 +92,7 @@ export function skillContent(opts = {}) {
 name: ${SKILL_NAME}
 description: >-
   本项目的研发纪律：开工先问内核，改代码前 claim，只改 scope 内文件，
-  收口由内核在干净检出里重跑验收。所有动作走 devcontrol 工具或 devcontrol CLI。
+  你的工作是写代码 + 自己跑测试。内核只核验证据：它不替你跑测试，也不猜你有没有跑过。所有动作走 devcontrol 工具或 devcontrol CLI。
 version: "${VERSION}"
 ---
 
@@ -104,7 +106,7 @@ export function agentsBlock() {
   return `${BEGIN}
 开工先跑 ${open}：它返回的 \`next\` 就是下一件事，不要自己挑。
 改代码前必须 task.claim；不许修改 acceptance，不许自选命令；只改 scope 内的文件。
-改完 \`devcontrol commit -m "..."\`（只提交 scope 内文件），再 \`devcontrol close\`（内核在干净检出里重跑验收）。
+改完 \`devcontrol commit -m "..."\`（只提交 scope 内文件）；**自己跑** \`devcontrol run -- <验收命令>\` 留证据；再 \`devcontrol close\`（只核验证据）。
 遇到歧义用 ask，不要猜。
 ${consoleLine}
 多 Agent 并行时，每个 Agent 用自己的 \`DEVCONTROL_ACTOR\`，否则会被 WIP=1 挡住。
@@ -122,14 +124,14 @@ alwaysApply: true
 
 1. 开工先 \`devcontrol status\`（MCP 里是 \`bootstrap\`），照它给的 \`next\` 做。
 2. 改代码前 \`task.claim\`；只改 scope 内的文件。
-3. 改完 \`devcontrol commit\`，再 \`devcontrol close\`（内核在干净检出里重跑验收）。
+3. 改完 \`devcontrol commit\`，自己跑 \`devcontrol run -- <命令>\` 留证据，再 \`devcontrol close\`（只核验证据）。
 `;
 }
 
 export function claudeBlock() {
   return `${BEGIN}
 本项目用 devcontrol 管研发纪律，完整规矩见 \`${SKILL_REL}\`。
-开工 \`devcontrol status\`（MCP 里是 \`bootstrap\`），改代码前 \`task.claim\`，只改 scope 内文件，改完 \`commit\` 再 \`close\`。
+开工 \`devcontrol status\`（MCP 里是 \`bootstrap\`），改代码前 \`task.claim\`，只改 scope 内文件，改完 \`commit\` → \`run\` 留证据 → \`close\`。
 ${END}`;
 }
 

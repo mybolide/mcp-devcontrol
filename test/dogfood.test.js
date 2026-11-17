@@ -13,7 +13,7 @@ import { hintFor } from "../src/hints.js";
 import { readContract } from "../src/contract.js";
 import { taskClaim, taskClose } from "../src/gates.js";
 import { commitFiles } from "../src/git.js";
-import { makeRepo, initFlow, newTask } from "./helpers.js";
+import { makeRepo, initFlow, newTask, closeProven } from "./helpers.js";
 
 const BIN = path.resolve(import.meta.dirname, "../bin/devcontrol.js");
 
@@ -47,6 +47,7 @@ test("close 成功：JSON 里有 ok:true，和失败同一套字段", () => {
   dc(root, ["task", "claim", t.id]);
   fs.writeFileSync(path.join(root, "src/a.js"), "export const a = 99;\n");
   dc(root, ["commit", "-m", "feat: 改动"]);
+  dc(root, ["run", "--", "npm test"]); // 工具不跑测试：证据要 Agent 自己留
   const r = dc(root, ["close", t.id]);
   const j = JSON.parse(r.out);
   assert.equal(j.ok, true);
@@ -101,7 +102,7 @@ test("新增测试文件放行，改既有测试仍要 Owner 签字", async () =
   taskClaim(db, root, { id: a.id }, "agentA");
   fs.writeFileSync(path.join(root, "src/new.test.js"), "import test from \"node:test\";\ntest(\"x\", () => {});\n");
   commitFiles(root, ["src/new.test.js"], `feat\n\nTask-Id: ${a.id}\nDevControl-Base: ${a.base_head}`, { author: "agentA" });
-  const res = await taskClose(db, root, { id: a.id });
+  const res = await closeProven(db, root, { id: a.id });
   assert.equal(res.runs[0].passed, true, "新增测试文件不应该被拦");
 
   // ② 改既有测试：这才是能悄悄放宽断言的路，仍然要签字
@@ -109,7 +110,7 @@ test("新增测试文件放行，改既有测试仍要 Owner 签字", async () =
   taskClaim(db, root, { id: b.id }, "agentA");
   fs.writeFileSync(path.join(root, "src/new.test.js"), "import test from \"node:test\";\ntest(\"x\", () => {});\n// 顺手放宽\n");
   commitFiles(root, ["src/new.test.js"], `chore\n\nTask-Id: ${b.id}\nDevControl-Base: ${b.base_head}`, { author: "agentA" });
-  await assert.rejects(() => taskClose(db, root, { id: b.id }), (e) => e.code === "E_DEP_OR_TEST_TOUCH");
+  await assert.rejects(() => closeProven(db, root, { id: b.id }), (e) => e.code === "E_DEP_OR_TEST_TOUCH");
 });
 
 test("Path 预算能调（项目会长大），改的是契约本身且留痕", () => {
@@ -148,7 +149,7 @@ test("放宽 Path 预算对在办任务立即生效（不用先收了重开）",
 
   // 领取之后 Owner 才放宽：应该立即生效，不用重新领取
   pathAdjust(db, root, { pathId: "P-001", budgetLines: 5000, reason: "项目体量增长，原预算已不够用，按实际情况放宽" });
-  const res = await taskClose(db, root, { id: t.id });
+  const res = await closeProven(db, root, { id: t.id });
   assert.equal(res.runs[0].passed, true);
   assert.equal(getTask(db, t.id).status, "done");
 });

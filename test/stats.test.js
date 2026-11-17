@@ -7,7 +7,7 @@ import { disciplineStats, getTask, override } from "../src/store.js";
 import { taskClaim, taskClose } from "../src/gates.js";
 import { bootstrap } from "../src/digest.js";
 import { commitFiles } from "../src/git.js";
-import { makeRepo, initFlow, newTask } from "./helpers.js";
+import { makeRepo, initFlow, newTask, closeProven } from "./helpers.js";
 
 const REASON = "Owner 决定：这条断言在本机环境不稳定，本次先放行，后续补测。";
 
@@ -24,14 +24,14 @@ test("三数：被拦、返工、绕过都能算出来", async () => {
   fs.writeFileSync(path.join(root, "outside.js"), "export const o = 1;\n");
   commitFiles(root, ["src/a.js", "outside.js"], `feat\n\nTask-Id: ${task.id}`, { author: "agentA" });
   await assert.rejects(
-    () => taskClose(db, root, { id: task.id }),
+    () => closeProven(db, root, { id: task.id }),
     (e) => ["E_SCOPE_VIOLATION", "E_UNREGISTERED_FILES"].includes(e.code),
   );
   assert.equal(disciplineStats(db).blocked, 1, "close.fail 计一次被拦");
   assert.equal(disciplineStats(db).rework, 1, "review_round 计一轮返工");
 
   // Owner 放行一次 = 绕过一次（这时会要求 resolvedBy，先带上）
-  const res = await taskClose(db, root, {
+  const res = await closeProven(db, root, {
     id: task.id,
     resolvedBy: "把 scope 外的文件撤掉，只留 src 内的改动",
   }).catch((e) => e);

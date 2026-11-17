@@ -9,7 +9,7 @@
 // 根因：coverage() 把 parked 当成「没覆盖」。parked 不是「没做」，是「卡住了」。
 import test from "node:test";
 import assert from "node:assert/strict";
-import { makeRepo, initFlow, newTask } from "./helpers.js";
+import { makeRepo, initFlow, newTask, closeProven } from "./helpers.js";
 import { openDb } from "../src/db.js";
 import { bootstrap, coverage } from "../src/digest.js";
 import { taskClaim, taskClose } from "../src/gates.js";
@@ -23,7 +23,7 @@ async function parkTask(db, root, task) {
   fs.writeFileSync(path.join(root, "src/a.js"), "export const a = 999;\n");
   commitFiles(root, ["src/a.js"], `feat: 错\n\nTask-Id: ${task.id}`, { author: "agent" });
   for (let i = 0; i < 3; i += 1) {
-    await assert.rejects(() => taskClose(db, root, { id: task.id, resolvedBy: "还在查" }));
+    await assert.rejects(() => closeProven(db, root, { id: task.id, resolvedBy: "还在查" }, { exit: 1 }));
   }
   return db.prepare("SELECT status FROM tasks WHERE id=?").get(task.id).status;
 }

@@ -7,7 +7,7 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { buildEnv } from "../src/exec.js";
 import { compact } from "../src/mcp.js";
-import { makeRepo, initFlow, BIN } from "./helpers.js";
+import { makeRepo, initFlow, BIN, closeProven } from "./helpers.js";
 
 function startConsole(root, port = 20000 + Math.floor(Math.random() * 20000)) {
   const child = spawn(process.execPath, [BIN, "serve", "--port", String(port)], {
@@ -123,7 +123,7 @@ test("已 done 的任务不能再\"认领\"事后提交（防 --date 过继）",
   taskClaim(db, root, { id: mission.id }, "agent");
   fs.writeFileSync(path.join(root, "src/a.js"), "export const a = \"mission\";\n");
   commitFiles(root, ["src/a.js"], `feat\n\nTask-Id: ${mission.id}`, { author: "agent" });
-  await taskClose(db, root, { id: mission.id });
+  await closeProven(db, root, { id: mission.id });
   assert.equal(getTask(db, mission.id).status, "done");
 
   // 另起一个任务，期间偷偷提交一条挂在「已完成任务」名下的越权改动
@@ -135,5 +135,5 @@ test("已 done 的任务不能再\"认领\"事后提交（防 --date 过继）",
   fs.writeFileSync(path.join(root, "evil/x.sh"), "echo pwn\n");
   commitFiles(root, ["evil/x.sh"], `chore\n\nTask-Id: ${mission.id}`, { author: "agent" });
 
-  await assert.rejects(() => taskClose(db, root, { id: other.id }), (e) => e.code === "E_UNOWNED_COMMIT");
+  await assert.rejects(() => closeProven(db, root, { id: other.id }), (e) => e.code === "E_UNOWNED_COMMIT");
 });

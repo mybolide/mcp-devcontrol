@@ -8,7 +8,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import { makeRepo, initFlow, newTask } from "./helpers.js";
+import { makeRepo, initFlow, newTask, prove } from "./helpers.js";
 import { taskClaim, taskClose } from "../src/gates.js";
 import { commitFiles } from "../src/git.js";
 
@@ -29,6 +29,7 @@ async function closeWith(root, db, task, rel, body) {
   fs.mkdirSync(path.dirname(abs), { recursive: true });
   fs.writeFileSync(abs, body);
   commitFiles(root, [rel], `feat: x\n\nTask-Id: ${task.id}`, { author: "agent" });
+  prove(db, root, task.id);
   return taskClose(db, root, { id: task.id, resolvedBy: "按提示改掉" });
 }
 

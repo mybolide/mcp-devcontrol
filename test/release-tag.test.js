@@ -9,13 +9,13 @@ import { metaSet } from "../src/db.js";
 import { taskClaim, taskClose } from "../src/gates.js";
 import { commitFiles } from "../src/git.js";
 import { createRelease, planRelease, shipRelease, getRelease } from "../src/release.js";
-import { makeRepo, initFlow, newTask, sh } from "./helpers.js";
+import { makeRepo, initFlow, newTask, sh, closeProven } from "./helpers.js";
 
 const finish = async (db, root, task) => {
   if (getTask(db, task.id).status === "backlog") taskClaim(db, root, { id: task.id }, "agent");
   fs.writeFileSync(path.join(root, "src/a.js"), `export const a = "${task.id}";\n`);
   commitFiles(root, ["src/a.js"], `feat\n\nTask-Id: ${task.id}`, { author: "agent" });
-  return taskClose(db, root, { id: task.id });
+  return closeProven(db, root, { id: task.id });
 };
 
 test("发布留下可回滚点：ship 打 annotated tag，记 git_tag / git_sha", async () => {

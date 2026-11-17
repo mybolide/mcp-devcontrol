@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { makeRepo, BIN } from "./helpers.js";
+import { makeRepo, BIN, closeProven, prove } from "./helpers.js";
 import { openDb } from "../src/db.js";
 import { reqIntake, reqApprove } from "../src/store.js";
 import { taskClaim, taskClose, taskCreate } from "../src/gates.js";
@@ -152,6 +152,7 @@ test("依赖/构建产物不会拦住收口（装依赖、跑构建是开发常�
   write(root, "node_modules/dep-b/index.js", "export default 2;\n");
 
   const db2 = (await import("../src/db.js")).openDb(root);
+  prove(db2, root, t.id);
   const r = await taskClose(db2, root, { id: t.id });
   db2.close();
   assert.equal(r.id, t.id, "依赖与构建产物不该让收口失败");

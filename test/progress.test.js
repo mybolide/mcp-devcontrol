@@ -10,7 +10,7 @@ import path from "node:path";
 import { getTask } from "../src/store.js";
 import { taskClaim, taskClose } from "../src/gates.js";
 import { commitFiles } from "../src/git.js";
-import { makeRepo, initFlow, newTask, BIN, sh } from "./helpers.js";
+import { makeRepo, initFlow, newTask, prove, BIN, sh, closeProven } from "./helpers.js";
 import { execFileSync } from "node:child_process";
 
 const ready = (db, root, task) => {
@@ -26,11 +26,11 @@ test("taskClose 会上报阶段：准备 → 检查 → 跑验收 → 完成", a
   const t = ready(db, root, newTask(db, root, reqId));
 
   const seen = [];
-  const res = await taskClose(db, root, { id: t.id }, { onProgress: (e) => seen.push(e) });
+  const res = await closeProven(db, root, { id: t.id }, { onProgress: (e) => seen.push(e) });
   assert.equal(res.closedBy, "rerun");
 
   const stages = seen.map((e) => e.stage);
-  for (const want of ["start", "checks", "worktree", "assert", "assert-done", "done"]) {
+  for (const want of ["start", "checks", "evidence", "evidence-done", "done"]) {
     assert.ok(stages.includes(want), `缺少阶段 ${want}（实际 ${stages.join(",")}）`);
   }
   // 每条事件都带耗时，最后一条的总耗时应当 ≥ 第一条
@@ -48,7 +48,7 @@ test("验收失败时上报的是失败阶段，并且带上错误码", async ()
 
   const seen = [];
   await assert.rejects(
-    () => taskClose(db, root, { id: t.id }, { onProgress: (e) => seen.push(e) }),
+    () => prove(db, root, t.id, { exit: 1 }).length && taskClose(db, root, { id: t.id }, { onProgress: (e) => seen.push(e) }),
     (e) => e.code === "E_ASSERTION_FAILED",
   );
   const failed = seen.find((e) => e.stage === "failed");
@@ -61,7 +61,7 @@ test("进度回调自己抛错不能把收口带崩", async () => {
   const { db, reqId } = initFlow(root);
   const t = ready(db, root, newTask(db, root, reqId));
 
-  const res = await taskClose(db, root, { id: t.id }, {
+  const res = await closeProven(db, root, { id: t.id }, {
     onProgress: () => {
       throw new Error("进度上报炸了");
     },
@@ -75,6 +75,7 @@ test("CLI close：进度写 stderr，stdout 仍是一整段可解析的 JSON", (
   const { db, reqId } = initFlow(root);
   const t = ready(db, root, newTask(db, root, reqId));
 
+  prove(db, root, t.id);
   const out = execFileSync(process.execPath, [BIN, "close", t.id], { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
   const parsed = JSON.parse(out);
   assert.equal(parsed.ok, true);

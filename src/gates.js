@@ -17,11 +17,13 @@ import {
 import { contractCommands, parseAssertion, readContract } from "./contract.js";
 import { fingerprint, inScope, sha256 } from "./fingerprint.js";
 import { addedFiles, git, head, isAncestor, logCommits, numstat, patchId, statusPorcelain, trailers } from "./git.js";
-import { evaluate, execCommand } from "./exec.js";
+import { evaluate } from "./exec.js";
 import { generalizeHint, memoryConfig, rememberTaskPitfall } from "./memory.js";
 import { isVendorPath } from "./vendor.js";
-const R2WT = ".devcontrol/r2-wt";
-const ENV_ONLY = new Set(["E_DIRTY_SCOPE", "E_BUSY", "E_TIMEOUT"]);
+// 这些失败不计入 review_round：它们都是「补一步就能好」，不是「试了没成功」。
+// 证据类（忘了跑 / 跑完又改）尤其不能算——否则每个 Agent 第一次忘跑测试，
+// 后面每次收口都得补 --resolved-by，纯属噪音。
+const ENV_ONLY = new Set(["E_DIRTY_SCOPE", "E_BUSY", "E_TIMEOUT", "E_NO_EVIDENCE", "E_EVIDENCE_STALE", "E_NO_DELIVERY"]);
 
 export function intersect(a, b) {
   return a.some((x) =>
@@ -249,49 +251,28 @@ function isPkg(f) {
   return /(^|\/)(package\.json|package-lock\.json|pnpm-lock\.yaml|yarn\.lock)$/.test(f);
 }
 
-function recordRun(db, { taskId, idx, command, result, head0, fp }) {
-  const out = `${result.stdout}\n${result.stderr}`;
+/**
+ * 记录一条测试证据。**由 Agent 触发**（`devcontrol run -- <cmd>`），内核只负责存与核验。
+ *
+ * 指纹存的是「内容指纹」（anchor 传 null）：commit 不改变文件内容，所以
+ * 「先跑测试、再提交、再收口」这个最常见的顺序不会被误判成过期；
+ * 而「跑完之后又改了代码」一定会改变指纹，证据立刻失效。
+ */
+export function recordEvidence(db, root, { taskId, command, result, scope = ["."] }) {
+  const out = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
+  const fp = fingerprint(root, scope, null);
+  let h = "";
+  try {
+    h = head(root);
+  } catch {
+    h = ""; // 弱模式
+  }
   const id = `run-${crypto.randomUUID().slice(0, 8)}`;
   db.prepare(
     "INSERT INTO runs(id,task_id,assertion_idx,command,exit_code,head,fingerprint,log_sha256,output,started_at,duration_ms) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-  ).run(id, taskId, idx, command, result.exit, head0, fp, sha256(out), out.slice(0, 20000), now(), result.durationMs);
-  return id;
-}
-
-function prepareWorktree(root, { weak = false } = {}) {
-  fs.rmSync(path.join(root, R2WT), { recursive: true, force: true });
-  try {
-    git(root, ["worktree", "prune"]);
-  } catch {
-    /* ignore */
-  }
-  try {
-    git(root, ["worktree", "add", "--detach", "--force", R2WT, "HEAD"]);
-    return path.join(root, R2WT);
-  } catch (error) {
-    if (weak) return root; // 弱模式没有 git，只能在当前目录跑
-    // 干净检出建不出来就不能假装证据有效：fail-closed
-    throw new DFError("E_NO_CLEAN_WORKTREE", `干净检出创建失败：${String(error.message).slice(0, 200)}`, {
-      hint: "git worktree 不可用（浅克隆/权限/磁盘）；R2 必须在干净检出里跑，不能退化到脏工作树",
-    });
-  }
-}
-
-function linkNodeModules(root, cwd) {
-  if (cwd === root) return;
-  const lock = ["package-lock.json", "pnpm-lock.yaml", "yarn.lock"].find((f) => fs.existsSync(path.join(root, f)));
-  if (!lock) return;
-  const a = path.join(root, lock);
-  const b = path.join(cwd, lock);
-  if (!fs.existsSync(b) || !fs.readFileSync(a).equals(fs.readFileSync(b))) return;
-  const nm = path.join(root, "node_modules");
-  const target = path.join(cwd, "node_modules");
-  if (!fs.existsSync(nm) || fs.existsSync(target)) return;
-  try {
-    fs.symlinkSync(nm, target, "junction");
-  } catch {
-    /* 退化 */
-  }
+  ).run(id, taskId, -1, command, result.exit, h, fp, sha256(out), out.slice(0, 20000), now(), result.durationMs ?? 0);
+  logEvent(db, { action: "run.evidence", taskId, detail: `${command} → exit ${result.exit}` });
+  return { id, fingerprint: fp, exit: result.exit, command };
 }
 
 export async function taskClose(db, root, input, opts = {}) {
@@ -479,38 +460,51 @@ export async function taskClose(db, root, input, opts = {}) {
       if (untracked.length) fail("E_DIRTY_SCOPE", `scope 内有未跟踪文件：${untracked.slice(0, 5).join("、")}`, { files: untracked });
     }
 
-    // R2（干净检出内重跑）
-    const fp0 = fingerprint(root, t.scope, head0);
-    mark("worktree", "在干净检出里准备环境");
-    const cwd = prepareWorktree(root, { weak });
-    linkNodeModules(root, cwd);
+    // R2（核验 Agent 提交的证据，而不是内核自己跑）
+    //
+    // 工具不执行测试：测试是 Agent 的活。内核只回答一件事——
+    // 「这段代码，真的跑过契约要求的那几条命令吗，而且过了吗」。
+    //
+    // 判据三条：① 证据是本任务记的；② 证据是在**当前这份代码**上产生的（内容指纹一致，
+    // 防「先跑过、后来又改」）；③ 退出码满足契约里的谓词。
+    // 为什么内核不该自己跑：那是把执行权、环境、超时、依赖安装全揽到工具身上，
+    // 工具越重越容易和项目的真实工作方式打架（v5 就是这条路走岔的）。
+    mark("evidence", "核对 Agent 提交的测试证据");
+    const fpNow = fingerprint(root, t.scope, null);
     const runs = [];
     for (const [idx, item] of t.acceptance.entries()) {
       const { command, predicate } = parseAssertion(item.assertion);
-      mark("assert", `跑验收 ${idx + 1}/${t.acceptance.length}：${command}`);
-      // 心跳：一条 npm test 可能跑几十秒，期间没有任何输出会让人以为卡死而 Ctrl-C。
-      // 只报「还在跑」，不假装有进度百分比——子进程不给我们就不编。
-      const beat = setInterval(() => mark("beat", `跑验收 ${idx + 1}/${t.acceptance.length}：${command}（还在跑）`), 5000);
-      beat.unref?.();
-      let result;
-      try {
-        result = await execCommand(cwd, command, { env: { DEVCONTROL_TASK: t.id }, signal: opts.signal });
-      } finally {
-        clearInterval(beat);
+      const same = db
+        .prepare("SELECT * FROM runs WHERE task_id=? AND command=? AND fingerprint=? ORDER BY started_at DESC LIMIT 1")
+        .get(t.id, command, fpNow);
+      if (!same) {
+        const older = db
+          .prepare("SELECT * FROM runs WHERE task_id=? AND command=? ORDER BY started_at DESC LIMIT 1")
+          .get(t.id, command);
+        if (older) {
+          last = "E_EVIDENCE_STALE";
+          throw new DFError(
+            "E_EVIDENCE_STALE",
+            `${command} 的证据是旧代码上跑的（跑完之后又改了），重跑一次再收口：devcontrol run -- ${command}`,
+            { command, runId: older.id },
+          );
+        }
+        last = "E_NO_EVIDENCE";
+        throw new DFError("E_NO_EVIDENCE", `没有 ${command} 的测试证据`, { command });
       }
-      mark("assert-done", `验收 ${idx + 1}/${t.acceptance.length} ${result.exit === 0 ? "通过" : `失败（exit ${result.exit}）`} · ${Math.round(result.durationMs / 100) / 10}s`);
-      const runId = recordRun(db, { taskId: t.id, idx, command, result, head0: head0 ?? "", fp: fp0 });
-      const passed = evaluate(predicate, result);
-      runs.push({ idx, runId, exit: result.exit, passed, command });
+      const passed = evaluate(predicate, { exit: same.exit_code, stdout: same.output });
+      runs.push({ idx, runId: same.id, exit: same.exit_code, passed, command });
+      mark("evidence-done", `证据 ${idx + 1}/${t.acceptance.length}：${command} ${passed ? "满足断言" : `不满足（exit ${same.exit_code}）`}`);
       if (!passed) {
-        last = result.exit === 124 ? "E_TIMEOUT" : "E_ASSERTION_FAILED";
-        throw new DFError(last, `断言失败：${item.assertion}（exit ${result.exit}）`, { assertionIdx: idx, runId, exit: result.exit, runs });
+        last = "E_ASSERTION_FAILED";
+        throw new DFError(last, `证据不满足断言：${item.assertion}（exit ${same.exit_code}）`, {
+          assertionIdx: idx,
+          runId: same.id,
+          exit: same.exit_code,
+          runs,
+        });
       }
     }
-
-    // R3
-    if (!weak && head(root) !== head0) throw new DFError("E_EVIDENCE_DRIFT", "R2 期间 HEAD 被移动", {});
-    if (fingerprint(root, t.scope, head0) !== fp0) throw new DFError("E_EVIDENCE_DRIFT", "R2 期间工作树被改动", { files });
 
     // R4（弱模式没有提交链，跳过）
     if (!weak) {
@@ -536,7 +530,7 @@ export async function taskClose(db, root, input, opts = {}) {
       memory = await rememberTaskPitfall(root, t, resolvedBy, lastFail ? `${lastFail.code}: ${lastFail.detail}` : null, memoryConfig(process.env, root));
     }
     if (memory?.status === "candidate") memory.hint = generalizeHint(memory.reasons ?? []);
-    return { id: t.id, lines, files: files.length, runs, closedBy: "rerun", commits: weak ? [] : owned.map((c) => c.sha), fingerprint: fp0, memory, memoryHint: memory?.hint ?? null, weak };
+    return { id: t.id, lines, files: files.length, runs, closedBy: "rerun", commits: weak ? [] : owned.map((c) => c.sha), fingerprint: fpNow, memory, memoryHint: memory?.hint ?? null, weak };
   } catch (error) {
     last = last ?? error.code ?? "E_INTERNAL";
     mark("failed", `${last}：${String(error.message).slice(0, 120)}`);

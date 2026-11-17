@@ -136,3 +136,29 @@ test("MCP 缺参数时报得清楚，不会漏 SQLite 内部错误", async () =>
     mcp.child.kill();
   }
 });
+test("MCP 也能交测试证据：evidence.record 缺 command 会被明确拒绝", async () => {
+  const root = makeRepo();
+  initFlow(root);
+  const { mcp, call } = await boot(root);
+  try {
+    const bad = await call({ action: "evidence.record", exit: 0 });
+    assert.equal(bad.json.ok, false);
+    assert.match(bad.json.message, /缺少参数/);
+    assert.ok(bad.json.hint);
+  } finally {
+    mcp.child.kill();
+  }
+});
+
+test("没有在办任务时交证据：报 E_NO_TASK，不静默丢进黑洞", async () => {
+  const root = makeRepo();
+  initFlow(root);
+  const { mcp, call } = await boot(root);
+  try {
+    const bad = await call({ action: "evidence.record", command: "npm test", exit: 0 });
+    assert.equal(bad.json.ok, false);
+    assert.equal(bad.json.code, "E_NO_TASK", `实际：${JSON.stringify(bad.json)}`);
+  } finally {
+    mcp.child.kill();
+  }
+});

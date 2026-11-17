@@ -72,7 +72,7 @@ MCP 只有一个工具 `devcontrol`，十三个动作（`wait` 是 `next` 告诉
 | `task.create` | 拆任务（scope / 验收 / 依赖 / 预算） | 验收命令必须落在 Path 契约白名单内 |
 | `task.claim` | 领任务（45 分钟租约，WIP=1） | 与其他在办任务 scope 相交会被拒 |
 | `task.renew` | 续租：长任务超过 45 分钟时续一次（`commit` 等写操作也会自动续） | 租期已被回收 → `E_CLAIM_STALE`，必须重新 `task.claim` |
-| `task.close` | 收口：R0–R5，干净检出里重跑验收 | 有交付提交、全部断言 exit 0 才 `done` |
+| `task.close` | 收口：**核验 Agent 留下的测试证据**（不执行测试） | 有交付提交 + 每条断言都有当前代码上的证据且满足才 `done` |
 | `bug.report` | 报 Bug（现象 + 复现步骤） | 不能直接改代码 |
 | `ask` | 歧义就问，不猜 | 问完任务 `parked`，Owner 回答后回到队列 |
 | `memory.write` | 随时记一条通用经验（坑 / 解法 / 约定 / 片段） | 不合格会进隔离区并给出改写模板 |
@@ -210,6 +210,30 @@ devcontrol release list
 | `MEMORY_QDRANT_URL` / `MEMORY_QDRANT_COLLECTION` | `http://127.0.0.1:6333` / `devcontrol_memory_<项目路径前8位>` |
 | `DEVCONTROL_MEMORY` / `DEVCONTROL_MEMORY_DB` | `on` / `<项目>/.devcontrol/memory.db` |
 
+## 3.5 谁跑测试：**Agent 跑，内核只核验**
+
+这是这个工具最该守住的一条分工：
+
+| | 谁做 | 产物 |
+|---|---|---|
+| 写代码 | Agent | 提交（带 `Task-Id`） |
+| **跑测试** | **Agent** | `devcontrol run -- <命令>` 记下的一条**证据**（命令、退出码、输出、当时的内容指纹） |
+| 核验证据 | 内核 | R2：命令在白名单里？证据是当前这份代码上跑的吗？退出码满足断言吗？ |
+
+```bash
+devcontrol run -- npm test      # Agent 自己跑；有在办任务时自动记为该任务的证据
+devcontrol close                # 内核只核验，不执行
+```
+
+为什么内核不自己跑：一旦它开始执行测试，就得负责环境、依赖安装、超时、进程回收、
+干净检出，工具会越来越重，还容易和项目真实的工作方式打架（v5 走岔的就是这条路）。
+现在内核做的事永远只有三件：**这活儿是谁的、改了哪片、证据够不够**。
+
+代价说清楚：证据是 Agent 自报的，内核验的是「一致性」而不是「真实性」——
+它能防「跑完又改代码」（内容指纹变了）、能防「没跑就收口」（没有证据）、
+能防「跑的是别的命令」（白名单），但**防不了蓄意伪造**。这是设计取舍：
+工作台管流程，不管人品。
+
 ## 4. 拦截点（这就是"法"）
 
 `task.close` 按顺序判定，任一失败即返回错误码并写事件：
@@ -218,12 +242,12 @@ devcontrol release list
 |---|---|
 | R0 | 区间内有没有交付提交；有没有**无主提交**（既没有本任务 trailer、也不是他人带 trailer 的正常提交） |
 | R1 | 越界文件、未登记新增文件、行数预算（任务级 + Path 累计）、新增 TODO 未带任务号、改测试配置、改依赖/测试目录 |
-| R2 | 在 `.devcontrol/r2-wt` 干净检出中逐条重跑验收断言（600s 超时，`node_modules` 通过软链复用） |
-| R3 | 重跑期间 HEAD 或 scope 指纹漂移 → `E_EVIDENCE_DRIFT` |
+| R2 | **核验 Agent 留下的测试证据**：命令在契约白名单里、证据是在当前这份代码上跑的（内容指纹一致）、退出码满足断言。内核**不执行**测试 |
+| R3 | （已并入 R2：证据与当前代码不一致就是 `E_EVIDENCE_STALE`） |
 | R4 | 归属提交不在 HEAD 祖先链上 → `E_UNMERGED_WORK` |
 | 收口 | 状态 CAS 写入 `done`；消费一次性 waive；写 `close` 事件 |
 
-失败计数规则：环境类（`E_DIRTY_SCOPE` / `E_BUSY` / `E_TIMEOUT`）**不计** `review_round`；其余失败累计，3 次自动 `parked`，等 Owner `reopen`。
+失败计数规则：补一步就能好的（`E_DIRTY_SCOPE` / `E_BUSY` / `E_TIMEOUT` / `E_NO_EVIDENCE` / `E_EVIDENCE_STALE`）**不计** `review_round`；其余失败累计，3 次自动 `parked`，等 Owner `reopen`。
 
 ### 失败长什么样（Agent 靠这个分支处理）
 
@@ -250,7 +274,7 @@ devcontrol release list
 | `E_SCOPE_TOO_BROAD` / `E_FILE_TOO_LARGE` | 任务切分过大 |
 | `E_UNOWNED_COMMIT` / `E_NO_DELIVERY` | 提交归属 |
 | `E_SCOPE_VIOLATION` / `E_UNREGISTERED_FILES` / `E_DIFF_BUDGET` / `E_LINT_TODO` / `E_TEST_CONFIG_TOUCH` / `E_DEP_OR_TEST_TOUCH` | R1 |
-| `E_ASSERTION_FAILED` / `E_TIMEOUT` / `E_EVIDENCE_DRIFT` / `E_UNMERGED_WORK` | R2–R4 |
+| `E_NO_EVIDENCE` / `E_EVIDENCE_STALE` / `E_ASSERTION_FAILED` / `E_UNMERGED_WORK` | R2–R4（证据类） |
 | `E_DIRTY_SCOPE` / `E_BUSY` | 环境类，不计轮次 |
 | `E_USAGE` / `INVALID_ARGUMENT` | 命令或参数写错（`E_USAGE` 退出码 2） |
 | `E_NO_TASK` / `E_WEAK_NO_GIT` / `NOT_FOUND` | 手上没任务、弱模式不能提交、找不到那个编号 |

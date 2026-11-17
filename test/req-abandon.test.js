@@ -9,7 +9,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import { makeRepo, initFlow, newTask } from "./helpers.js";
+import { makeRepo, initFlow, newTask, closeProven } from "./helpers.js";
 import { openDb } from "../src/db.js";
 import { reqAbandon, listTasks, listReqs } from "../src/store.js";
 import { bootstrap, coverage } from "../src/digest.js";
@@ -24,7 +24,7 @@ async function parkTask(db, root, task) {
   fs.writeFileSync(path.join(root, "src/a.js"), "export const a = 777;\n");
   commitFiles(root, ["src/a.js"], `feat: 错\n\nTask-Id: ${task.id}`, { author: "agent" });
   for (let i = 0; i < 3; i += 1) {
-    await assert.rejects(() => taskClose(db, root, { id: task.id, resolvedBy: "还在查" }));
+    await assert.rejects(() => closeProven(db, root, { id: task.id, resolvedBy: "还在查" }, { exit: 1 }));
   }
 }
 

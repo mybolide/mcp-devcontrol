@@ -12,6 +12,8 @@ const HINTS = {
   E_DEP_OR_TEST_TOUCH: "改了依赖或测试。这需要 Owner 放行：他在控制台「任务」里点放行并写理由（≥12 字）。Agent 不能自助。",
   E_TEST_CONFIG_TOUCH: "改了测试配置。这需要 Owner 放行：控制台「任务」里点放行。",
   E_DIFF_BUDGET: "改动量超预算。Owner 可以在控制台放行，或者把任务拆小——后者通常才是对的。",
+  E_NO_EVIDENCE: "收口只核验证据，不替你跑测试。先自己跑出来：devcontrol run -- <契约里的验收命令>，然后再 devcontrol close。",
+  E_EVIDENCE_STALE: "上次跑测试之后代码又改了，那份证据已经不作数。重跑一遍：devcontrol run -- <命令>。",
   E_ASSERTION_FAILED: "验收命令没通过。看证据：devcontrol evidence run-xxxx（不给编号看最近 8 次），或控制台「证据」页。",
   E_TIMEOUT: "验收命令超时。先确认它在本机跑得完，再收口。",
   E_WIP_LIMIT: "WIP=1：你手上还有在办任务。先收了它（devcontrol close），或者 devcontrol renew 续租。",

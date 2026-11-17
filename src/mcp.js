@@ -7,11 +7,11 @@ import { openDb } from "./db.js";
 import { bootstrap } from "./digest.js";
 import { VERSION } from "./protocol.js";
 import { installAgentFiles } from "./skill.js";
-import { taskCreate, taskClaim, taskRenew, taskClose, bugReport, ask } from "./gates.js";
+import { recordEvidence, taskCreate, taskClaim, taskRenew, taskClose, bugReport, ask } from "./gates.js";
 import { hintFor } from "./hints.js";
 import { resolveRoot } from "./cli.js";
 import { ensureConsole, readConsoleMeta } from "./console-boot.js";
-import { mapTask } from "./store.js";
+import { fail, getTask, mapTask } from "./store.js";
 import { generalizeHint, memoryConfig, openMemory, recallMemories, rememberAndIndex, searchMemories } from "./memory.js";
 import { createRelease, planRelease, shipRelease } from "./release.js";
 
@@ -32,6 +32,7 @@ export const ACTIONS = [
   "task.claim",
   "task.renew",
   "task.close",
+  "evidence.record",
   "bug.report",
   "ask",
   "memory.write",
@@ -69,6 +70,9 @@ export const SCHEMA = {
   targetDate: z.string().optional().describe("release.create 的目标日期 YYYY-MM-DD"),
   taskId: z.string().optional(),
   question: z.string().optional(),
+  command: z.string().optional().describe("evidence.record：你刚跑完的那条验收命令（原文，要和契约里的一致）"),
+  exit: z.number().optional().describe("evidence.record：那条命令的退出码"),
+  output: z.string().optional().describe("evidence.record：可选，输出片段（截断 20k）"),
   actor: z.string().optional().describe("领取者标识，默认 agent（与 devcontrol commit --actor 一致）"),
   options: z.array(z.string()).optional(),
 };
@@ -79,6 +83,7 @@ export async function dispatch(db, root, args, ctx = {}) {
   const REQUIRED = {
     "task.create": ["requirementId", "pathId", "title"],
     "task.claim": ["id"],
+    "evidence.record": ["command"],
     "task.renew": ["id"],
     ask: ["taskId", "question"],
     "bug.report": ["title", "symptom"],
@@ -109,6 +114,24 @@ export async function dispatch(db, root, args, ctx = {}) {
       return taskClaim(db, root, args, args.actor ?? process.env.DEVCONTROL_ACTOR ?? "agent");
     case "task.renew":
       return taskRenew(db, root, args, args.actor ?? process.env.DEVCONTROL_ACTOR ?? "agent");
+    case "evidence.record": {
+      // 测试是 Agent 自己跑的（用它自己的 shell）。这里只接收「跑完了，结果是这个」，
+      // 内核不执行任何命令——它只记账，收口时再核验这份账对不对得上当前代码。
+      const actor = args.actor ?? process.env.DEVCONTROL_ACTOR ?? "agent";
+      const doing = args.id
+        ? [getTask(db, args.id)].filter(Boolean)
+        : db.prepare("SELECT id FROM tasks WHERE status='doing' AND claimed_by=? AND closing_token IS NULL").all(actor).map((r) => getTask(db, r.id));
+      if (doing.length !== 1) {
+        fail("E_NO_TASK", doing.length ? `${actor} 有多个在办任务，请指明 id` : `${actor} 手上没有在办任务，证据记不了`);
+      }
+      const t = doing[0];
+      return recordEvidence(db, root, {
+        taskId: t.id,
+        command: String(args.command),
+        result: { exit: Number(args.exit ?? 0), stdout: String(args.output ?? ""), stderr: "", durationMs: 0 },
+        scope: t.scope,
+      });
+    }
     case "task.close":
       return taskClose(db, root, args, { signal: ctx.signal });
     case "bug.report":
