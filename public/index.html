@@ -179,6 +179,7 @@
         <button class="navbtn" data-nav="memory">记忆 <span class="count" id="n-mem">0</span></button>
         <button class="navbtn" data-nav="docs">文档</button>
         <button class="navbtn" data-nav="evidence">证据 <span class="count" id="n-runs">0</span></button>
+        <button class="navbtn" data-nav="weekly">周报</button>
         <button class="navbtn" data-nav="settings">设置</button>
       </nav>
       <select id="project-switch" style="margin: 10px 8px 0; width: calc(100% - 16px)" hidden></select>
@@ -312,6 +313,17 @@
         </div>
       </section>
 
+      <section class="view" data-view="weekly" hidden>
+        <div class="sectionhead">
+          <span class="eyebrow">WEEKLY</span>
+          <h1>这一周</h1>
+          <p class="sub">事件流按天和人摊开：收口几条、拦在哪、净改动多少。<code>devcontrol report</code> 是同一份口径。</p>
+        </div>
+        <div class="panel" id="weekly-panel">
+          <div class="mu">正在读…</div>
+        </div>
+      </section>
+
       <section class="view" data-view="settings" hidden>
         <div class="sectionhead">
           <span class="eyebrow">SETTINGS</span>
@@ -400,7 +412,7 @@
           bad ? 9000 : 3000,
         );
       };
-      const VIEWS = { inbox: "收件箱", reqs: "需求", bugs: "Bug", tasks: "任务", release: "发布", memory: "记忆", docs: "文档", evidence: "证据", settings: "设置" };
+      const VIEWS = { inbox: "收件箱", reqs: "需求", bugs: "Bug", tasks: "任务", release: "发布", memory: "记忆", docs: "文档", evidence: "证据", weekly: "周报", settings: "设置" };
       let currentProject = localStorage.getItem("devcontrol.project") || "";
       let lastState = null;
       // 局域网访问时链接里带 ?token=xxx：存起来、从地址栏抹掉，之后每个请求都带上。
