@@ -1,6 +1,6 @@
 {
   "pathId": "P-009",
-  "requirementId": "FR-026",
+  "requirementId": "FR-027",
   "allowedPaths": [
     "."
   ],
@@ -9,31 +9,33 @@
     "npm test"
   ],
   "budgetLines": 12000,
-  "standards": [
-    {
-      "code": "E_SCOPE_VIOLATION",
-      "rule": "只改任务 scope 内的文件"
-    },
-    {
-      "code": "E_UNREGISTERED_FILES",
-      "rule": "新增文件必须落在 scope 内"
-    },
-    {
-      "code": "E_DIFF_BUDGET",
-      "rule": "单个任务改动不超过 12000 行；超了通常是该拆任务"
-    },
-    {
-      "code": "E_DEP_OR_TEST_TOUCH",
-      "rule": "不动依赖与既有测试；新增测试文件不受限（TDD 是正常动作）"
-    },
-    {
-      "code": "E_TEST_CONFIG_TOUCH",
-      "rule": "不动测试配置（runner、覆盖率阈值之类）"
-    },
-    {
-      "code": "E_LINT_TODO",
-      "rule": "不留 TODO / FIXME / HACK 标记；要记就记进任务标题或 issue"
-    }
-  ],
+  "standards": {
+    "enforced": [
+      "scope"
+    ],
+    "rules": [
+      {
+        "id": "scope",
+        "text": "只改任务 scope 内的文件；新增文件也要落在 scope 内",
+        "enforced": true
+      },
+      {
+        "id": "budget",
+        "text": "单个任务改动不超过 12000 行；超了通常是该拆任务"
+      },
+      {
+        "id": "tests",
+        "text": "不动依赖与既有测试；新增测试文件不受限（TDD 是正常动作）"
+      },
+      {
+        "id": "testconf",
+        "text": "不动测试配置（runner、覆盖率阈值之类）"
+      },
+      {
+        "id": "todo",
+        "text": "不留 TODO / FIXME / HACK 标记；要记就记进任务标题或 issue"
+      }
+    ]
+  },
   "note": "批准时冻结；Agent 只读，改动必须由 Owner 重新批准"
 }
