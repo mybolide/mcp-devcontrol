@@ -156,11 +156,22 @@ export function taskClaim(db, root, input, actor = "agent") {
     if (t.status === "parked") {
       fail("E_PARKED", `${t.id} 已 parked（连续失败 3 次），等 Owner 在控制台 reopen；Agent 不能自己重开`, { taskId: t.id });
     }
+    // 重领时 base_head 不能往后挪。Owner 调预算 / 重新批准会在任务自己的提交**之后**
+    // 产生一个新的契约提交；直接拿最新契约提交当起点，就把任务已有的提交甩出了区间，
+    // 变成「区间内没有本任务的提交」——明明代码早就写完了。
+    let baseHead = p.contract_commit ?? "";
+    if (t.base_head && baseHead) {
+      try {
+        if (isAncestor(root, t.base_head, baseHead)) baseHead = t.base_head;
+      } catch {
+        /* 弱模式或历史异常：保持当前契约提交 */
+      }
+    }
     const res = db
       .prepare(
         "UPDATE tasks SET status='doing', claimed_by=?, claimed_at=?, claim_expires_at=?, claim_fingerprint=?, contract_hash=?, contract_commit=?, base_head=?, updated_at=? WHERE id=? AND status='backlog' AND (claimed_by IS NULL OR claim_expires_at < ?)",
       )
-      .run(actor, now(), exp, fp, p.hash, p.contract_commit ?? "", p.contract_commit ?? "", now(), t.id, now());
+      .run(actor, now(), exp, fp, p.hash, p.contract_commit ?? "", baseHead, now(), t.id, now());
     if (res.changes !== 1) {
       const cur = getTask(db, t.id);
       if (!cur?.claimed_by) {
@@ -325,7 +336,23 @@ export async function taskClose(db, root, input, opts = {}) {
     if (!weak) {
 
     // R0
-    const commits = decorate(root, logCommits(root, `${t.base_head}..HEAD`));
+    // 区间起点要兜一层：Owner 调预算/重批会在任务提交之后产生新的契约提交，
+    // base_head 一旦被推到任务自己的提交之后，「本任务的提交」就凭空消失了。
+    // 所以再往前找一次：本任务最早那条带 Task-Id 的提交的父提交。
+    let rangeBase = t.base_head;
+    try {
+      const firstMine = git(root, ["log", "--reverse", "--format=%H", `--grep=Task-Id: ${t.id}`, "HEAD"])
+        .split("\n")
+        .map((x) => x.trim())
+        .filter(Boolean)[0];
+      if (firstMine) {
+        const parent = git(root, ["rev-parse", `${firstMine}^`]).trim();
+        if (parent && isAncestor(root, parent, rangeBase)) rangeBase = parent;
+      }
+    } catch {
+      /* 取不到就用原来的起点 */
+    }
+    const commits = decorate(root, logCommits(root, `${rangeBase}..HEAD`));
     owned = commits.filter((c) => c.trailer === t.id || (!isApprove(c) && c.patch && db.prepare("SELECT 1 FROM patch_ids WHERE patch_id=? AND task_id=?").get(c.patch, t.id)));
     // git 的时间只到秒，claim/closed 是毫秒：统一按秒比较，否则同一秒内的提交会被判成无主
     const secFloor = (iso) => {
