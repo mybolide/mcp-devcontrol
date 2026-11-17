@@ -280,6 +280,7 @@ devcontrol export   # markdown 快照（只读，别拿去改状态）
 |---|---|
 | `GHOST_DONE` | 库里 done 但没有收口事件（疑似直接改库） |
 | `STALE_CLAIM` / `STALE_CLOSING` | 租约过期 / 收口卡住 |
+| `PARKED_TASK` | 有任务连续失败被 park，等你 reopen 或作废 |
 | `STALE_PATH` / `TEST_CMD_DRIFT` | Path 指向的目录没了 / 冻结的验收命令已过期 |
 | `DOC_DRIFT` / `SKILL_OUTDATED` / `DIRTY_TREE` | 文档变了没登记 / Agent 说明过期 / 工作树脏 |
 | `OVERRIDDEN` / `WEAK_MODE` | Owner 放行过的收口 / 弱模式没有提交链 |

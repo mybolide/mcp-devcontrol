@@ -33,6 +33,17 @@ export function doctor(db, root) {
     if (t.status === "doing" && t.closing_at && Date.now() - Date.parse(t.closing_at) > 60 * 60_000) {
       items.push({ severity: "warn", code: "STALE_CLOSING", taskId: t.id, detail: "close 卡住超过 60 分钟" });
     }
+    if (t.status === "parked") {
+      // parked 不是「坏了」，是「等人决定」。但它可以无限期躺着没人提，所以要在对账里点出来，
+      // 并明确给出两条出路（reopen 重试 / 作废不做）——否则看的人只知道有问题、不知道能做什么。
+      const days = t.updated_at ? Math.floor((Date.now() - Date.parse(t.updated_at)) / 86_400_000) : null;
+      items.push({
+        severity: "warn",
+        code: "PARKED_TASK",
+        taskId: t.id,
+        detail: `${t.id} 已 parked${days !== null ? ` ${days} 天` : ""}，等你定：控制台「任务」里 reopen 重试，或在「需求」里作废`,
+      });
+    }
   }
   for (const p of listPaths(db)) {
     for (const rel of p.allowedPaths) {

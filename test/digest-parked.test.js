@@ -124,3 +124,17 @@ test("真被别人领走时报 E_CLAIMED_BY_OTHER，并说清是谁、到什么�
     (e) => e.code === "E_CLAIMED_BY_OTHER" && /agent-a/.test(e.message),
   );
 });
+
+test("doctor 会把 parked 任务点出来，并给出两条出路（不是只说「有毛病」）", async () => {
+  const { doctor } = await import("../src/report.js");
+  const root = makeRepo({ failTest: true });
+  const { db, reqId } = initFlow(root);
+  const task = newTask(db, root, reqId);
+  await parkTask(db, root, task);
+
+  const hit = doctor(db, root).find((i) => i.code === "PARKED_TASK");
+  assert.ok(hit, "parked 任务可以无限期躺着，对账时必须提一句");
+  assert.equal(hit.severity, "warn", "它不是错误（没坏事），是等人决定");
+  assert.match(hit.detail, /reopen/, "要告诉人能 reopen 重试");
+  assert.match(hit.detail, /作废/, "也要告诉人可以决定不做了");
+});
