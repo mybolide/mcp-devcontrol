@@ -790,6 +790,38 @@
           .join("") || `<tr><td colspan="5" class="empty">还没有收录任何经验</td></tr>`;
       }
 
+      // 周报：数字全部来自后端（含结论句），前端只负责排版——口径只能有一处
+      function renderWeeklyPanel(s) {
+        const panel = $("weekly-panel");
+        if (!panel) return;
+        const w = s.weekly;
+        if (!w) {
+          panel.innerHTML = `<div class="empty">这个项目还没有周报</div>`;
+          return;
+        }
+        const num = (n, bad) => (bad && n ? `<span class="pill bad">${n}</span>` : String(n ?? 0));
+        const dayRows = (w.byDay || [])
+          .map((d) => `<tr><td class="mono">${esc(d.day)}</td><td>${d.created}</td><td>${d.claimed}</td><td>${d.closed}</td><td>${num(d.blocked, true)}</td><td>${d.overridden}</td></tr>`)
+          .join("");
+        const actorRows = (w.byActor || [])
+          .map((a) => `<tr><td class="mono">${esc(a.actor)}</td><td>${a.closed}</td><td>${a.claimed}</td><td>${num(a.blocked, true)}</td></tr>`)
+          .join("");
+        const blocked = (w.topBlocked || [])
+          .map((b) => `<span class="pill parked"><code>${esc(b.code)}</code> × ${b.count}</span>`)
+          .join(" ");
+        panel.innerHTML = `
+          <div class="mu" style="margin-bottom:14px">${esc(w.verdict || "")}</div>
+          <h3>每天</h3>
+          <table><thead><tr><th>日期</th><th>新建</th><th>领取</th><th>收口</th><th>被拦</th><th>放行</th></tr></thead>
+            <tbody>${dayRows || `<tr><td colspan="6" class="empty">这周一条事件都没有</td></tr>`}</tbody></table>
+          <h3 style="margin-top:20px">按人</h3>
+          <table><thead><tr><th>谁</th><th>收口</th><th>领取</th><th>被拦</th></tr></thead>
+            <tbody>${actorRows || `<tr><td colspan="4" class="empty">这周没人领活</td></tr>`}</tbody></table>
+          <h3 style="margin-top:20px">主要拦在哪</h3>
+          <div class="row wrap">${blocked || `<span class="mu">这周没被拦过</span>`}</div>
+        `;
+      }
+
       function renderDocs(s) {
         $("docs").innerHTML = (s.docs || [])
           .map((d) => {
@@ -865,6 +897,7 @@
         renderMemory(s);
         renderDocs(s);
         renderEvidence(s);
+        renderWeeklyPanel(s);
         restoreFocus(snap);
         return s;
       }
