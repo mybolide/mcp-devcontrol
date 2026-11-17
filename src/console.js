@@ -1,6 +1,8 @@
 // devcontrol — Owner 控制台（本地 web，127.0.0.1，Owner 动作只在这里）
 import http from "node:http";
 import fs from "node:fs";
+import os from "node:os";
+import crypto from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { readConsoleMeta } from "./console-boot.js";
@@ -60,6 +62,10 @@ export async function startConsole(args) {
   const root = resolveRoot();
   const portIdx = args.indexOf("--port");
   const port = Number(portIdx >= 0 ? args[portIdx + 1] : process.env.DEVCONTROL_PORT ?? 7373);
+  // 默认只听回环：这台机器之外谁也连不上。Owner 有两台机器时才显式 --host 打开局域网。
+  const hostIdx = args.indexOf("--host");
+  const bindHost = String(hostIdx >= 0 ? args[hostIdx + 1] : process.env.DEVCONTROL_HOST ?? "127.0.0.1").trim() || "127.0.0.1";
+  const IS_LOOPBACK_BIND = /^(127\.0\.0\.1|localhost|::1)$/i.test(bindHost);
   if (args.includes("--stop")) {
     const meta = await readConsoleMeta(port);
     if (!meta) {
@@ -130,7 +136,34 @@ export async function startConsole(args) {
   };
 
   const LOOPBACK = /^(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/;
-  const token = process.env.DEVCONTROL_OWNER_TOKEN ?? null;
+  /**
+   * 绑到局域网时，「谁能连」必须由令牌回答，而不是由网线回答。
+   * 非回环绑定一律要令牌：没给就现生成一个，打印在启动日志里。
+   * 宁可多一步「复制这个链接」，也不要出现一个谁打开都能批准需求的页面。
+   */
+  let token = process.env.DEVCONTROL_OWNER_TOKEN ?? null;
+  let generatedToken = false;
+  if (!IS_LOOPBACK_BIND && !token) {
+    token = crypto.randomBytes(18).toString("base64url");
+    generatedToken = true;
+  }
+  // 允许的 Host：回环永远允许；绑了局域网就把本机各网卡 IP 一起放进来（挡 DNS rebinding 用）
+  const allowedHosts = new Set();
+  {
+    const withPort = (h) => `${h}:${port}`;
+    for (const h of ["127.0.0.1", "localhost", "[::1]"]) allowedHosts.add(withPort(h));
+    if (!IS_LOOPBACK_BIND) {
+      const ips = new Set([bindHost]);
+      if (bindHost === "0.0.0.0" || bindHost === "::") {
+        ips.clear();
+        for (const list of Object.values(os.networkInterfaces())) {
+          for (const info of list ?? []) if (info.family === "IPv4" && !info.internal) ips.add(info.address);
+        }
+      }
+      for (const ip of ips) if (ip) allowedHosts.add(withPort(ip));
+    }
+  }
+  const hostAllowed = (h) => LOOPBACK.test(String(h ?? "")) || allowedHosts.has(String(h ?? "").toLowerCase());
   /**
    * 本地控制台的访问闸门：
    * - Host 必须是回环地址（挡 DNS rebinding）
@@ -140,16 +173,38 @@ export async function startConsole(args) {
    */
   const guard = (req) => {
     const host = String(req.headers.host ?? "");
-    if (!LOOPBACK.test(host)) return { code: 403, body: { ok: false, code: "E_FORBIDDEN", message: "Host 不是回环地址" } };
+    if (!hostAllowed(host)) {
+      return {
+        code: 403,
+        body: { ok: false, code: "E_FORBIDDEN", message: `Host 不被信任：${host}（只有回环，或 devcontrol serve --host 指定的地址才认）` },
+      };
+    }
     const origin = req.headers.origin;
-    if (origin && !new RegExp(`^https?://(127\\.0\\.0\\.1|localhost|\\[::1\]):${port}$`).test(origin)) {
-      return { code: 403, body: { ok: false, code: "E_FORBIDDEN", message: "跨站来源" } };
+    if (origin) {
+      let originHost = "";
+      try {
+        originHost = new URL(origin).host;
+      } catch {
+        originHost = "";
+      }
+      if (!hostAllowed(originHost)) {
+        return { code: 403, body: { ok: false, code: "E_FORBIDDEN", message: `跨站来源：${origin}` } };
+      }
     }
     if (req.method === "POST" && !String(req.headers["content-type"] ?? "").includes("application/json")) {
       return { code: 415, body: { ok: false, code: "E_FORBIDDEN", message: "只接受 application/json" } };
     }
     if (token && req.headers["x-owner-token"] !== token) {
-      return { code: 403, body: { ok: false, code: "E_FORBIDDEN", message: "缺少 X-Owner-Token" } };
+      const had = Boolean(req.headers["x-owner-token"]);
+      return {
+        code: 403,
+        body: {
+          ok: false,
+          code: "E_FORBIDDEN",
+          message: had ? "令牌不对或已失效" : "缺少令牌（这个控制台对局域网开放，必须带令牌）",
+          hint: "用 devcontrol serve 启动时打印的那条带 ?token= 的链接打开；令牌也可以由 DEVCONTROL_OWNER_TOKEN 固定。",
+        },
+      };
     }
     return null;
   };
@@ -192,7 +247,7 @@ export async function startConsole(args) {
       return json(200, {
         project: { root: active.root, name: active.name },
         projects: projects.map((p) => ({ name: p.name, root: p.root, current: p.root === active.root })),
-        digest: bootstrap(adb, active.root, { console: `http://127.0.0.1:${port}/` }),
+        digest: bootstrap(adb, active.root, { console: `http://${IS_LOOPBACK_BIND ? "127.0.0.1" : bindHost}:${port}/` }),
         requirements: listReqs(adb),
         paths: listPaths(adb),
         tasks: listTasks(adb),
@@ -305,8 +360,24 @@ export async function startConsole(args) {
       }
       return done(0);
     });
-    server.listen(port, "127.0.0.1", () => {
+    server.listen(port, bindHost, () => {
+      const lanUrls = [];
+      if (!IS_LOOPBACK_BIND) {
+        if (bindHost === "0.0.0.0" || bindHost === "::") {
+          for (const list of Object.values(os.networkInterfaces())) {
+            for (const info of list ?? []) if (info.family === "IPv4" && !info.internal) lanUrls.push(`http://${info.address}:${port}`);
+          }
+        } else {
+          lanUrls.push(`http://${bindHost}:${port}`);
+        }
+      }
       console.log(`devcontrol 控制台：http://127.0.0.1:${port}`);
+      if (!IS_LOOPBACK_BIND && generatedToken) {
+        for (const u of lanUrls) console.log(`  局域网（带令牌，别外传）：${u}/?token=${token}`);
+        console.log("  这个链接等同于 Owner 身份：谁拿到谁就能批准需求、放行门禁。用完 devcontrol serve --stop 就断。");
+      } else if (!IS_LOOPBACK_BIND) {
+        for (const u of lanUrls) console.log(`  局域网：${u}/?token=<你设的 DEVCONTROL_OWNER_TOKEN>`);
+      }
       console.log(`项目：${root}`);
       if (refreshed.length) {
         console.log(`Agent 说明已同步：${refreshed.join("、")}`);

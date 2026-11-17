@@ -113,6 +113,28 @@ devcontrol serve --stop     # 停掉本项目自己的控制台（不会误杀�
 
 控制台是六个视图（侧栏切换）：**收件箱**（待批准需求 / 待回答提问 / 待裁决 Bug / parked 任务 / 待提炼记忆）、**任务与覆盖**、**发布**、**记忆**、**文档**、**证据**（每次重跑的命令/退出码/HEAD/指纹）。
 
+### 3.2b 两台电脑：局域网访问控制台
+
+默认只听回环（`127.0.0.1`），别的机器连不上。要从另一台电脑打开：
+
+```bash
+devcontrol serve --host 0.0.0.0
+# devcontrol 控制台：http://127.0.0.1:7373
+#   局域网（带令牌，别外传）：http://192.168.0.107:7373/?token=gaZzTM6s8xTjnpjWIAKFEbU5
+```
+
+那个页面上每个按钮都是 Owner 的权力（批准需求冻契约、放行门禁、调预算、发布打 tag），
+而且它没有登录。所以绑到局域网时**必须**带令牌：
+
+- 没设 `DEVCONTROL_OWNER_TOKEN` 就现生成一个，打印成带 `?token=` 的链接——**那条链接就是钥匙**，等同于你的身份。
+- 想固定下来（多台机器不用每次换链接）：`DEVCONTROL_OWNER_TOKEN=xxx devcontrol serve --host 0.0.0.0`。
+- 页面把令牌存 `localStorage` 并放进 `X-Owner-Token` 头，不用 cookie——别的站点发的请求带不上它，CSRF 不成立。
+- Host 只认回环和本机网卡地址，陌生 Host 一律 403（挡 DNS rebinding），令牌对也不行。
+- 用完 `devcontrol serve --stop`；令牌只活在这个进程里。
+
+不想开端口的话，SSH 隧道同样可行，且不暴露局域网：
+`ssh -L 7373:127.0.0.1:7373 you@192.168.0.107`，然后在本机开 `http://127.0.0.1:7373/`。
+
 ### 3.3 控制台由 MCP 全权托管（和 v5 一样，人不用启动也不用重启）
 
 MCP 连接就是控制台的生命周期触发器。`runMcp` 启动时调用 `ensureConsole(root)`：
@@ -280,5 +302,5 @@ devcontrol export   # markdown 快照（只读，别拿去改状态）
 - 新增文件必须在 `task.scope` 里**显式列出**，或由 Path 的 `allow_new_files` 放行；`allow_new_files` 目前只能在建 Path 时设定（控制台没给开关）。
 - 默认不用 worktree 隔离开发，只有 R2 重跑用临时 worktree。
 - 没有审批链、没有租约恢复、没有多 Owner。Owner 是单人。
-- 控制台只有本地 HTTP，不做登录、不做远程访问（`127.0.0.1`）。
+- 不做账号体系：控制台没有用户名/密码/多角色。跨机器访问靠「一次性令牌」，不是靠登录；多 Owner 不支持。
 - `amend` 把 Path 打回 `draft` 时，控制台只提示、不提供一键重批按钮（用 `approve` 重建）。

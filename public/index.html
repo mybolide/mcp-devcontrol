@@ -401,13 +401,35 @@
       };
       const VIEWS = { inbox: "收件箱", reqs: "需求", bugs: "Bug", tasks: "任务", release: "发布", memory: "记忆", docs: "文档", evidence: "证据", settings: "设置" };
       let currentProject = localStorage.getItem("devcontrol.project") || "";
+      // 局域网访问时链接里带 ?token=xxx：存起来、从地址栏抹掉，之后每个请求都带上。
+      // 放 localStorage 而不是 cookie，是为了让别的站点发起的请求带不上它（这样 CSRF 就不成立）。
+      {
+        const urlToken = new URLSearchParams(location.search).get("token");
+        if (urlToken) {
+          localStorage.setItem("devcontrol.token", urlToken);
+          history.replaceState(null, "", location.pathname + location.hash);
+        }
+      }
+      const ownerToken = localStorage.getItem("devcontrol.token") || "";
       const STATUS_TEXT = { backlog: "待办", doing: "进行中", done: "已完成", parked: "搁置", new: "待裁决", fixing: "修复中", closed: "已关闭", draft: "草稿", approved: "已批准", building: "开发中", shipped: "已发布" };
       const KIND_TEXT = { feature: "功能", bugfix: "修复", chore: "杂务", test: "测试" };
       const tag = (s) => `<span class="pill ${s === "doing" ? "doing" : s === "done" ? "done" : s === "parked" ? "parked" : ""}">${esc(STATUS_TEXT[s] ?? s)}</span>`;
 
       async function api(path, body) {
-        const res = await fetch(path, body ? { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) } : {});
-        return res.json();
+        const headers = ownerToken ? { "x-owner-token": ownerToken } : {};
+        if (body) headers["content-type"] = "application/json";
+        const res = await fetch(path, body ? { method: "POST", headers, body: JSON.stringify(body) } : { headers });
+        const json = await res.json().catch(() => ({ ok: false, code: "E_BAD_RESPONSE", message: "服务端返回的不是 JSON" }));
+        // 令牌不对时别只给一个码：人要知道去哪儿拿那条带令牌的链接
+        if (json?.code === "E_FORBIDDEN") {
+          json.message = json.message ?? "没有权限";
+          json.hint =
+            json.hint ??
+            (ownerToken
+              ? "令牌不对或已失效。用 devcontrol serve 启动时打印的那条带 ?token= 的链接重新打开。"
+              : "这个控制台需要令牌：用 devcontrol serve 启动时打印的那条带 ?token= 的链接打开。");
+        }
+        return json;
       }
       async function owner(action, payload) {
         const res = await api("/api/owner", { action, payload, project: currentProject || undefined });
