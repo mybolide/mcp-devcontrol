@@ -154,6 +154,10 @@
         border-color: #e0a3aa; background: #fdf7f7;
       }
       .field .counter { font-size: 11.5px; color: #6b7c92; margin-top: 4px; text-align: right; font-family: var(--font-mono); }
+      /* 周报是纯数字表：数字右对齐 + 等宽数位，一列对下来才扫得动 */
+      #weekly-panel th:not(:first-child), #weekly-panel td:not(:first-child) { text-align: right; font-variant-numeric: tabular-nums; }
+      #weekly-panel th:first-child, #weekly-panel td:first-child { width: 34%; }
+      #weekly-panel .pill { display: inline-block; }
       .sheet-foot { display: flex; justify-content: flex-end; gap: 9px; padding: 16px 24px 20px; border-top: 1px solid #eef1f5; margin-top: 6px; background: #fbfcfe; }
       .sheet-foot .btn { min-width: 92px; justify-content: center; }
       @media (max-width: 900px) {

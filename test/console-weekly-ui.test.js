@@ -110,3 +110,7 @@ test("后端把结论句一起给：verdict 与 CLI 同源", async () => {
     srv.stop();
   }
 });
+test("数字列右对齐 + 等宽数位：六列对下来才扫得动", () => {
+  assert.match(HTML, /#weekly-panel th:not\(:first-child\)[^{]*\{[^}]*text-align:\s*right/, "数字列还左对齐");
+  assert.match(HTML, /#weekly-panel[^{]*\{[^}]*tabular-nums/, "没开等宽数位，1 和 0 宽度不同，列会歪");
+});
