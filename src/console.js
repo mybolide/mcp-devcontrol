@@ -18,6 +18,7 @@ import {
   pathRetest,
   taskAdjust,
   taskReopen,
+  taskRank,
   reqAbandon,
   bugDecide,
   answer,
@@ -41,7 +42,30 @@ import { listReleases, shipRelease } from "./release.js";
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(HERE, "..", "public");
 
-export const OWNER_ACTIONS = {
+/** 每个 Owner 动作的必填参数。缺了就报 INVALID_ARGUMENT，别让 SQLite 去抛绑定错误。 */
+const REQUIRED = {
+  intake: ["title"],
+  approve: ["requirementId", "pathId"],
+  amend: ["requirementId"],
+  adjust: ["taskId"],
+  reopen: ["taskId"],
+  abandon: ["requirementId"],
+  decide: ["bugId"],
+  answer: ["questionId"],
+  override: ["taskId"],
+  handoff: ["taskId"],
+  "task.add": ["requirementId", "pathId", "title"],
+  "task.rank": ["taskId"],
+  "path.adjust": ["pathId"],
+  "path.retest": ["pathId"],
+  "memory.promote": ["id"],
+  "memory.edit": ["id"],
+  "memory.drop": ["id"],
+  "release.ship": ["id"],
+  "settings.save": ["settings"],
+};
+
+const RAW_ACTIONS = {
   intake: (db, root, p) => reqIntake(db, root, p),
   approve: (db, root, p) => reqApprove(db, root, p),
   amend: (db, root, p) => reqAmend(db, root, p),
@@ -57,12 +81,34 @@ export const OWNER_ACTIONS = {
   // Owner 直接下单：单人场景里人心里已经知道要做什么，没必要非得等 Agent 拆出机器标题。
   // 校验走的是同一个 taskCreate —— 需求没批准、验收不在白名单，Owner 也一样过不去。
   "task.add": (db, root, p) => taskCreate(db, root, p),
+  "task.rank": (db, root, p) => taskRank(db, p),
   "memory.promote": async (db, root, p) => promoteMemory(memoryConfig(process.env, root), p.id),
   "memory.edit": async (db, root, p) => editMemory(memoryConfig(process.env, root), p.id, { title: p.title, body: p.body }, { promote: true }),
   "memory.drop": (db, root, p) => ({ dropped: softDeleteMemory(memoryConfig(process.env, root), p.id) }),
   "release.ship": (db, root, p) => shipRelease(db, { id: p.id, root }),
   "settings.save": (db, root, p) => writeSettings(root, p.settings ?? p),
 };
+
+/**
+ * 参数守卫包在最外层：缺参数时抛领域错误，而不是把
+ * "ERR_INVALID_ARG_TYPE: Provided value cannot be bound to SQLite parameter 1"
+ * 这种内部错误甩到页面上。和 MCP 侧的做法保持一致。
+ */
+function withRequired(fn, params) {
+  return (db, root, p) => {
+    const missing = params.filter((k) => p?.[k] === undefined || p?.[k] === null || p?.[k] === "");
+    if (missing.length) {
+      const err = new Error(`${missing.join("、")} 不能为空`);
+      err.code = "INVALID_ARGUMENT";
+      throw err;
+    }
+    return fn(db, root, p);
+  };
+}
+
+export const OWNER_ACTIONS = Object.fromEntries(
+  Object.entries(RAW_ACTIONS).map(([name, fn]) => [name, withRequired(fn, REQUIRED[name] ?? [])]),
+);
 
 export async function startConsole(args) {
   const root = resolveRoot();

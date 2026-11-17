@@ -44,6 +44,14 @@ export const CAPABILITIES = [
     console: "task.add",
   },
   {
+    name: "调任务顺序（置顶）",
+    // Backlog 的顺序就是优先级。不搞 priority 标签体系——顺序本身够了。
+    action: null,
+    mcp: null,
+    cli: null,
+    console: "task.rank",
+  },
+  {
     name: "收口",
     action: "task.close",
     mcp: ["id", "resolvedBy"],

@@ -450,6 +450,35 @@ export function reqAbandon(db, root, input) {
   });
 }
 
+/**
+ * Owner 调任务顺序。Backlog 的顺序就是优先级——Jira 也是这么干的，不另搞优先级标签。
+ *
+ * mode:
+ *   "top"  置顶（排到所有 backlog 之前）
+ *   "rank" 直接给一个数字（高级用法，比如排到某条之后）
+ */
+export function taskRank(db, input) {
+  return tx(db, () => {
+    const t = getTask(db, input.taskId);
+    if (!t) fail("NOT_FOUND", `任务不存在：${input.taskId}`);
+    if (!["backlog", "parked"].includes(t.status)) {
+      fail("E_ILLEGAL_TRANSITION", `${t.id} 当前 ${t.status}，只有还没开工的任务才谈得上排序`);
+    }
+    let rank;
+    if (input.mode === "top") {
+      const min = db.prepare("SELECT COALESCE(MIN(rank), 0) m FROM tasks WHERE status='backlog'").get().m;
+      rank = min - 1;
+    } else if (Number.isFinite(Number(input.rank))) {
+      rank = Number(input.rank);
+    } else {
+      fail("E_CONTRACT", "要么给 mode='top'，要么给一个数字 rank");
+    }
+    db.prepare("UPDATE tasks SET rank=?, updated_at=? WHERE id=?").run(rank, now(), t.id);
+    logEvent(db, { channel: "owner", action: "task.rank", taskId: t.id, detail: `rank=${rank}` });
+    return { taskId: t.id, rank };
+  });
+}
+
 export function bugDecide(db, input) {
   return tx(db, () => {
     const b = getBug(db, input.bugId);

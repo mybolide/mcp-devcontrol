@@ -28,7 +28,12 @@ export function coverage(db) {
 /** 依赖已满足的 backlog（内核按依赖排序，而不是按 ID 抓第一个） */
 export function claimableTasks(db, tasks) {
   const backlog = tasks.filter((t) => t.status === "backlog");
-  const ok = backlog.filter((t) => t.dependsOn.every((dep) => getTask(db, dep)?.status === "done"));
+  // 顺序就是优先级：Owner 可以把某条置顶（rank 更小），内核挑活时先看它。
+  // 同 rank 再按 ID，保证结果稳定——不然每次 next 说的可能不是同一件事。
+  const byRank = (a, b) => (a.rank ?? 0) - (b.rank ?? 0) || String(a.id).localeCompare(String(b.id));
+  const ok = backlog
+    .filter((t) => t.dependsOn.every((dep) => getTask(db, dep)?.status === "done"))
+    .sort(byRank);
   const blocked = backlog.filter((t) => !ok.includes(t));
   return { ok, blocked };
 }

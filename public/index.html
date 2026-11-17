@@ -676,13 +676,19 @@
         return `<tr><td class="mono nw">${esc(t.id)}</td><td class="nw">${esc(KIND_TEXT[t.kind] ?? t.kind)}</td><td>${esc(t.title)}</td><td class="nw">${tag(t.status)}</td>
           <td class="mu">${t.acceptance.map((a) => esc(a.assertion)).join("<br>")}</td>
           <td class="nw"><div class="row inline">
+            ${t.status === "backlog" || t.status === "parked" ? `<button class="btn" data-rank="${t.id}" title="置顶：内核挑活时会先看它（顺序就是优先级）">置顶</button>` : ""}
             <button class="btn" data-handoff="${t.id}">交接</button>
             ${t.status === "done" || t.status === "parked" ? `<button class="btn danger" data-reopen="${t.id}">打回</button>` : ""}
             ${t.status === "doing" ? `<button class="btn danger" data-override="${t.id}">放行</button>` : ""}
           </div></td></tr>`;
       }
       function renderTasks(s) {
-        $("tasks").innerHTML = s.tasks.map(taskRow).join("") || `<tr><td colspan="6" class="empty">还没有任务</td></tr>`;
+        // 顺序就是优先级：进行中在最上，待办按 rank，其余按状态收在后面
+        const ORDER = { doing: 0, backlog: 1, parked: 2, done: 3, abandoned: 4 };
+        const rows = [...s.tasks].sort(
+          (a, b) => (ORDER[a.status] ?? 9) - (ORDER[b.status] ?? 9) || (a.rank ?? 0) - (b.rank ?? 0) || String(a.id).localeCompare(String(b.id)),
+        );
+        $("tasks").innerHTML = rows.map(taskRow).join("") || `<tr><td colspan="6" class="empty">还没有任务</td></tr>`;
         $("n-tasks").textContent = String(s.tasks.length);
       }
 
@@ -888,6 +894,7 @@
           return res;
         }
         if (b.id === "reload-settings") return renderSettings();
+        if (b.dataset.rank) return owner("task.rank", { taskId: b.dataset.rank, mode: "top" });
         if (b.id === "new-task") {
           // Owner 直接下单：单人场景里人心里已经知道要做什么，
           // 不必非得先提需求、再等 Agent 用它的措辞拆出「覆盖验收：npm test :: exit==0」这种标题。

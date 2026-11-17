@@ -3,7 +3,7 @@ import { DatabaseSync } from "node:sqlite";
 import fs from "node:fs";
 import path from "node:path";
 
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 export const DATA_DIR = ".devcontrol";
 export const DB_FILE = "state.db";
 
@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS tasks(
   kind TEXT NOT NULL, title TEXT NOT NULL, status TEXT NOT NULL,
   scope_json TEXT NOT NULL, acceptance_json TEXT NOT NULL, depends_on_json TEXT NOT NULL DEFAULT '[]',
   budget_lines INTEGER NOT NULL DEFAULT 400, changed_lines INTEGER NOT NULL DEFAULT 0,
+  rank INTEGER NOT NULL DEFAULT 0,
   base_head TEXT NOT NULL, contract_hash TEXT NOT NULL, contract_commit TEXT NOT NULL,
   claimed_by TEXT, claimed_at TEXT, claim_expires_at TEXT,
   closing_at TEXT, closing_token TEXT, claim_fingerprint TEXT,
@@ -107,6 +108,10 @@ function migrate(db) {
     for (const [name, type] of [["git_tag", "TEXT"], ["git_sha", "TEXT"], ["note", "TEXT"]]) {
       if (!c.has(name)) db.exec(`ALTER TABLE releases ADD COLUMN ${name} ${type}`);
     }
+  }
+  // v3 → v4：任务要有先后顺序（Backlog 的顺序就是优先级）
+  if (from < 4 && !cols("tasks").has("rank")) {
+    db.exec("ALTER TABLE tasks ADD COLUMN rank INTEGER NOT NULL DEFAULT 0");
   }
   if (!cur) db.prepare("INSERT INTO meta(key,value) VALUES('schema_version',?)").run(String(SCHEMA_VERSION));
   else db.prepare("UPDATE meta SET value=? WHERE key='schema_version'").run(String(SCHEMA_VERSION));
