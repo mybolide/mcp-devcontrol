@@ -99,3 +99,42 @@ function awaitImport() {
   return mod;
 }
 mod = await import("../src/release.js");
+
+// 真机上踩到的：crm-suite 里 `release plan --tasks T-001,T-002`（顺手省了发布号），
+// 内核回的是「发布不存在：--tasks」——把开关本身当成了编号。
+// 缺的是发布号，就得说缺发布号，并且把能用的发布号摆出来。
+test("省略发布号时：说缺发布号，而不是把 --tasks 当编号", () => {
+  const { root } = setup();
+  const out = run(root, ["release", "plan", "--tasks", "T-001,T-002"]);
+  assert.equal(out.code, 2, "用法错该是退出码 2");
+  const body = JSON.parse(out.stdout);
+  assert.equal(body.ok, false);
+  assert.match(body.message, /缺少发布号/, "要说清缺的是发布号");
+  assert.doesNotMatch(body.message, /--tasks/, "不能把开关本身当成编号报出来");
+  assert.deepEqual(body.data.known, ["R-001"], "得把真实存在的发布号摆出来");
+  assert.match(body.hint, /release plan R-001/, "还要给一条能直接抄的命令");
+});
+
+test("省略发布号但有位置参数任务号：一样说缺发布号", () => {
+  const { root } = setup();
+  const out = run(root, ["release", "plan", "T-001"]);
+  assert.equal(out.code, 2);
+  assert.match(JSON.parse(out.stdout).message, /缺少发布号/);
+});
+
+test("一个发布都没有时，提示先去 create", () => {
+  const root = makeRepo();
+  initFlow(root);
+  const out = run(root, ["release", "plan", "--tasks", "T-001"]);
+  assert.equal(out.code, 2);
+  const body = JSON.parse(out.stdout);
+  assert.deepEqual(body.data.known, []);
+  assert.match(body.hint, /release create/);
+});
+
+test("发布号写在任务号后面也认（位置参数不挑顺序）", () => {
+  const { root } = setup();
+  const out = run(root, ["release", "plan", "T-001", "T-002", "R-001"]);
+  assert.equal(out.code, 0, out.stderr);
+  assert.deepEqual(JSON.parse(out.stdout).tasks.map((t) => t.id).sort(), ["T-001", "T-002"]);
+});

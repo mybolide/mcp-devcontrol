@@ -1068,13 +1068,40 @@ export function cmdRelease(args) {
       return 0;
     }
     if (sub === "plan") {
-      const id = args[1];
+      // 位置参数里认两样东西：发布号（R-…）与任务号（T-…）。开关要先剔掉——
+      // 早先直接取 args[1] 当发布号，`release plan --tasks T-001` 就会把
+      // 开关字符串本身当成编号，回一句「发布不存在：--tasks」，
+      // 人只会以为发布号写错了，而真正的问题是压根没给发布号。
+      const positional = [];
+      for (let i = 1; i < args.length; i += 1) {
+        const a = args[i];
+        if (a.startsWith("--")) {
+          i += 1; // 跳过开关的值，值由 flags() 收
+          continue;
+        }
+        positional.push(a);
+      }
+      const id = positional.find((a) => /^R-/.test(a));
+      if (!id) {
+        const known = listReleases(db).map((r) => r.id);
+        const first = known[0];
+        return failCli(
+          "缺少发布号：release plan 要知道给哪个发布排任务",
+          "E_USAGE",
+          {
+            known,
+            hint: first
+              ? `照抄这条：devcontrol release plan ${first} --tasks T-001`
+              : '还没有发布：先 devcontrol release create "v0.1"',
+          },
+        );
+      }
       // 三种写法都认：`plan R-001 T-003 T-004`（README 里的）、`--tasks T-003,T-004`、
       // 以及 `--tasks T-003 --tasks T-004`。早先只认第一种，逗号串会被整段当成一个编号，
       // 报错只说「任务不存在：T-003,T-004」——人看了只会怀疑任务号写错了。
       const tasks = [
         ...new Set(
-          [...args.slice(2), ...flags("tasks")]
+          [...positional, ...flags("tasks")]
             .flatMap((a) => String(a).split(/[\s,]+/))
             .filter((a) => /^T-/.test(a)),
         ),
