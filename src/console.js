@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { readConsoleMeta } from "./console-boot.js";
-import { dbPath, openDb } from "./db.js";
+import { dataDir, dbPath, openDb } from "./db.js";
 import { readContract } from "./contract.js";
 import { taskCreate } from "./gates.js";
 import { VERSION } from "./protocol.js";
@@ -429,7 +429,8 @@ export async function startConsole(args) {
       } else {
         console.log(`端口 ${port} 被别的程序占着。换个端口：devcontrol serve --port ${port + 1}`);
       }
-      return done(0);
+      // 起不来就别假装成功：脚本会看退出码决定要不要继续（T-098）
+      return done(1);
     });
     server.listen(port, bindHost, () => {
       const lanUrls = [];
@@ -441,6 +442,16 @@ export async function startConsole(args) {
         } else {
           lanUrls.push(`http://${bindHost}:${port}`);
         }
+      }
+      // 落一个 meta 文件：`devcontrol status` 的 console 字段靠它，
+      // 不然每个 Agent 都得自己猜端口（T-098）。
+      try {
+        fs.writeFileSync(
+          path.join(dataDir(root), "console.json"),
+          JSON.stringify({ port, root, pid: process.pid, at: new Date().toISOString() }),
+        );
+      } catch {
+        /* 写不了就算了，不影响控制台本身 */
       }
       console.log(`devcontrol 控制台：http://127.0.0.1:${port}`);
       if (!IS_LOOPBACK_BIND) {

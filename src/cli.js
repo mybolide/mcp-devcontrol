@@ -249,9 +249,8 @@ export function cmdInit(args) {
 - 模式：${gitMode ? "git（完整门禁）" : "weak（无 git：只跑验收，无归属校验）"}
 ${unignored ? "- .gitignore：已移除整体忽略 .devcontrol/ 的规则（契约必须能进 git）\n" : ""}- Path 草稿 ${created} 条（都还是 draft，需要 Owner 批准）
 - 客户端配置：.mcp.json ${label(wroteMcp)} / .cursor/mcp.json ${label(wroteCursor)} / opencode.json ${label(wroteOpencode)}
-- Agent 说明：${SKILL_REL}（规范）+ CLAUDE.md / .cursor/rules / AGENTS.md（指针）
-- 控制台：随 MCP 连接自动启动并复用（Owner 也可以手动 devcontrol serve）
-- 托管文件：${initCommit ? `已提交 chore(devcontrol): init @ ${initCommit.slice(0, 8)}` : "无变化"}
+- Agent 说明：${Object.keys(agentFiles).join(" / ")}（${SKILL_REL} 是规范，其余是指针）
+${noMcp ? "" : "- 控制台：随 MCP 连接自动启动并复用（Owner 也可以手动 devcontrol serve）\n"}- 托管文件：${initCommit ? `已提交 chore(devcontrol): init @ ${initCommit.slice(0, 8)}` : "无变化"}
 ${noMcp ? "- 纯 CLI 模式：没有注册 MCP，Agent 直接用 devcontrol status / commit / close；需要控制台时自己 devcontrol serve" : `- Codex 需要手动加：\n${CODEX_SNIPPET}`}`);
   return 0;
 }
@@ -427,6 +426,22 @@ export function cmdCommit(args) {
 }
 
 /** 纪律三数：内核有没有真的拦住、返工、被绕过 */
+/**
+ * 控制台在不在跑、在哪个端口。
+ *
+ * 读 meta 文件而不是 HTTP 探测：status 是高频命令，为了一个字段等 400ms 不值当。
+ * pid 死了就当作没起（进程崩溃留下的文件不能当成活的）。
+ */
+function liveConsole(root) {
+  try {
+    const meta = JSON.parse(fs.readFileSync(path.join(dataDir(root), "console.json"), "utf8"));
+    process.kill(meta.pid, 0);
+    return `http://127.0.0.1:${meta.port}/`;
+  } catch {
+    return null;
+  }
+}
+
 export function cmdStats() {
   const root = resolveRoot();
   const db = openDb(root);
@@ -681,7 +696,7 @@ export async function cmdStatus() {
   const db = openDb(root);
   const doing = db.prepare("SELECT * FROM tasks WHERE status='doing' ORDER BY id LIMIT 1").get();
   const memory = await recallMemories(root, doing ? mapTask(doing) : null);
-  console.log(JSON.stringify(bootstrap(db, root, { memories: memory.memories }), null, 2));
+  console.log(JSON.stringify(bootstrap(db, root, { console: liveConsole(root), memories: memory.memories }), null, 2));
   return 0;
 }
 
@@ -913,6 +928,15 @@ export function cmdEvidence(args) {
 export async function main(argv) {
   const [cmd, ...args] = argv;
   try {
+    // 没有项目库就别往下走：openDb 会凭空建一个空库，用户看到「0 个任务」
+    // 还以为自己初始化过了。init / help / 版本号天然不需要库（T-098）。
+    const NEEDS_DB = new Set(["run", "commit", "renew", "next", "task", "flow", "close", "status", "bootstrap", "stats", "report", "memory", "doctor", "evidence", "doc", "release", "export", "serve", "mcp"]);
+    if (NEEDS_DB.has(cmd)) {
+      const root = resolveRoot();
+      if (!fs.existsSync(dbPath(root))) {
+        return failCli(`这里还没有 devcontrol 项目（${root}）`, "E_NOT_INIT");
+      }
+    }
     switch (cmd) {
       case "init":
         return cmdInit(args);
