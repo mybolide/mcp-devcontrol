@@ -36,6 +36,14 @@ export const CAPABILITIES = [
     console: null,
   },
   {
+    name: "Owner 直接建任务",
+    // Agent 侧没有对应动作：它是「下单」，不是「干活」。校验仍然走 taskCreate。
+    action: null,
+    mcp: null,
+    cli: null,
+    console: "task.add",
+  },
+  {
     name: "收口",
     action: "task.close",
     mcp: ["id", "resolvedBy"],

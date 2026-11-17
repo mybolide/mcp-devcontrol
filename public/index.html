@@ -237,6 +237,7 @@
           <span class="eyebrow">TASKS</span>
           <h1>任务与覆盖</h1>
           <p class="sub">下一步由内核排序：先收口、再领依赖已满足的、再补拆没有被任务覆盖的验收。</p>
+          <button class="btn primary" id="new-task" style="margin-top:10px">＋ 新建任务</button>
         </div>
         <div class="panel">
           <table>
@@ -401,6 +402,7 @@
       };
       const VIEWS = { inbox: "收件箱", reqs: "需求", bugs: "Bug", tasks: "任务", release: "发布", memory: "记忆", docs: "文档", evidence: "证据", settings: "设置" };
       let currentProject = localStorage.getItem("devcontrol.project") || "";
+      let lastState = null;
       // 局域网访问时链接里带 ?token=xxx：存起来、从地址栏抹掉，之后每个请求都带上。
       // 放 localStorage 而不是 cookie，是为了让别的站点发起的请求带不上它（这样 CSRF 就不成立）。
       {
@@ -821,6 +823,7 @@
         // 数据没变就不重绘：否则每 4 秒把正在输入的内容和滚动位置冲掉
         if (!force && sig === lastSig) return s;
         lastSig = sig;
+        lastState = s;
         const snap = focusSnapshot();
         if (s.project?.root) currentProject = s.project.root;
         const switcher = $("project-switch");
@@ -885,6 +888,45 @@
           return res;
         }
         if (b.id === "reload-settings") return renderSettings();
+        if (b.id === "new-task") {
+          // Owner 直接下单：单人场景里人心里已经知道要做什么，
+          // 不必非得先提需求、再等 Agent 用它的措辞拆出「覆盖验收：npm test :: exit==0」这种标题。
+          const reqs = (lastState?.requirements ?? []).filter((r) => ["approved", "building"].includes(r.status));
+          const paths = (lastState?.paths ?? []).filter((x) => x.status === "approved");
+          if (!reqs.length || !paths.length) {
+            return show({ ok: false, message: "还没有已批准的需求或 Path：先在「收件箱」收需求并批准" }, "new-task");
+          }
+          const pth = paths[0];
+          const cmds = pth.testCmds ?? [];
+          const r = await openSheet({
+            title: "新建任务",
+            desc: "你下单，Agent 去领。校验和 Agent 建任务时一样：需求要已批准、验收命令要在契约白名单里。",
+            okText: "建任务",
+            fields: [
+              { name: "requirementId", label: "挂在哪个需求下", type: "select", value: reqs[0].id, options: reqs.map((x) => ({ value: x.id, label: `${x.id} · ${x.title}` })) },
+              { name: "pathId", label: "Path", type: "select", value: pth.id, options: paths.map((x) => ({ value: x.id, label: `${x.id} · ${(x.allowedPaths || []).join(",") || "整个仓库"}` })) },
+              { name: "title", label: "要做什么", type: "text", minLength: 4, placeholder: "一句话说清（这就是任务标题）" },
+              { name: "kind", label: "类型", type: "select", value: "feature", options: [{ value: "feature", label: "功能" }, { value: "bugfix", label: "修复" }, { value: "chore", label: "杂务" }, { value: "test", label: "测试" }] },
+              { name: "scope", label: "改动范围", type: "text", value: (pth.allowedPaths || []).join(","), help: "逗号分隔；默认跟这条 Path 一样，可以收窄" },
+              { name: "acceptance", label: "验收命令（一行一条）", type: "textarea", rows: 3, value: cmds.join("\n"), help: "必须是契约里有的命令；不写 :: 谓词就按 exit==0 算" },
+            ],
+          });
+          if (!r.ok) return;
+          const scope = String(r.values.scope ?? "").split(",").map((x) => x.trim()).filter(Boolean);
+          const req = reqs.find((x) => x.id === r.values.requirementId);
+          const acceptance = String(r.values.acceptance ?? "")
+            .split("\n")
+            .map((x) => x.trim())
+            .filter(Boolean)
+            .map((line) => {
+              const assertion = line.includes("::") ? line : `${line} :: exit==0`;
+              // deriveFrom 按命令在需求验收里的下标对号入座（和 CLI 一致）
+              const cmd = assertion.split("::")[0].trim();
+              const idx = (req?.acceptance ?? []).findIndex((a) => String(a).split("::")[0].trim() === cmd);
+              return { deriveFrom: idx >= 0 ? idx : 0, assertion };
+            });
+          return owner("task.add", { requirementId: r.values.requirementId, pathId: r.values.pathId, kind: r.values.kind, title: r.values.title, scope, acceptance });
+        }
         if (b.id === "create") {
           const kind = $("kind").value;
           const payload =

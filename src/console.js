@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { readConsoleMeta } from "./console-boot.js";
 import { dbPath, openDb } from "./db.js";
 import { readContract } from "./contract.js";
+import { taskCreate } from "./gates.js";
 import { VERSION } from "./protocol.js";
 import { bootstrap } from "./digest.js";
 import {
@@ -53,6 +54,9 @@ export const OWNER_ACTIONS = {
   "path.adjust": (db, root, p) => pathAdjust(db, root, p),
   "path.retest": (db, root, p) => pathRetest(db, root, p),
   handoff: (db, root, p) => handoff(db, p),
+  // Owner 直接下单：单人场景里人心里已经知道要做什么，没必要非得等 Agent 拆出机器标题。
+  // 校验走的是同一个 taskCreate —— 需求没批准、验收不在白名单，Owner 也一样过不去。
+  "task.add": (db, root, p) => taskCreate(db, root, p),
   "memory.promote": async (db, root, p) => promoteMemory(memoryConfig(process.env, root), p.id),
   "memory.edit": async (db, root, p) => editMemory(memoryConfig(process.env, root), p.id, { title: p.title, body: p.body }, { promote: true }),
   "memory.drop": (db, root, p) => ({ dropped: softDeleteMemory(memoryConfig(process.env, root), p.id) }),
