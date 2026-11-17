@@ -4,7 +4,7 @@ import path from "node:path";
 import { memoryConfig, memoryStatus } from "./memory.js";
 import { metaGet } from "./db.js";
 import { listTasks, listReqs, listBugs, listDocs, listPaths } from "./store.js";
-import { head, isAncestor, statusPorcelain } from "./git.js";
+import { git, head, isAncestor, statusPorcelain } from "./git.js";
 import { SKILL_REL, skillContent } from "./skill.js";
 import { sha256 } from "./fingerprint.js";
 import { assertionCommand, detectTestCmds } from "./testcmd.js";
@@ -109,6 +109,30 @@ export function doctor(db, root) {
     }
   } catch {
     /* 读不到就跳过 */
+  }
+  // 发布说"留下了可回滚点"，那就得真的能 checkout 回去。
+  // 记了 tag 却查不到（被删、被打错名字、或换了机器），等于回滚点已经没了，
+  // 而发布记录还在那儿说 ship 成功——这是最容易在出事那天才发现的谎（T-114）。
+  if (h) {
+    for (const r of db.prepare("SELECT id, title, git_tag, git_sha FROM releases WHERE status='shipped'").all()) {
+      if (!r.git_tag) {
+        items.push({ severity: "error", code: "RELEASE_NO_TAG", detail: `${r.id}「${r.title}」标记已发布，但没记任何 tag（回滚点不存在）` });
+        continue;
+      }
+      let exists = true;
+      try {
+        git(root, ["rev-parse", "--verify", "--quiet", `refs/tags/${r.git_tag}`]);
+      } catch {
+        exists = false;
+      }
+      if (!exists) {
+        items.push({
+          severity: "error",
+          code: "RELEASE_TAG_MISSING",
+          detail: `${r.id} 记的 tag ${r.git_tag} 在 git 里查不到：回滚点已经没了，但发布记录还说发布了。要么把 tag 补回来（git tag -a ${r.git_tag} -m "${r.id} ${r.title}" ${String(r.git_sha ?? "").slice(0, 8)}），要么把这条发布的记录改对`,
+        });
+      }
+    }
   }
   items.push(...consistency(db));
   return items;
