@@ -42,6 +42,14 @@ test("init 打印的 Agent 说明和实际写的一致，不谎报 CLAUDE.md", (
   assert.match(r.stdout, /AGENTS\.md/);
 });
 
+test("init 的 .gitignore 认得 console.json，不然每个项目都带一个未跟踪文件", () => {
+  const root = makeRepo();
+  run(root, "init", "--no-mcp");
+  fs.writeFileSync(path.join(root, ".devcontrol", "console.json"), "{}");
+  const r = spawnSync("git", ["status", "--porcelain"], { cwd: root, encoding: "utf8" });
+  assert.doesNotMatch(r.stdout, /console\.json/, "它还露在 git status 里");
+});
+
 test("--no-mcp 时不再声称「随 MCP 连接自动启动」", () => {
   const root = makeRepo();
   const r = run(root, "init", "--no-mcp");

@@ -178,6 +178,7 @@ export function cmdInit(args) {
     ".devcontrol/settings.json",
     ".devcontrol/runs/",
     ".devcontrol/console.lock",
+    ".devcontrol/console.json",
   ]);
   appendLines(".gitattributes", ["* text=auto eol=lf"]);
   const noMcp = args.includes("--no-mcp");
