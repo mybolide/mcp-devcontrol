@@ -526,9 +526,33 @@ export function override(db, input) {
   });
 }
 
+/**
+ * 释放任务：把「有人在办」退回「待办」。
+ *
+ * 为什么必须有这条：Agent 领了任务之后挂掉 / 失联 / 被换掉，它不会自己释放。
+ * 原来只能干等 45 分钟租约过期——这期间同一个项目的其他 Agent 全被挡住，
+ * 而且没有任何人能在控制台上把这件事解开。
+ */
+export function taskRelease(db, input) {
+  return tx(db, () => {
+    const t = getTask(db, input.taskId);
+    if (!t) fail("NOT_FOUND", `任务不存在：${input.taskId}`);
+    if (t.status !== "doing") fail("E_ILLEGAL_TRANSITION", `${t.id} 当前 ${t.status}，不是「有人在办」的状态`);
+    const prev = t.claimed_by;
+    db.prepare(
+      "UPDATE tasks SET status='backlog', claimed_by=NULL, claimed_at=NULL, claim_expires_at=NULL, closing_token=NULL, claim_fingerprint=NULL, updated_at=? WHERE id=?",
+    ).run(now(), t.id);
+    logEvent(db, { channel: "owner", action: "task.release", taskId: t.id, detail: `from ${prev ?? "?"}` });
+    return { taskId: t.id, status: "backlog", releasedFrom: prev };
+  });
+}
+
 export function handoff(db, input) {
   const t = getTask(db, input.taskId);
   if (!t) fail("NOT_FOUND", `任务不存在：${input.taskId}`);
+  // 交接 = 释放 + 卡片。只给卡片不释放，等于让人拿着票根去坐一张还被人占着的车：
+  // 另一个 Agent 拿到卡片第一句 task.claim 就会被 E_CLAIMED_BY_OTHER 挡住。
+  const released = t.status === "doing" ? taskRelease(db, { taskId: t.id }) : null;
   const req = getReq(db, t.requirement_id);
   const p = getPath(db, t.path_id);
   const lines = [
@@ -536,7 +560,8 @@ export function handoff(db, input) {
     `需求 ${req?.id ?? "?"} · Path ${p?.id ?? "?"} · scope: ${t.scope.join(", ") || "(未设)"}`,
     `验收: ${t.acceptance.map((a) => a.assertion).join("；") || "(未设)"}`,
     `前置: ${t.dependsOn.length ? t.dependsOn.join(", ") : "无"} · 预算: ${t.budget_lines} 行（已用 ${t.changed_lines}）`,
+    released ? "（已释放：下面这张卡拿给谁，谁就能接）" : "",
     `起步: devcontrol mcp → task.claim(${t.id})`,
-  ];
-  return { text: lines.join("\n") };
+  ].filter(Boolean);
+  return { text: lines.join("\n"), released };
 }

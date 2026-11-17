@@ -28,7 +28,7 @@ export function doctor(db, root) {
       }
     }
     if (t.status === "doing" && t.claim_expires_at && Date.parse(t.claim_expires_at) < Date.now()) {
-      items.push({ severity: "warn", code: "STALE_CLAIM", taskId: t.id, detail: "claim 已过期，下次写操作会回收" });
+      items.push({ severity: "warn", code: "STALE_CLAIM", taskId: t.id, detail: `${t.id} 的领取已过期（${t.claimed_by ?? "?"} 没续租）。claim 时会自动回收，或者在控制台「任务」里点交接立刻释放` });
     }
     if (t.status === "doing" && t.closing_at && Date.now() - Date.parse(t.closing_at) > 60 * 60_000) {
       items.push({ severity: "warn", code: "STALE_CLOSING", taskId: t.id, detail: "close 卡住超过 60 分钟" });

@@ -481,7 +481,8 @@ test("bootstrap 渐进下发动作面：按状态只给该用的动作", async (
     const task = newTask(db, root, reqId);
     const planning = await boot();
     assert.ok(planning.actions.includes("task.claim"));
-    assert.ok(planning.actions.includes("task.create"));
+    // 有可领的活时就不再劝人拆新任务——那正是重复任务的源头
+    assert.ok(!planning.actions.includes("task.create"), `有活可干就不该给 task.create：${JSON.stringify(planning.actions)}`);
 
     taskClaim(db, root, { id: task.id }, "agent");
     const doing = await boot();

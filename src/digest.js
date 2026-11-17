@@ -53,8 +53,10 @@ export function availableActions(db) {
     acts.add("task.renew");
     acts.add("ask");
   } else if (approvedReq && approvedPath) {
-    acts.add("task.create");
+    // 有可领的活就只给 claim：明明有活不干、去建一条新任务，是重复任务的源头。
+    // 没有可领的活时才谈得上拆新任务。
     if (ok.length) acts.add("task.claim");
+    else acts.add("task.create");
   }
   return [...acts];
 }
@@ -118,20 +120,22 @@ export function bootstrap(db, root, extra = {}) {
       return { action: "wait", args: {}, why: reqs.some((r) => r.status === "draft") ? "等 Owner 批准需求" : "还没有已批准的需求，等 Owner 收件并批准" };
     }
     if (!paths.some((p) => p.status === "approved")) return { action: "wait", args: {}, why: "还没有已批准的 Path，等 Owner 批准" };
-    const req = reqs.find((r) => ["approved", "building"].includes(r.status));
-    const pth = approvedPath(req.id);
-    return {
-      action: "task.create",
-      args: {
-        requirementId: req.id,
-        pathId: pth.id,
-        kind: "feature",
-        title: "新任务：改一个能说清的标题",
-        scope: pth.allowedPaths,
-        acceptance: [{ deriveFrom: 0, assertion: req.acceptance[0] }],
-      },
-      why: "没有待办任务，去拆新任务",
-    };
+    // 走到这里说明：没有在办的、没有可领的、也没有没被覆盖的验收——活干完了。
+    // 这时候还催「去拆新任务」是错的，Agent 会凭空造出一条没人要的工作。
+    const rel = releaseSummary(db);
+    if (rel?.ready) {
+      return { action: "wait", args: {}, why: `需求都覆盖了。${rel.id}「${rel.title}」可以发布了：devcontrol release ship ${rel.id}` };
+    }
+    if (rel) {
+      // 走到这里说明没有可领的活了，但发布还差任务——那些任务多半被放弃或搁置了。
+      // 别让 Agent 去"补"，它补不了；这是人要决定的事。
+      return {
+        action: "wait",
+        args: {},
+        why: `需求都覆盖了。${rel.id}「${rel.title}」还有 ${rel.pending} 个任务没完成，但它们不在待办里（可能被放弃或搁置），去控制台看一下`,
+      };
+    }
+    return { action: "wait", args: {}, why: "需求都覆盖了，没有待办任务：可以发布，或者等 Owner 提新需求" };
   })();
 
   const recent = db.prepare("SELECT at, action, task_id, detail FROM events ORDER BY id DESC LIMIT 3").all().map((e) => ({ at: e.at, action: e.action, taskId: e.task_id, detail: e.detail }));

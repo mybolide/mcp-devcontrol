@@ -677,7 +677,7 @@
           <td class="mu">${t.acceptance.map((a) => esc(a.assertion)).join("<br>")}</td>
           <td class="nw"><div class="row inline">
             ${t.status === "backlog" || t.status === "parked" ? `<button class="btn" data-rank="${t.id}" title="置顶：内核挑活时会先看它（顺序就是优先级）">置顶</button>` : ""}
-            <button class="btn" data-handoff="${t.id}">交接</button>
+            <button class="btn" data-handoff="${t.id}" title="换人接手：先释放它，再生成一张交接卡">交接</button>
             ${t.status === "done" || t.status === "parked" ? `<button class="btn danger" data-reopen="${t.id}">打回</button>` : ""}
             ${t.status === "doing" ? `<button class="btn danger" data-override="${t.id}">放行</button>` : ""}
           </div></td></tr>`;

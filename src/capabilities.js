@@ -104,7 +104,8 @@ export const CAPABILITIES = [
   { name: "调任务的 scope / 预算", action: null, mcp: null, cli: null, console: "adjust" },
   { name: "Bug 裁决", action: null, mcp: null, cli: null, console: "decide" },
   { name: "回答 Agent 的提问", action: null, mcp: null, cli: null, console: "answer" },
-  { name: "换人接手任务", action: null, mcp: null, cli: null, console: "handoff" },
+  { name: "换人接手任务（释放 + 交接卡）", action: null, mcp: null, cli: null, console: "handoff" },
+  { name: "释放任务（退回待办，不给卡片）", action: null, mcp: null, cli: null, console: "release" },
   // 放弃是 Owner 的决定：Agent 不能自己宣布「这活不做了」
   { name: "作废需求（连带任务归档）", action: null, mcp: null, cli: null, console: "abandon" },
   { name: "改经验内容并转正", action: null, mcp: null, cli: null, console: "memory.edit" },
