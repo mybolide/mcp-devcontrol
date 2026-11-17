@@ -135,7 +135,7 @@ export async function dispatch(db, root, args, ctx = {}) {
     case "task.close":
       return taskClose(db, root, args, { signal: ctx.signal });
     case "bug.report":
-      return bugReport(db, args);
+      return bugReport(db, args, args.actor ?? process.env.DEVCONTROL_ACTOR ?? "agent");
     case "ask":
       return ask(db, args);
     case "release.create":

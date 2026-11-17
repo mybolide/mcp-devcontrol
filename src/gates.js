@@ -297,7 +297,7 @@ export function taskRenew(db, root, input, actor = "agent") {
       .prepare("UPDATE tasks SET claim_expires_at=?, updated_at=? WHERE id=? AND status='doing' AND claimed_by=? AND claim_expires_at=?")
       .run(exp, now(), t.id, actor, t.claim_expires_at);
     if (res.changes !== 1) fail("E_CLAIM_STALE", `${t.id} 租期状态已变化，需重新 claim`);
-    logEvent(db, { action: "task.renew", taskId: t.id, detail: actor });
+    logEvent(db, { actor, action: "task.renew", taskId: t.id, detail: actor });
     return { ok: true, id: t.id, claimExpiresAt: exp };
   });
 }
@@ -702,7 +702,7 @@ export async function taskClose(db, root, input, opts = {}) {
 
 // ── bug.report / ask ──────────────────────────────────────────────────────
 
-export function bugReport(db, input) {
+export function bugReport(db, input, actor = "agent") {
   return tx(db, () => {
     const repro = (input.repro ?? []).filter(Boolean);
     if (!String(input.title ?? "").trim()) fail("E_CONTRACT", "Bug 需要标题");
@@ -713,7 +713,7 @@ export function bugReport(db, input) {
       "INSERT INTO bugs(id,requirement_id,title,symptom,expected,repro_json,attachments_json,severity,status,task_id,source,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
     ).run(id, input.requirementId ?? null, String(input.title).trim(), String(input.symptom ?? ""), String(input.expected ?? ""), JSON.stringify(repro), JSON.stringify(input.attachments ?? []), input.severity ?? "P2", "new", null, "agent", now());
     db.prepare("INSERT INTO meta(key,value) VALUES('counter:B',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(String(n));
-    logEvent(db, { action: "bug.report", detail: id });
+    logEvent(db, { actor, action: "bug.report", detail: id });
     return { bugId: id };
   });
 }
@@ -724,7 +724,7 @@ export function ask(db, input) {
     if (!t) fail("NOT_FOUND", `任务不存在：${input.taskId}`);
     const open = db.prepare("SELECT COUNT(*) c FROM questions WHERE task_id=? AND status='open'").get(t.id).c;
     if (open >= 3) {
-      logEvent(db, { action: "ask.quota", taskId: t.id, code: "E_QUOTA", detail: input.question });
+      logEvent(db, { actor: t.claimed_by ?? "agent", action: "ask.quota", taskId: t.id, code: "E_QUOTA", detail: input.question });
       return { questionId: null, quotaLeft: 0, note: "配额已满，只记事件" };
     }
     const n = Number(metaGet(db, "counter:Q") ?? 0) + 1;
@@ -733,7 +733,7 @@ export function ask(db, input) {
     db.prepare("INSERT INTO questions(id,task_id,question,options_json,status,expires_at) VALUES(?,?,?,?,?,?)").run(id, t.id, String(input.question ?? "").slice(0, 300), JSON.stringify(input.options ?? []), "open", expires);
     db.prepare("INSERT INTO meta(key,value) VALUES('counter:Q',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(String(n));
     db.prepare("UPDATE tasks SET status='parked', claimed_by=NULL, claim_expires_at=NULL WHERE id=? AND status='doing'").run(t.id);
-    logEvent(db, { action: "ask", taskId: t.id, detail: id });
+    logEvent(db, { actor: t.claimed_by ?? "agent", action: "ask", taskId: t.id, detail: id });
     return { questionId: id, expiresAt: expires, quotaLeft: 2 - open };
   });
 }

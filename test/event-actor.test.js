@@ -5,7 +5,8 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { taskCreate, taskClaim } from "../src/gates.js";
+import { taskCreate, taskClaim, bugReport, ask } from "../src/gates.js";
+import { logEvent } from "../src/db.js";
 import { commitFiles } from "../src/git.js";
 import { openDb } from "../src/db.js";
 import { makeRepo, initFlow, newTask, prove, closeProven, BIN } from "./helpers.js";
@@ -119,4 +120,42 @@ test("这五类事件不该再记成 system", async () => {
     .prepare("SELECT action FROM events WHERE actor='system' AND action IN ('task.create','task.claim','close','close.fail','run.evidence')")
     .all();
   assert.deepEqual(sys, [], `这些事件不该再记成 system：${JSON.stringify(sys)}`);
+});
+
+// ── 守卫：漏传 actor 不许静默通过 ────────────────────────────────────────────
+// 这些断言守的是"以后别再犯"，不是"现在对"。
+
+test("logEvent 漏传 actor 直接抛错，不会悄悄写成 system", () => {
+  const root = makeRepo();
+  const { db } = initFlow(root);
+  assert.throws(() => logEvent(db, { action: "whatever" }), /缺 actor/, "缺 actor 必须崩，不能默认");
+});
+
+test("Owner 的动作一律记 owner（不是 system，也不是 agent）", () => {
+  const root = makeRepo();
+  const { db } = initFlow(root); // initFlow 内含 reqIntake + reqApprove，都是 Owner 动作
+  const owners = db.prepare("SELECT actor FROM events WHERE channel='owner'").all();
+  assert.ok(owners.length >= 2, "至少两条 Owner 事件");
+  assert.deepEqual([...new Set(owners.map((r) => r.actor))], ["owner"]);
+});
+
+test("bug.report 记报 bug 的人", () => {
+  const root = makeRepo();
+  const { db, reqId } = initFlow(root);
+  bugReport(db, { title: "按钮没反应", repro: ["点一下"], requirementId: reqId }, "agent-q");
+  assert.deepEqual(actorsOf(db, "bug.report"), ["agent-q"]);
+});
+
+test("ask 记提问的人：任务停手前那个人还认得出来", () => {
+  const root = makeRepo();
+  const { db, reqId } = initFlow(root);
+  const t = newTask(db, root, reqId, { scope: ["src/a.js"], title: "卡住了" });
+  taskClaim(db, root, { id: t.id }, "agent-y");
+
+  ask(db, { taskId: t.id, question: "这个字段该叫啥？" });
+  assert.deepEqual(actorsOf(db, "ask"), ["agent-y"]);
+
+  const parked = db.prepare("SELECT claimed_by, status FROM tasks WHERE id=?").get(t.id);
+  assert.equal(parked.status, "parked");
+  assert.equal(parked.claimed_by, null, "parked 后仍旧释放，但事件里记得住是谁问的");
 });

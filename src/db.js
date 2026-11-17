@@ -171,7 +171,17 @@ export function assertNoSlowWork(what) {
   throw Object.assign(new Error(`E_INTERNAL: ${what} 不能放在数据库事务里`), { code: "E_INTERNAL" });
 }
 
-export function logEvent(db, { actor = "system", channel = "agent", action, taskId = null, code = null, detail = "" }) {
+/**
+ * 记一条事件。
+ *
+ * actor 没有默认值：这个字段只有两个字——「谁干的」——默认成 system 等于没写。
+ * 早先它默认 system，于是 24 个调用点静默留白，周报的「按人」一栏全是 system（T-088/T-089）。
+ * 现在漏传直接崩：新加事件忘了填，npm test 第一轮就红，不用等下次压测才发现。
+ *
+ * Owner 的动作传 "owner"，系统自己的动作（如过期回收）传 "system"，其余传 Agent 标识。
+ */
+export function logEvent(db, { actor, channel = "agent", action, taskId = null, code = null, detail = "" }) {
+  if (!actor) throw new Error(`logEvent 缺 actor：事件「${action}」必须记到谁头上（Owner→"owner"、系统→"system"）`);
   db.prepare("INSERT INTO events(at,actor,channel,action,task_id,code,detail) VALUES(?,?,?,?,?,?,?)")
     .run(new Date().toISOString(), actor, channel, action, taskId, code, String(detail).slice(0, 300));
 }

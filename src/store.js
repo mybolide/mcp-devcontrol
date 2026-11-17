@@ -115,7 +115,7 @@ export function recycleExpired(db) {
     .all(now());
   for (const row of rows) {
     db.prepare("UPDATE tasks SET status='backlog', claimed_by=NULL, claimed_at=NULL, claim_expires_at=NULL, updated_at=? WHERE id=?").run(now(), row.id);
-    logEvent(db, { action: "recycle", taskId: row.id, code: "E_CLAIM_STALE", detail: `接管 ${row.claimed_by ?? "?"} 的过期任务` });
+    logEvent(db, { actor: "system", action: "recycle", taskId: row.id, code: "E_CLAIM_STALE", detail: `接管 ${row.claimed_by ?? "?"} 的过期任务` });
   }
   return rows.length;
 }
@@ -156,7 +156,7 @@ export function reqIntake(db, root, input) {
         input.kind ?? "spec",
         now(),
       );
-      logEvent(db, { channel: "owner", action: "doc.intake", detail: rel });
+      logEvent(db, { actor: "owner", channel: "owner", action: "doc.intake", detail: rel });
       return { id, type };
     }
     if (type === "bug") {
@@ -177,7 +177,7 @@ export function reqIntake(db, root, input) {
         "owner",
         now(),
       );
-      logEvent(db, { channel: "owner", action: "bug.intake", detail: input.title ?? "" });
+      logEvent(db, { actor: "owner", channel: "owner", action: "bug.intake", detail: input.title ?? "" });
       return { id, type };
     }
     const acceptance = (input.acceptance ?? []).map((a) => (typeof a === "string" ? a : a.assertion)).filter(Boolean);
@@ -187,7 +187,7 @@ export function reqIntake(db, root, input) {
     db.prepare(
       "INSERT INTO requirements(id,title,goal,acceptance_json,status,created_at) VALUES(?,?,?,?,?,?)",
     ).run(id, String(input.title ?? "").trim(), String(input.goal ?? "").trim(), JSON.stringify(acceptance), "draft", now());
-    logEvent(db, { channel: "owner", action: "req.intake", detail: input.title ?? "" });
+    logEvent(db, { actor: "owner", channel: "owner", action: "req.intake", detail: input.title ?? "" });
     return { id, type };
   });
 }
@@ -228,7 +228,7 @@ export function reqApprove(db, root, input) {
       now(),
       p.id,
     );
-    logEvent(db, { channel: "owner", action: "req.approve", detail: `${req.id} + ${p.id} @ ${sha ? sha.slice(0, 8) : "弱模式"}` });
+    logEvent(db, { actor: "owner", channel: "owner", action: "req.approve", detail: `${req.id} + ${p.id} @ ${sha ? sha.slice(0, 8) : "弱模式"}` });
     return { requirementId: req.id, pathId: p.id, contractCommit: sha, hash };
   });
 }
@@ -275,7 +275,7 @@ export function reqAmend(db, root, input) {
         affected.push(t.id);
       }
     }
-    logEvent(db, { channel: "owner", action: "req.amend", detail: `${req.id}${touchesPaths ? " (path → draft)" : ""}` });
+    logEvent(db, { actor: "owner", channel: "owner", action: "req.amend", detail: `${req.id}${touchesPaths ? " (path → draft)" : ""}` });
     return { requirementId: req.id, affectedTasks: affected, pathStatus: touchesPaths ? "draft" : "approved" };
   });
 }
@@ -303,7 +303,7 @@ export function pathAdjust(db, root, input) {
     });
     const { sha, hash } = commitContract(root, body, "amend", { weak: metaGet(db, "mode") === "weak" });
     db.prepare("UPDATE paths SET budget_lines=?, hash=?, contract_commit=? WHERE id=?").run(budget, hash, sha, p.id);
-    logEvent(db, { channel: "owner", action: "path.adjust", detail: `${p.id} 预算 ${p.budget_lines} → ${budget}：${reason}` });
+    logEvent(db, { actor: "owner", channel: "owner", action: "path.adjust", detail: `${p.id} 预算 ${p.budget_lines} → ${budget}：${reason}` });
     return { pathId: p.id, from: p.budget_lines, to: budget, contractCommit: sha };
   });
 }
@@ -367,6 +367,7 @@ export function pathRetest(db, root, input) {
       retargeted.push(t.id);
     }
     logEvent(db, {
+      actor: "owner",
       channel: "owner",
       action: "path.retest",
       detail: `${p.id} 命令 ${JSON.stringify(p.testCmds)} → ${JSON.stringify(next)}（${detected.source}）：${reason}`,
@@ -400,7 +401,7 @@ export function taskAdjust(db, root, input) {
       now(),
       t.id,
     );
-    logEvent(db, { channel: "owner", action: "task.adjust", taskId: t.id, detail: input.reason ?? "" });
+    logEvent(db, { actor: "owner", channel: "owner", action: "task.adjust", taskId: t.id, detail: input.reason ?? "" });
     return { taskId: t.id, scope, budgetLines: budget };
   });
 }
@@ -411,7 +412,7 @@ export function taskReopen(db, input) {
     if (!t) fail("NOT_FOUND", `任务不存在：${input.taskId}`);
     if (!["done", "parked"].includes(t.status)) fail("E_ILLEGAL_TRANSITION", `${t.id} 当前 ${t.status}，不能打回`);
     db.prepare("UPDATE tasks SET status='backlog', closed_by=NULL, closed_at=NULL, review_round=0, updated_at=? WHERE id=?").run(now(), t.id);
-    logEvent(db, { channel: "owner", action: "task.reopen", taskId: t.id, detail: input.reason ?? "" });
+    logEvent(db, { actor: "owner", channel: "owner", action: "task.reopen", taskId: t.id, detail: input.reason ?? "" });
     return { taskId: t.id, status: "backlog" };
   });
 }
@@ -442,6 +443,7 @@ export function reqAbandon(db, root, input) {
     }
     db.prepare("UPDATE requirements SET status='archived', archived_at=? WHERE id=?").run(now(), req.id);
     logEvent(db, {
+      actor: "owner",
       channel: "owner",
       action: "req.abandon",
       detail: `${req.id}${live.length ? ` 连带 ${live.map((t) => t.id).join(",")}` : ""}：${reason}`,
@@ -474,7 +476,7 @@ export function taskRank(db, input) {
       fail("E_CONTRACT", "要么给 mode='top'，要么给一个数字 rank");
     }
     db.prepare("UPDATE tasks SET rank=?, updated_at=? WHERE id=?").run(rank, now(), t.id);
-    logEvent(db, { channel: "owner", action: "task.rank", taskId: t.id, detail: `rank=${rank}` });
+    logEvent(db, { actor: "owner", channel: "owner", action: "task.rank", taskId: t.id, detail: `rank=${rank}` });
     return { taskId: t.id, rank };
   });
 }
@@ -489,7 +491,7 @@ export function bugDecide(db, input) {
     // 采纳 = 要修，进修复队列；驳回 / wontfix = 到此为止
     const status = decision === "accept" ? "fixing" : "closed";
     db.prepare("UPDATE bugs SET status=?, closed_by=? WHERE id=?").run(status, decision, b.id);
-    logEvent(db, { channel: "owner", action: "bug.decide", detail: `${b.id} ${decision} → ${status}` });
+    logEvent(db, { actor: "owner", channel: "owner", action: "bug.decide", detail: `${b.id} ${decision} → ${status}` });
     return { bugId: b.id, status, decision };
   });
 }
@@ -502,7 +504,7 @@ export function answer(db, input) {
     if (q.task_id) {
       db.prepare("UPDATE tasks SET status='backlog', claimed_by=NULL, claimed_at=NULL, claim_expires_at=NULL, updated_at=? WHERE id=? AND status='parked'").run(now(), q.task_id);
     }
-    logEvent(db, { channel: "owner", action: "answer", taskId: q.task_id, detail: q.id });
+    logEvent(db, { actor: "owner", channel: "owner", action: "answer", taskId: q.task_id, detail: q.id });
     return { questionId: q.id, taskResumed: q.task_id ?? null };
   });
 }
@@ -521,7 +523,7 @@ export function override(db, input) {
     } else {
       setWaive(db, t.id, input.code);
     }
-    logEvent(db, { channel: "owner", action: "override", taskId: t.id, code: input.code, detail: input.reason });
+    logEvent(db, { actor: "owner", channel: "owner", action: "override", taskId: t.id, code: input.code, detail: input.reason });
     return { taskId: t.id, mode: input.mode ?? "waive", code: input.code };
   });
 }
@@ -542,7 +544,7 @@ export function taskRelease(db, input) {
     db.prepare(
       "UPDATE tasks SET status='backlog', claimed_by=NULL, claimed_at=NULL, claim_expires_at=NULL, closing_token=NULL, claim_fingerprint=NULL, updated_at=? WHERE id=?",
     ).run(now(), t.id);
-    logEvent(db, { channel: "owner", action: "task.release", taskId: t.id, detail: `from ${prev ?? "?"}` });
+    logEvent(db, { actor: "owner", channel: "owner", action: "task.release", taskId: t.id, detail: `from ${prev ?? "?"}` });
     return { taskId: t.id, status: "backlog", releasedFrom: prev };
   });
 }

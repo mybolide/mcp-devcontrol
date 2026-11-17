@@ -30,7 +30,7 @@ export function createRelease(db, { title, targetDate } = {}) {
   if (!name) fail("E_CONTRACT", "发布需要一个名字");
   const id = nextId(db, "R");
   db.prepare("INSERT INTO releases(id,title,status,target_date,created_at) VALUES(?,?,?,?,?)").run(id, name, "planned", targetDate ?? null, now());
-  logEvent(db, { action: "release.create", detail: `${id} ${name}` });
+  logEvent(db, { actor: "owner", action: "release.create", detail: `${id} ${name}` });
   return getRelease(db, id);
 }
 
@@ -45,7 +45,7 @@ export function planRelease(db, { id, tasks } = {}) {
     db.prepare("INSERT OR IGNORE INTO release_tasks(release_id,task_id) VALUES(?,?)").run(id, taskId);
   }
   db.prepare("UPDATE releases SET status='building' WHERE id=? AND status='planned'").run(id);
-  logEvent(db, { action: "release.plan", detail: `${id} +${list.length}` });
+  logEvent(db, { actor: "owner", action: "release.plan", detail: `${id} +${list.length}` });
   return getRelease(db, id);
 }
 
@@ -76,7 +76,7 @@ export function shipRelease(db, { id, root } = {}) {
     // 弱模式没有 git，天生没有回滚点；说清楚，别让人以为能回滚
     const note = weak ? "弱模式（无 git）：没有可回滚的提交" : "没有仓库路径：没打 tag";
     db.prepare("UPDATE releases SET status='shipped', shipped_at=?, note=? WHERE id=?").run(now(), note, id);
-    logEvent(db, { action: "release.ship", detail: `${id} ${r.tasks.length} 个任务（${note}）` });
+    logEvent(db, { actor: "owner", action: "release.ship", detail: `${id} ${r.tasks.length} 个任务（${note}）` });
     return getRelease(db, id);
   }
 
@@ -94,7 +94,7 @@ export function shipRelease(db, { id, root } = {}) {
     fail("E_RELEASE_TAG", `git tag 创建失败：${String(error.stderr ?? error.message).slice(0, 200)}`, { tag });
   }
   db.prepare("UPDATE releases SET status='shipped', shipped_at=?, git_tag=?, git_sha=? WHERE id=?").run(now(), tag, sha, id);
-  logEvent(db, { action: "release.ship", detail: `${id} ${r.tasks.length} 个任务 @ ${tag} (${sha.slice(0, 8)})` });
+  logEvent(db, { actor: "owner", action: "release.ship", detail: `${id} ${r.tasks.length} 个任务 @ ${tag} (${sha.slice(0, 8)})` });
   return getRelease(db, id);
 }
 
