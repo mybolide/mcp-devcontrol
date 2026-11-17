@@ -485,7 +485,12 @@ export function cmdTask(args) {
       const idx = reqAcceptance.findIndex((a) => assertionCommand(a) === cmd);
       return { deriveFrom: idx >= 0 ? idx : 0, assertion };
     });
-    const scope = flag("scope") ? flag("scope").split(",").map((s) => s.trim()).filter(Boolean) : undefined;
+    // scope：--scope 可重复，也可逗号分隔。早先只取最后一段，多写一次就把前一段悄悄吃掉（T-087）
+    const scopeList = every("scope")
+      .flatMap((v) => String(v).split(","))
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const scope = scopeList.length ? scopeList : undefined;
     // 依赖：MCP 侧叫 dependsOn，CLI 这边用 --depends（可重复，也可逗号分隔）——纯 CLI 用户也要能表达「前端等后端」
     const dependsOn = every("depends")
       .flatMap((v) => String(v).split(","))
