@@ -411,7 +411,7 @@
         }
       }
       const ownerToken = localStorage.getItem("devcontrol.token") || "";
-      const STATUS_TEXT = { backlog: "待办", doing: "进行中", done: "已完成", parked: "搁置", new: "待裁决", fixing: "修复中", closed: "已关闭", draft: "草稿", approved: "已批准", building: "开发中", shipped: "已发布" };
+      const STATUS_TEXT = { backlog: "待办", doing: "进行中", done: "已完成", parked: "搁置", abandoned: "已放弃", new: "待裁决", fixing: "修复中", closed: "已关闭", draft: "草稿", approved: "已批准", building: "开发中", archived: "已作废", shipped: "已发布" };
       const KIND_TEXT = { feature: "功能", bugfix: "修复", chore: "杂务", test: "测试" };
       const tag = (s) => `<span class="pill ${s === "doing" ? "doing" : s === "done" ? "done" : s === "parked" ? "parked" : ""}">${esc(STATUS_TEXT[s] ?? s)}</span>`;
 
@@ -684,6 +684,8 @@
         $("n-tasks").textContent = String(s.tasks.length);
       }
 
+      /** 只有还在进行的需求才需要「作废」按钮：已作废的不用再问一次 */
+      const canAbandon = (r) => ["approved", "building"].includes(r.status);
       function renderReqs(s) {
         // 覆盖口径与内核一致：任务 acceptance 的 deriveFrom 指向需求验收的下标
         const covOf = (r) => {
@@ -708,7 +710,7 @@
               .map((t) => `<span class="pill ${t.status === "done" ? "done" : t.status === "doing" ? "doing" : ""}">${esc(t.id)}</span>`)
               .join(" ");
             return `<tr><td class="mono">${esc(r.id)}</td><td>${esc(r.title)}</td><td>${tag(r.status)}</td>
-              <td class="mono">${pth ? `${esc(pth.id)} <button class="btn" data-budget="${pth.id}" data-cur="${pth.budget_lines ?? ""}" data-used="${s.tasks.filter((t) => t.path_id === pth.id && t.status === "done").reduce((n, t) => n + (t.changed_lines ?? 0), 0)}" title="改这条 Path 的改动预算">${pth.budget_lines ?? "?"} 行</button>` : "—"}
+              <td class="mono">${canAbandon(r) ? `<button class="btn danger" data-abandon="${esc(r.id)}" title="这件事不做了：需求归档，连带还挂着的任务一起放弃">作废</button> ` : ""}${pth ? `${esc(pth.id)} <button class="btn" data-budget="${pth.id}" data-cur="${pth.budget_lines ?? ""}" data-used="${s.tasks.filter((t) => t.path_id === pth.id && t.status === "done").reduce((n, t) => n + (t.changed_lines ?? 0), 0)}" title="改这条 Path 的改动预算">${pth.budget_lines ?? "?"} 行</button>` : "—"}
                 ${pth && (pth.testCmds || []).length ? `<div class="mu" style="margin-top:4px">验收：${pth.testCmds.map(esc).join(" · ")} <button class="btn" data-retest="${pth.id}" data-cmds="${esc((pth.testCmds || []).join(" | "))}" title="项目改了 test 脚本，重新采一次验收命令">重采</button></div>` : ""}</td>
               <td>${cov}${miss}<div class="mu">${r.acceptance.map((a) => esc(a)).join(" · ")}</div></td>
               <td>${tasks || `<span class="mu">—</span>`}</td></tr>`;
@@ -891,6 +893,20 @@
           return owner("intake", payload);
         }
         if (b.dataset.approve) return owner("approve", { requirementId: b.dataset.approve, pathId: b.dataset.path });
+        if (b.dataset.abandon) {
+          // 作废会连带放弃任务，属于不可逆动作：走表单 + 二次确认，理由至少 12 字（和内核一致）
+          const r = await openSheet({
+            title: `作废 ${b.dataset.abandon}`,
+            desc: "这件事不做了。需求会被归档，还挂着的任务一起放弃；已完成的提交不受影响。",
+            okText: "作废",
+            danger: true,
+            fields: [
+              { name: "reason", label: "为什么不做了", type: "textarea", rows: 3, minLength: 12, placeholder: "例如：客户改了方案，这个接口不再需要" },
+            ],
+          });
+          if (!r.ok) return;
+          return owner("abandon", { requirementId: b.dataset.abandon, reason: r.values.reason });
+        }
         if (b.dataset.answer) return owner("answer", { questionId: b.dataset.answer, answer: ($(`ans-${b.dataset.answer}`) || {}).value });
         if (b.dataset.decide) return owner("decide", { bugId: b.dataset.decide, decision: b.dataset.decision });
         if (b.dataset.handoff) {

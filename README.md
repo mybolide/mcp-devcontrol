@@ -105,13 +105,27 @@ devcontrol serve            # 前台常驻，http://127.0.0.1:7373
 devcontrol serve --stop     # 停掉本项目自己的控制台（不会误杀别的项目）
 ```
 
-十三个 Owner 动作，**只在控制台**（`release.ship` 例外，MCP 也能调）：
+Owner 动作**只在控制台**（`release.ship` 例外，MCP 也能调）：
 
-`intake`（收需求/Bug）、`approve`（需求 + Path 一起冻结并提交契约）、`amend`（改验收或路径，在办任务自动回 backlog）、
-`adjust`（改 scope/预算）、`reopen`（打回）、`decide`（Bug 采纳/驳回）、`answer`（回答问题，任务回队列）、
-`override`（放行某个拦截码，一次性；或`force-close`）、`handoff`（生成交接卡，可粘给另一个 Agent）。
+| 动作 | 干什么 |
+|---|---|
+| `intake` | 收需求 / 收 Bug |
+| `approve` | 需求 + Path 一起冻结并提交契约 |
+| `amend` | 改验收或路径；在办任务自动回 backlog |
+| `adjust` | 改任务的 scope / 预算 |
+| `reopen` | 打回 / 让 parked 的任务重新可领 |
+| `abandon` | **作废需求**：需求归档，还挂着的任务一起放弃（不可逆，要写理由） |
+| `decide` | Bug 采纳或驳回 |
+| `answer` | 回答 Agent 的提问，任务回队列 |
+| `override` | 放行某个拦截码（一次性），或 `force-close` |
+| `path.adjust` / `path.retest` | 改 Path 预算 / 重新采验收命令 |
+| `handoff` | 生成交接卡，可粘给另一个 Agent |
+| `memory.*` | 晋升、编辑、丢弃经验 |
+| `settings.save` / `release.ship` | 保存设置 / 发布打 tag |
 
-控制台是六个视图（侧栏切换）：**收件箱**（待批准需求 / 待回答提问 / 待裁决 Bug / parked 任务 / 待提炼记忆）、**任务与覆盖**、**发布**、**记忆**、**文档**、**证据**（每次重跑的命令/退出码/HEAD/指纹）。
+控制台九个视图（侧栏切换）：**收件箱**（待批准需求 / 待回答提问 / 待裁决 Bug / parked 任务 / 待提炼记忆）、**需求**、**Bug**、**任务**、**发布**、**记忆**、**文档**、**证据**（每次重跑的命令/退出码/HEAD/指纹）、**设置**。
+
+> `abandon` 是唯一「这件事不做了」的出口。没有它的时候，parked 任务只能 reopen 重试，需求也没有终态——需求会永远占着覆盖率，Agent 的 `next` 永远在等一个不会发生的 reopen。
 
 ### 3.2b 两台电脑：局域网访问控制台
 

@@ -81,6 +81,8 @@ export const CAPABILITIES = [
   { name: "Bug 裁决", action: null, mcp: null, cli: null, console: "decide" },
   { name: "回答 Agent 的提问", action: null, mcp: null, cli: null, console: "answer" },
   { name: "换人接手任务", action: null, mcp: null, cli: null, console: "handoff" },
+  // 放弃是 Owner 的决定：Agent 不能自己宣布「这活不做了」
+  { name: "作废需求（连带任务归档）", action: null, mcp: null, cli: null, console: "abandon" },
   { name: "改经验内容并转正", action: null, mcp: null, cli: null, console: "memory.edit" },
   { name: "丢弃经验", action: null, mcp: null, cli: null, console: "memory.drop" },
   { name: "发布（打回滚 tag）", action: null, mcp: null, cli: null, console: "release.ship" },

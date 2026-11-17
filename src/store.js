@@ -416,6 +416,40 @@ export function taskReopen(db, input) {
   });
 }
 
+/**
+ * Owner 作废需求：这件事不做了。
+ *
+ * 为什么必须有这条路：parked 只能 reopen（重试），需求也没有终态。
+ * 于是「做完发现不该做」「试了三次决定放弃」这两件很平常的事在产品里没有出口——
+ * 需求永远占着覆盖率，Agent 的 next 永远在等一个不会发生的 reopen。
+ * 作废是 Owner 的决定，所以只在控制台，不进 MCP。
+ */
+export function reqAbandon(db, root, input) {
+  return tx(db, () => {
+    const req = getReq(db, input.requirementId);
+    if (!req) fail("NOT_FOUND", `需求不存在：${input.requirementId}`);
+    if (req.status === "archived") fail("E_ILLEGAL_TRANSITION", `${req.id} 已经作废过了`);
+    const reason = String(input.reason ?? "").trim();
+    if (reason.length < 12) fail("E_CONTRACT", `作废要写理由（至少 12 字，现在 ${reason.length} 字）：以后才知道为什么没做`);
+    // 连带把还挂着的任务一起归档：否则它们躺在 backlog 里，Agent 会一直想去领
+    const live = listTasks(db).filter(
+      (t) => t.requirement_id === req.id && ["backlog", "parked", "doing"].includes(t.status),
+    );
+    for (const t of live) {
+      db.prepare(
+        "UPDATE tasks SET status='abandoned', claimed_by=NULL, claim_expires_at=NULL, closing_token=NULL, archived_at=?, updated_at=? WHERE id=?",
+      ).run(now(), now(), t.id);
+    }
+    db.prepare("UPDATE requirements SET status='archived', archived_at=? WHERE id=?").run(now(), req.id);
+    logEvent(db, {
+      channel: "owner",
+      action: "req.abandon",
+      detail: `${req.id}${live.length ? ` 连带 ${live.map((t) => t.id).join(",")}` : ""}：${reason}`,
+    });
+    return { requirementId: req.id, status: "archived", archivedTasks: live.map((t) => t.id) };
+  });
+}
+
 export function bugDecide(db, input) {
   return tx(db, () => {
     const b = getBug(db, input.bugId);

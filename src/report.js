@@ -152,7 +152,7 @@ function consistency(db) {
 
   // ③ 任务的断言命令必须在该 Path 的冻结命令里（否则这条任务永远收不了口）
   for (const t of tasks) {
-    if (t.status === "done") continue;
+    if (t.status === "done" || t.status === "abandoned") continue;
     const p = byId.get(t.path_id);
     if (!p) {
       out.push({ severity: "error", code: "TASK_PATH_UNKNOWN", taskId: t.id, detail: `${t.id} 挂的 Path ${t.path_id} 不存在` });
@@ -210,7 +210,7 @@ function consistency(db) {
   // ⑦ 依赖不能指向不存在的任务，也不能成环（成环 = 永远没人能开工）
   const taskById = new Map(tasks.map((t) => [t.id, t]));
   for (const t of tasks) {
-    if (t.status === "done") continue;
+    if (t.status === "done" || t.status === "abandoned") continue;
     for (const dep of t.dependsOn) {
       if (!taskById.has(dep)) {
         out.push({ severity: "error", code: "TASK_DEP_UNKNOWN", taskId: t.id, detail: `${t.id} 依赖的 ${dep} 不存在` });
