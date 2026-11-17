@@ -34,6 +34,8 @@ import { startConsole } from "./console.js";
 import { runMcp } from "./mcp.js";
 import { VERSION } from "./protocol.js";
 import { openDb as _openDb } from "./db.js";
+import { weekly } from "./weekly.js";
+import { renderWeekly } from "./weekly-md.js";
 import { installAgentFiles, SKILL_REL } from "./skill.js";
 
 
@@ -395,6 +397,31 @@ export function cmdStats() {
   console.log(`被拦 ${s.blocked} 次 · 返工 ${s.rework} 轮 · 绕过 ${s.bypassed} 次 · 已完成 ${s.done} 个任务`);
   return 0;
 }
+/**
+ * 周报：把这一周的事件流说成一句人话，再摊成三张表。
+ * 默认出 markdown（能直接贴进周报文档），--json 出原始数字（给别的工具接）。
+ */
+export function cmdReport(args = []) {
+  const root = resolveRoot();
+  const db = openDb(root);
+  const at = (name) => {
+    const i = args.indexOf(`--${name}`);
+    return i >= 0 ? args[i + 1] : undefined;
+  };
+  const rawDays = at("days");
+  const days = rawDays === undefined ? 7 : Number(rawDays);
+  if (!Number.isFinite(days) || days <= 0) {
+    return failCli(`--days 要是正数，收到的是 ${JSON.stringify(rawDays)}`, "E_USAGE");
+  }
+  const w = weekly(db, { days });
+  if (args.includes("--json")) {
+    console.log(JSON.stringify(w, null, 2));
+    return 0;
+  }
+  process.stdout.write(renderWeekly(w, { title: at("title") ?? "周报" }));
+  return 0;
+}
+
 
 export function cmdFlow(args) {
   const root = resolveRoot();
@@ -869,6 +896,8 @@ export async function main(argv) {
         return await cmdStatus();
       case "stats":
         return cmdStats();
+      case "report":
+        return cmdReport(args);
       case "memory":
         return await cmdMemory(args);
       case "doctor":
@@ -906,6 +935,7 @@ export async function main(argv) {
   devcontrol task list              任务清单
   devcontrol next                   内核认为你现在该做的那一件事（参数可直接照抄）
   devcontrol stats                  纪律三数：被拦 / 返工 / 绕过（内核到底有没有在起作用）
+  devcontrol report [--days 7] [--json]  周报：这一周收口几条、拦在哪、净改动多少（默认 markdown）
   devcontrol flow <list|show|save|apply>  流程模板：把做过的交付沉淀下来复用（存 .devcontrol/flows/）
   devcontrol close [T-00x] [--resolved-by "…"]  收口：核验 Agent 留下的测试证据（内核不跑测试）
   devcontrol status                  摘要：next / actions / plan / 记忆命中（bootstrap 是它的别名）
