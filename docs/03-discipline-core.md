@@ -20,7 +20,7 @@
 | 通道 | 谁 | 能力 |
 |---|---|---|
 | Agent 面 | 任意编码 Agent | `bootstrap` `task.create` `task.claim` `task.renew` `task.close` `bug.report` `ask`（MCP stdio） |
-| Owner 面 | 你 | `req.intake` `req.approve` `req.amend` `answer` `handoff` `task.adjust` `task.reopen` `bug.decide` `override`（**仅控制台**） |
+| Owner 面 | 你 | 控制台：`req.intake` `req.approve` `req.amend` `answer` `handoff` `task.adjust` `task.reopen` `bug.decide` `override`；终端另给 `devcontrol intake` / `devcontrol approve`（纯 CLI 模式的第一步）。**都不进 MCP** —— Agent 能自己批准自己，纪律就没有意义了 |
 
 `handoff` = 控制台为一任务生成"交接卡"文本（一键复制，粘到任意客户端）。**不内建 agent 运行时**，但派活成本为零。
 
@@ -217,7 +217,7 @@ CREATE TABLE patch_ids(patch_id TEXT NOT NULL, task_id TEXT NOT NULL REFERENCES 
 **Agent（7）**：`bootstrap` `task.create` `task.claim` `task.renew` `task.close` `bug.report` `ask`
 `ask`：每任务配额 3 次；24h 未答 → 任务自动 `parked` 并进收件箱；**超配额只记事件、不进 `review_round`**（提问不能被当成验收失败来惩罚）。
 
-**Owner（9，仅控制台）**：`req.intake` `req.approve` `req.amend` `answer` `handoff` `task.adjust`（调 scope / 预算）`task.reopen` `bug.decide`（验收 / 打回 / wontfix）`override`（`mode=force-close | waive`）
+**Owner（9，控制台；`req.intake`/`req.approve` 另有 CLI 等价入口）**：`req.intake` `req.approve` `req.amend` `answer` `handoff` `task.adjust`（调 scope / 预算）`task.reopen` `bug.decide`（验收 / 打回 / wontfix）`override`（`mode=force-close | waive`）
 
 ## 12. CLI
 
@@ -459,6 +459,10 @@ errors:   E_QUOTA（超 3 次，只记事件，不阻塞）
 ### H.2 Owner 面（控制台 HTTP，仅本机）
 
 所有请求 `POST`，`Content-Type: application/json`，带一次性 CSRF token（页面注入）；响应同附录 A。
+
+其中 `req.intake` / `req.approve` 另有 CLI 等价入口（`devcontrol intake` / `devcontrol approve`），
+给 `init --no-mcp` 的纯 CLI 项目用。两者事件都记 `channel`：控制台写 `owner`，终端写 `cli`——
+「谁批准了这条」在事后是查得到的。
 
 ```jsonc
 req.intake   { type:"requirement", title, goal, acceptance:[{assertion}] }

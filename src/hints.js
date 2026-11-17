@@ -2,7 +2,7 @@
 // 原则：只说两件事——这活儿是谁的责任（Agent 自己能做 / 只有 Owner 能做），以及具体动作。
 // 错误信息本身说"哪里错了"，hint 说"然后呢"，两者不重复。
 const HINTS = {
-  E_NEED_APPROVED: "需求还没批准。这是 Owner 的动作：他在控制台「收件箱」批准后，你才能建任务。",
+  E_NEED_APPROVED: "需求还没批准。这是人的动作（控制台「收件箱」，或终端 devcontrol approve FR-001 --path P-001），批准后你才能建任务。",
   E_NEED_RESOLUTION: "这个任务返工过。收口时补一句 --resolved-by \"这次是怎么解决的\"，让下一个人看得懂。",
   E_UNOWNED_COMMIT: "提交里没有 Task-Id trailer，内核不认。用 devcontrol commit 而不是 git commit。",
   E_SCOPE_VIOLATION: "改到任务 scope 之外了。要么把这些文件加进 scope（Owner 可调），要么另开一个任务。",

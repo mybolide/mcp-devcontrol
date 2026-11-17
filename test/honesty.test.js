@@ -74,3 +74,26 @@ test("收口真的返回 closedBy=evidence，不是编出来的 rerun", async ()
   assert.equal(out.closedBy, "evidence", "收口靠的是证据，不是一次不存在的重跑");
   assert.equal(db.prepare("SELECT closed_by FROM tasks WHERE id=?").get(t.id).closed_by, "evidence");
 });
+
+test("没人再说「Owner 的动作只在控制台」——加了 CLI 入口之后这话就不准了", () => {
+  // T-106：T-104 给了 intake/approve 终端入口，但 SKILL、hints、契约文档里
+  // 十几处还写着「仅控制台」。这类话最坏的地方不是错，是它会让人（和 Agent）
+  // 在纯 CLI 项目里以为这条路不存在——正好是 T-104 修掉的那个死胡同。
+  const files = [
+    path.join(SRC, "hints.js"),
+    path.join(ROOT, "docs/03-discipline-core.md"),
+    path.join(ROOT, "README.md"),
+    path.join(ROOT, "AGENTS.md"),
+  ].filter((f) => fs.existsSync(f));
+  for (const f of files) {
+    const body = read(f);
+    assert.doesNotMatch(body, /仅控制台/, `${path.relative(ROOT, f)} 还说 Owner 动作「仅控制台」`);
+    assert.doesNotMatch(body, /只在控制台（\\`devcontrol serve\\`）里，由人点/, `${path.relative(ROOT, f)} 的说明已经过时`);
+  }
+});
+
+test("SKILL 里两条路都写明：控制台点，或者终端 approve", () => {
+  const skill = read(path.join(SRC, "skill.js"));
+  assert.match(skill, /devcontrol approve/, "得告诉 Agent：人也可以在终端批准");
+  assert.match(skill, /控制台/, "控制台那条路当然还在");
+});
