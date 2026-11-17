@@ -112,8 +112,17 @@ export const CAPABILITIES = [
   // ── 以下是「只有 Owner 能做」的动作 ────────────────────────────────────────
   // 它们刻意不进 MCP：Agent 能自己批准需求，纪律就没有意义了。
   // 但必须登记在这里，否则「新按钮悄悄长出来」没人管。
-  { name: "收需求 / 收 Bug", action: null, mcp: null, cli: null, console: "intake" },
-  { name: "批准需求 + 冻契约", action: null, mcp: null, cli: null, console: "approve" },
+  // 收件和批准有 CLI 入口：--no-mcp 是写进 README 的正式模式，那条路上没有控制台，
+  // 不给入口等于「这个模式第 1 步就走不通」（T-104）。它们仍然不进 MCP——
+  // Agent 能自己批准自己，纪律就没有意义了。CLI 是人在终端敲的。
+  {
+    name: "收需求 / 收 Bug",
+    action: null,
+    mcp: null,
+    cli: { sub: "intake", flags: ["title", "accept", "goal"] },
+    console: "intake",
+  },
+  { name: "批准需求 + 冻契约", action: null, mcp: null, cli: { sub: "approve", flags: ["req", "path"] }, console: "approve" },
   { name: "改需求验收", action: null, mcp: null, cli: null, console: "amend" },
   { name: "调任务的 scope / 预算", action: null, mcp: null, cli: null, console: "adjust" },
   { name: "Bug 裁决", action: null, mcp: null, cli: null, console: "decide" },

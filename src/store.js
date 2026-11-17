@@ -164,6 +164,10 @@ export function consumeWaive(db, taskId, code) {
 
 export function reqIntake(db, root, input) {
   return tx(db, () => {
+    // 从哪个入口来的：控制台是人点的（owner），终端是 Owner 自己敲的（cli）。
+    // 两个都要能看见——不然「谁批准了这条需求」在 CLI 模式下永远写 owner，
+    // 等于把 Agent 自己批准自己的可能洗白了（T-104）。
+    const via = input.channel === "cli" ? "（终端）" : "";
     const type = input.type ?? "requirement";
     if (type === "doc") {
       const rel = String(input.path ?? "").trim();
@@ -216,7 +220,7 @@ export function reqIntake(db, root, input) {
     db.prepare(
       "INSERT INTO requirements(id,title,goal,acceptance_json,status,created_at) VALUES(?,?,?,?,?,?)",
     ).run(id, String(input.title ?? "").trim(), String(input.goal ?? "").trim(), JSON.stringify(acceptance), "draft", now());
-    logEvent(db, { actor: "owner", channel: "owner", action: "req.intake", detail: input.title ?? "" });
+    logEvent(db, { actor: "owner", channel: input.channel ?? "owner", action: "req.intake", detail: `${input.title ?? ""}${via}` });
     return { id, type };
   });
 }
@@ -224,6 +228,7 @@ export function reqIntake(db, root, input) {
 /** 一键批准：需求 + Path 一起冻结，写契约提交 */
 export function reqApprove(db, root, input) {
   return tx(db, () => {
+    const via = input.channel === "cli" ? "（终端）" : "";
     const req = getReq(db, input.requirementId);
     if (!req) fail("E_NEED_APPROVED", `需求不存在：${input.requirementId}`);
     const p = getPath(db, input.pathId);
@@ -257,7 +262,7 @@ export function reqApprove(db, root, input) {
       now(),
       p.id,
     );
-    logEvent(db, { actor: "owner", channel: "owner", action: "req.approve", detail: `${req.id} + ${p.id} @ ${sha ? sha.slice(0, 8) : "弱模式"}` });
+    logEvent(db, { actor: "owner", channel: input.channel ?? "owner", action: "req.approve", detail: `${req.id} + ${p.id} @ ${sha ? sha.slice(0, 8) : "弱模式"}${via}` });
     return { requirementId: req.id, pathId: p.id, contractCommit: sha, hash };
   });
 }

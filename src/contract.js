@@ -91,14 +91,34 @@ export function contractCommands(body) {
   return Array.isArray(body.testCmds) ? body.testCmds : [];
 }
 
+/** 断言只能这么写：把写法本身摆出来，比说「缺 ::」有用 */
+export const ASSERTION_HELP =
+  '断言格式：<命令> :: <谓词>，例如 `npm test :: exit==0`、`npm run build :: exit==0`、`make lint :: stdout =~ /0 problems/`（谓词只有两种：exit==0 和 stdout =~ /正则/）';
+
 export function parseAssertion(assertion) {
   const text = String(assertion ?? "").trim();
   const idx = text.indexOf("::");
-  if (idx < 0) throw Object.assign(new Error(`E_CONTRACT: 断言缺少 "::"：${text}`), { code: "E_CONTRACT" });
+  if (idx < 0) {
+    throw Object.assign(new Error(`E_CONTRACT: 断言缺少 "::"：${text}。${ASSERTION_HELP}`), {
+      code: "E_CONTRACT",
+      data: { assertion: text, help: ASSERTION_HELP },
+    });
+  }
   const command = text.slice(0, idx).trim();
   const predicate = text.slice(idx + 2).trim();
   if (!command || !predicate) {
-    throw Object.assign(new Error(`E_CONTRACT: 断言格式不合法：${text}`), { code: "E_CONTRACT" });
+    throw Object.assign(new Error(`E_CONTRACT: 断言格式不合法：${text}。${ASSERTION_HELP}`), {
+      code: "E_CONTRACT",
+      data: { assertion: text, help: ASSERTION_HELP },
+    });
+  }
+  // 谓词写错最难自己发现：它要到收口比对时才炸，而那时人会以为是测试没过。
+  // 所以在这里就拦住，并把两种合法写法报给他。
+  if (!/^exit\s*==\s*\d+$/.test(predicate) && !/^stdout\s*=~\s*\/.*\/[a-z]*$/s.test(predicate)) {
+    throw Object.assign(new Error(`E_CONTRACT: 谓词不认识：${predicate}。${ASSERTION_HELP}`), {
+      code: "E_CONTRACT",
+      data: { assertion: text, predicate, help: ASSERTION_HELP },
+    });
   }
   return { command, predicate };
 }

@@ -36,7 +36,21 @@ npm link            # 之后任意目录可用 devcontrol
 | 方式 | 命令 | 得到什么 | 代价 |
 |---|---|---|---|
 | MCP（推荐） | `devcontrol init` | Agent 在会话里直接调 `devcontrol` 工具；控制台随连接自动拉起；纪律随 `instructions` 下发 | 要在客户端注册一次（init 帮你写四端配置） |
-| 纯 CLI | `devcontrol init --no-mcp` | 同样的门禁与证据链，Agent 走 `devcontrol status/commit/close` | 控制台要自己 `devcontrol serve`；工具说明靠 `AGENTS.md` |
+| 纯 CLI | `devcontrol init --no-mcp` | 同样的门禁与证据链，Agent 走 `devcontrol status/commit/close`；Owner 用 `devcontrol intake/approve` 收件批准，全程不用开浏览器 | 工具说明靠 `AGENTS.md` |
+
+纯 CLI 模式的一条完整闭环（全部在终端里）：
+
+```bash
+devcontrol init --no-mcp
+devcontrol intake "把首页标题改成人话" --accept "npm test :: exit==0"   # 收件
+devcontrol approve FR-001 --path P-001                                  # 批准，契约冻结进 git
+devcontrol next        # 内核说下一步，最后一行是可直接粘贴的命令
+devcontrol run -- npm test   # 自己跑验收，顺手留证据
+devcontrol close
+```
+
+`intake` / `approve` 是 Owner 的动作，也出现在控制台里。内核不设密码（那是假安全感），
+但它会记下这次批准**从哪个入口来的**（`channel=cli` 还是 `channel=owner`），事后查得到。
 
 **MCP 不是必需的**：内核的状态、契约、门禁、证据全在 `.devcontrol/state.db` + git 里，CLI 与 MCP 走的是同一套函数。MCP 只是让 Agent 不必调 shell，并把控制台生命周期挂上去。
 

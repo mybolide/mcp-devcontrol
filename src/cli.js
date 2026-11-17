@@ -11,7 +11,7 @@ import { cliCommand } from "./nextcmd.js";
 import { doctor, exportMarkdown } from "./report.js";
 import { createRelease, getRelease, listReleases, planRelease, shipRelease } from "./release.js";
 import { FLOWS_REL, flowFromRequirement, flowToRequirement, listFlows, readFlow } from "./flow.js";
-import { getTask, mapTask, listTasks, listReqs, listPaths, listDocs, reqIntake, disciplineStats, logRejection } from "./store.js";
+import { getReq, getTask, mapTask, listTasks, listReqs, listPaths, listDocs, reqIntake, reqApprove, disciplineStats, logRejection } from "./store.js";
 import { hintFor } from "./hints.js";
 import { assertionCommand, detectTestCmds } from "./testcmd.js";
 import { isVendorPath, vendorIgnores } from "./vendor.js";
@@ -853,6 +853,91 @@ export function cmdDoc(args) {
 }
 
 /**
+ * devcontrol intake "标题" --accept "npm test :: exit==0" [--goal …] [--accept …]
+ *
+ * 为什么要有：README 把 --no-mcp 写成和 MCP 并列的正式模式，但这条路第 1 步就断了——
+ * 需求只能从控制台收，而 --no-mcp 的项目里可能根本没有控制台在跑（T-104）。
+ *
+ * 它是 Owner 的动作：Agent 不该用。内核不设密码（那是假安全感），
+ * 但会把「谁、从哪个入口」记进事件流——控制台和周报里看得见。
+ */
+export function cmdIntake(args) {
+  const root = resolveRoot();
+  const db = openDb(root);
+  const flag = (name) => {
+    const i = args.indexOf(`--${name}`);
+    return i >= 0 ? args[i + 1] : undefined;
+  };
+  const every = (name) => args.flatMap((a, i) => (a === `--${name}` && args[i + 1] ? [args[i + 1]] : []));
+  const title = flag("title") ?? args.find((a) => !a.startsWith("--"));
+  const acceptance = every("accept");
+  if (!title || !acceptance.length) {
+    return failCli(
+      '用法：devcontrol intake "一句话说清要什么" --accept "npm test :: exit==0" [--accept "npm run build :: exit==0"] [--goal "为什么做"]',
+      "E_USAGE",
+    );
+  }
+  try {
+    const res = reqIntake(db, root, {
+      type: "requirement",
+      title,
+      goal: flag("goal"),
+      acceptance,
+      channel: "cli",
+    });
+    console.log(`${res.id}  已收件（草稿）：${title}`);
+    console.log(`验收 ${acceptance.length} 条：`);
+    for (const a of acceptance) console.log(`  · ${a}`);
+    console.log(`\n下一步：devcontrol approve ${res.id} --path <P-00x>（用 devcontrol status 看有哪些 Path）`);
+    return 0;
+  } catch (error) {
+    return failCli(error.message, error.code ?? "E_ERROR", error.data ?? null, 1);
+  }
+}
+
+/**
+ * devcontrol approve FR-001 --path P-001
+ *
+ * 批准 = 冻结契约。这是这个产品里最重的一次点击：之后 Agent 改不了验收、改不了命令。
+ * 所以它在这里仍然是「人的动作」——命令行上能敲，但事件流记 channel=cli，
+ * 谁在什么时候从终端批的，事后查得到。
+ */
+export function cmdApprove(args) {
+  const root = resolveRoot();
+  const db = openDb(root);
+  const flag = (name) => {
+    const i = args.indexOf(`--${name}`);
+    return i >= 0 ? args[i + 1] : undefined;
+  };
+  const requirementId = flag("req") ?? flag("requirementId") ?? args.find((a) => /^FR-\d+$/.test(a));
+  const pathId = flag("path") ?? flag("pathId") ?? args.find((a) => /^P-\d+$/.test(a));
+  if (!requirementId || !pathId) {
+    const pending = listReqs(db).filter((r) => r.status === "draft");
+    const paths = listPaths(db).filter((p) => p.status === "draft" || p.status === "approved");
+    return failCli(
+      `用法：devcontrol approve FR-001 --path P-001${
+        pending.length ? `\n待批准的需求：${pending.map((r) => r.id).join("、")}` : "\n（当前没有待批准的需求：devcontrol intake \"…\" --accept \"…\" 先收一条）"
+      }${paths.length ? `\n可用 Path：${paths.map((p) => `${p.id}(${p.allowedPaths.join(",") || "."})`).join("、")}` : ""}`,
+      "E_USAGE",
+    );
+  }
+  try {
+    const res = reqApprove(db, root, { requirementId, pathId, channel: "cli" });
+    const req = getReq(db, requirementId);
+    console.log(`${res.requirementId} + ${res.pathId}  已批准，契约已冻结`);
+    if (res.contractCommit) console.log(`契约提交：${res.contractCommit.slice(0, 8)}（Agent 改不了它，改了内核会拒）`);
+    if (req?.acceptance?.length) {
+      console.log(`冻结的验收：`);
+      for (const a of req.acceptance) console.log(`  · ${a}`);
+    }
+    console.log(`\n下一步：devcontrol next —— 内核会告诉你该拆哪条任务`);
+    return 0;
+  } catch (error) {
+    return failCli(error.message, error.code ?? "E_ERROR", error.data ?? null, 1);
+  }
+}
+
+/**
  * devcontrol ask "问题" [--options a,b] [--task T-00x]
  *
  * 为什么需要它：AGENTS.md 把「遇到歧义用 ask，不要猜」写成硬规则，
@@ -1020,7 +1105,7 @@ export async function main(argv) {
   try {
     // 没有项目库就别往下走：openDb 会凭空建一个空库，用户看到「0 个任务」
     // 还以为自己初始化过了。init / help / 版本号天然不需要库（T-098）。
-    const NEEDS_DB = new Set(["run", "commit", "renew", "next", "task", "ask", "bug", "flow", "close", "status", "bootstrap", "stats", "report", "memory", "doctor", "evidence", "doc", "release", "export", "serve", "mcp"]);
+    const NEEDS_DB = new Set(["run", "commit", "renew", "next", "task", "intake", "approve", "ask", "bug", "flow", "close", "status", "bootstrap", "stats", "report", "memory", "doctor", "evidence", "doc", "release", "export", "serve", "mcp"]);
     if (NEEDS_DB.has(cmd)) {
       const root = resolveRoot();
       if (!fs.existsSync(dbPath(root))) {
@@ -1040,6 +1125,10 @@ export async function main(argv) {
         return cmdNext();
       case "task":
         return cmdTask(args);
+      case "intake":
+        return cmdIntake(args);
+      case "approve":
+        return cmdApprove(args);
       case "ask":
         return cmdAsk(args);
       case "bug":
@@ -1094,6 +1183,8 @@ export async function main(argv) {
   devcontrol next                   内核认为你现在该做的那一件事（参数可直接照抄）
   devcontrol stats                  纪律三数：被拦 / 返工 / 绕过（内核到底有没有在起作用）
   devcontrol report [--days 7] [--json]  周报：这一周收口几条、拦在哪、净改动多少（默认 markdown）
+  devcontrol intake "标题" --accept "npm test :: exit==0"   收需求（草稿）——纯 CLI 模式的第一步
+  devcontrol approve FR-001 --path P-001   批准需求并冻结契约（之后 Agent 改不了验收）
   devcontrol ask "问题" [--options a,b] [--task T-00x]   遇到歧义就问，别猜（任务会暂停等 Owner 回答）
   devcontrol bug "标题" --repro "第一步" [--repro …]   上报不属于本任务的 bug（Owner 在控制台裁决）
   devcontrol flow <list|show|save|apply>  流程模板：把做过的交付沉淀下来复用（存 .devcontrol/flows/）

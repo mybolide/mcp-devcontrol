@@ -75,9 +75,33 @@ export function bootstrap(db, root, extra = {}) {
   const gaps = plan.filter((p) => p.missing.length);
   const { ok: ready, blocked } = claimableTasks(db, tasks);
 
+  // 每个 blocker 都要给出**下一步真能敲的那条命令**。
+  // 只写「等 Owner 批准」的话，纯 CLI 用户拿到的是一个死胡同——
+  // 评审实测里，人在这一步的唯一出路是去读源码找 POST /api/owner（T-104）。
+  const draftPaths = paths.filter((p) => p.status === "draft");
+  const approvedPaths = paths.filter((p) => p.status === "approved");
+  const where = extra.console ? `或打开控制台 ${extra.console}` : "或起控制台：devcontrol serve";
   const blockers = [];
-  for (const r of reqs.filter((r) => r.status === "draft")) blockers.push({ code: "E_NEED_APPROVED", fix: `等 Owner 批准 ${r.id}` });
-  for (const p of paths.filter((p) => p.status === "draft")) blockers.push({ code: "E_NEED_APPROVED", fix: `等 Owner 批准 Path ${p.id}` });
+  for (const r of reqs.filter((r) => r.status === "draft")) {
+    const p = draftPaths[0] ?? approvedPaths[0];
+    blockers.push({
+      code: "E_NEED_APPROVED",
+      requirementId: r.id,
+      fix: p
+        ? `等人批准需求 ${r.id}：devcontrol approve ${r.id} --path ${p.id}（${where}）`
+        : `需求 ${r.id} 还没有 Path——先 devcontrol init，${where}`,
+    });
+  }
+  for (const p of draftPaths) {
+    const r = reqs.find((x) => x.status === "draft") ?? null;
+    blockers.push({
+      code: "E_NEED_APPROVED",
+      pathId: p.id,
+      fix: r
+        ? `等人批准 Path ${p.id}：devcontrol approve ${r.id} --path ${p.id}（${where}）`
+        : `Path ${p.id} 还是草稿：先 devcontrol intake "…" --accept "…" 收一条需求，再 approve（${where}）`,
+    });
+  }
   for (const t of parked) blockers.push({ code: "E_PARKED", fix: `${t.id} 已 parked，等 Owner reopen` });
   for (const t of blocked) blockers.push({ code: "E_DEP_OPEN", fix: `${t.id} 等前置：${t.dependsOn.join(", ")}` });
 
@@ -118,9 +142,17 @@ export function bootstrap(db, root, extra = {}) {
       };
     }
     if (!reqs.some((r) => ["approved", "building"].includes(r.status))) {
-      return { action: "wait", args: {}, why: reqs.some((r) => r.status === "draft") ? "等 Owner 批准需求" : "还没有已批准的需求，等 Owner 收件并批准" };
+      return {
+        action: "wait",
+        args: {},
+        why: reqs.some((r) => r.status === "draft")
+          ? `等 Owner 批准需求（${where}）`
+          : `还没有需求，需要人收件并批准：控制台「收件箱」，或终端 devcontrol intake "要做什么" --accept "npm test :: exit==0" 然后 devcontrol approve`,
+      };
     }
-    if (!paths.some((p) => p.status === "approved")) return { action: "wait", args: {}, why: "还没有已批准的 Path，等 Owner 批准" };
+    if (!paths.some((p) => p.status === "approved")) {
+      return { action: "wait", args: {}, why: `还没有已批准的 Path，等 Owner 批准（${where}）` };
+    }
     // 走到这里说明：没有在办的、没有可领的、也没有没被覆盖的验收——活干完了。
     // 这时候还催「去拆新任务」是错的，Agent 会凭空造出一条没人要的工作。
     const rel = releaseSummary(db);
