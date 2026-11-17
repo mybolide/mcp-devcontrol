@@ -306,8 +306,8 @@
       <section class="view" data-view="evidence" hidden>
         <div class="sectionhead">
           <span class="eyebrow">EVIDENCE</span>
-          <h1>每次重跑</h1>
-          <p class="sub">收口时会在干净的副本里重跑一遍验收：命令、结果、当时的版本、改动指纹，都能复核。</p>
+          <h1>Agent 跑过的验收</h1>
+          <p class="sub">收口时内核只核验这份证据：命令在契约白名单里、是在当前这份代码上跑的（指纹一致）、退出码满足断言。内核从不执行测试。</p>
         </div>
         <div class="panel">
           <table>
@@ -848,7 +848,7 @@
               <td class="mono">${esc((r.fingerprint || "").slice(0, 8))}</td>
               <td class="mu">${r.duration_ms}ms</td></tr>`,
           )
-          .join("") || `<tr><td colspan="7" class="empty">还没有重跑记录</td></tr>`;
+          .join("") || `<tr><td colspan="7" class="empty">还没有验收记录</td></tr>`;
       }
       let lastSig = "";
       // 轮询会重绘整个视图：先记下正在输入的控件，重绘后把值和光标放回去
@@ -1048,7 +1048,7 @@
           const force = r.values.code === "__force__";
           const code = force ? undefined : r.values.code;
           // 整单放行是不可逆的（直接标 done），单独确认一次
-          if (force && !(await confirmSheet(`真的整单放行 ${taskId}？`, "它会被直接标记完成，跳过了干净检出重跑验收。事后只有事件日志能说明这里发生过什么。"))) return;
+          if (force && !(await confirmSheet(`真的整单放行 ${taskId}？`, "它会被直接标记完成，跳过证据核验。事后只有事件日志能说明这里发生过什么。"))) return;
           return owner("override", { taskId, code, mode: force ? "force-close" : "waive", reason: r.values.reason });
         }
         if (b.dataset.budget) {

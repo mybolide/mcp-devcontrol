@@ -382,7 +382,7 @@ export function recordEvidence(db, root, { taskId, command, result, scope = ["."
 }
 
 export async function taskClose(db, root, input, opts = {}) {
-  // 收口要跑一遍干净检出（本项目 npm test ≈ 26s），中途没有任何输出会让人以为卡死了。
+  // 收口要核对证据指纹和提交链，大仓库上也要一两秒；中途没有任何输出会让人以为卡死了。
   // 进度只走回调：CLI 打到 stderr（stdout 必须保持干净 JSON），MCP 不传就没有噪音。
   const progress = typeof opts.onProgress === "function" ? opts.onProgress : () => {};
   const startedAt = Date.now();
@@ -415,7 +415,7 @@ export async function taskClose(db, root, input, opts = {}) {
   if (cas.changes !== 1) fail("E_BUSY", "另一个 close 正在进行");
 
   let last = null;
-  mark("start", `开始收口 ${t0.id}（干净检出里重跑验收）`);
+  mark("start", `开始收口 ${t0.id}（核对 Agent 提交的验收证据）`);
   try {
     const t = getTask(db, t0.id);
     const p = getPath(db, t.path_id);
@@ -656,7 +656,7 @@ export async function taskClose(db, root, input, opts = {}) {
 
     // 收口
     const done = db
-      .prepare("UPDATE tasks SET status='done', changed_lines=?, closed_by='rerun', closed_at=?, closing_at=NULL, closing_token=NULL, updated_at=? WHERE id=? AND status='doing' AND closing_token=?")
+      .prepare("UPDATE tasks SET status='done', changed_lines=?, closed_by='evidence', closed_at=?, closing_at=NULL, closing_token=NULL, updated_at=? WHERE id=? AND status='doing' AND closing_token=?")
       .run(lines, now(), now(), t.id, token);
     if (done.changes !== 1) throw new DFError("E_BUSY", "任务状态已被改变");
     for (const c of owned) {
@@ -686,7 +686,7 @@ export async function taskClose(db, root, input, opts = {}) {
       lines,
       files: files.length,
       runs,
-      closedBy: "rerun",
+      closedBy: "evidence",
       commits: weak ? [] : owned.map((c) => c.sha),
       fingerprint: fpNow,
       // 规范对照：内核只报事实，不判违规。Owner 看这个决定要不要打回。

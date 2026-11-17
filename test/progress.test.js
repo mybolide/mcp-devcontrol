@@ -1,6 +1,6 @@
 // devcontrol — 收口要让人看得见在跑什么
 //
-// 一次收口要在干净检出里重跑整条验收（本项目 npm test ≈ 26s）。以前这段时间里
+// 一次收口要核对证据指纹和提交链（大仓库上也要一两秒）。以前这段时间里
 // 一个输出都没有，看着像卡死，人会 Ctrl-C —— 那就等于白跑一遍。
 // 约束：进度只走回调（CLI → stderr），stdout 必须始终是能整段 JSON.parse 的结果。
 import test from "node:test";
@@ -27,7 +27,7 @@ test("taskClose 会上报阶段：准备 → 检查 → 跑验收 → 完成", a
 
   const seen = [];
   const res = await closeProven(db, root, { id: t.id }, { onProgress: (e) => seen.push(e) });
-  assert.equal(res.closedBy, "rerun");
+  assert.equal(res.closedBy, "evidence");
 
   const stages = seen.map((e) => e.stage);
   for (const want of ["start", "checks", "evidence", "evidence-done", "done"]) {
@@ -67,7 +67,7 @@ test("进度回调自己抛错不能把收口带崩", async () => {
     },
   });
   assert.equal(getTask(db, t.id).status, "done", "进度只是观测，不能影响收口结果");
-  assert.equal(res.closedBy, "rerun");
+  assert.equal(res.closedBy, "evidence");
 });
 
 test("CLI close：进度写 stderr，stdout 仍是一整段可解析的 JSON", () => {
@@ -79,6 +79,6 @@ test("CLI close：进度写 stderr，stdout 仍是一整段可解析的 JSON", (
   const out = execFileSync(process.execPath, [BIN, "close", t.id], { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
   const parsed = JSON.parse(out);
   assert.equal(parsed.ok, true);
-  assert.equal(parsed.closedBy, "rerun");
+  assert.equal(parsed.closedBy, "evidence");
   assert.ok(sh(root, "git", "log", "-1", "--pretty=%s").length > 0);
 });

@@ -177,8 +177,6 @@ export function cmdInit(args) {
     ".devcontrol/memory.db*",
     ".devcontrol/settings.json",
     ".devcontrol/runs/",
-    ".devcontrol/r2-wt/",
-    ".devcontrol/r2-wt-legacy/",
     ".devcontrol/console.lock",
   ]);
   appendLines(".gitattributes", ["* text=auto eol=lf"]);

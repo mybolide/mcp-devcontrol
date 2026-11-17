@@ -1,7 +1,7 @@
 # devcontrol v6 — 研发纪律内核
 
 让 Claude Code / Codex CLI / Cursor / OpenCode 这些编码 Agent 在**同一套规则**里干活：
-改代码前必须领任务、只能改 scope 内的文件、交付必须能在一个干净检出里重跑通过。
+改代码前必须领任务、只能改 scope 内的文件、交付必须带着跑过的证据（命令 + 退出码 + 代码指纹）——内核只核验，不代跑。
 人只做三件事：**收件、批准、放行**；工序由 Agent 自己走完。
 
 - **从 mcp-probe-kit v5 迁移记忆**：`node scripts/v5-import.mjs --qdrant http://127.0.0.1:6333 --collection <v5集合>`（默认 dry-run，加 `--write` 才落库）。
@@ -49,7 +49,7 @@ devcontrol init
 
 `init` 做五件事：
 
-1. 建 `.devcontrol/`（`state.db` / `contracts/` / `runs/`），并把 `state.db*`、`runs/`、`r2-wt/` 写进 `.gitignore`。
+1. 建 `.devcontrol/`（`state.db` / `contracts/` / `runs/`），并把 `state.db*`、`runs/` 写进 `.gitignore`。
 2. 为仓库里每个顶层目录建一条 **Path 草稿**（`allowed_paths` + 预算 + 测试命令），状态 `draft`，等 Owner 批准。
 3. 写四端 MCP 配置（指向本机的 `bin/devcontrol.js`，并带上 `DEVCONTROL_ROOT`）：
    `.mcp.json`（Claude Code）、`.cursor/mcp.json`（Cursor）、`opencode.json`（OpenCode）；Codex 的 `~/.codex/config.toml` 片段会打印出来，手动贴一次。
@@ -93,7 +93,7 @@ Agent 的典型一轮：
 
 ```text
 bootstrap → task.claim(T-003) → 改代码 → devcontrol commit -m "..." → task.close
-                                                          ↑ 内核在 .devcontrol/r2-wt 干净检出里重跑验收
+                                                          ↑ 内核核验 Agent 留下的证据，它不跑测试
 ```
 
 ### 3.2 Owner（只在控制台）
@@ -123,7 +123,7 @@ Owner 动作**只在控制台**（`release.ship` 例外，MCP 也能调）：
 | `memory.*` | 晋升、编辑、丢弃经验 |
 | `settings.save` / `release.ship` | 保存设置 / 发布打 tag |
 
-控制台九个视图（侧栏切换）：**收件箱**（待批准需求 / 待回答提问 / 待裁决 Bug / parked 任务 / 待提炼记忆）、**需求**、**Bug**、**任务**、**发布**、**记忆**、**文档**、**证据**（每次重跑的命令/退出码/HEAD/指纹）、**设置**。
+控制台九个视图（侧栏切换）：**收件箱**（待批准需求 / 待回答提问 / 待裁决 Bug / parked 任务 / 待提炼记忆）、**需求**、**Bug**、**任务**、**发布**、**记忆**、**文档**、**证据**（Agent 跑过的命令/退出码/HEAD/指纹）、**设置**。
 
 > `abandon` 是唯一「这件事不做了」的出口。没有它的时候，parked 任务只能 reopen 重试，需求也没有终态——需求会永远占着覆盖率，Agent 的 `next` 永远在等一个不会发生的 reopen。
 
@@ -197,7 +197,7 @@ MCP 连接就是控制台的生命周期触发器。`runMcp` 启动时调用 `en
 ```bash
 devcontrol memory status                    # 有多少坑、索引状态、连的哪个 embedding/Qdrant
 devcontrol memory search "worktree 提交丢失"  # 在本项目记忆里检索
-devcontrol close --resolved-by "r2-wt 是 detached，提交后要 cherry-pick 回主分支"
+devcontrol close --resolved-by "证据是在旧代码上跑的，重跑一次再收口"
 devcontrol memory reindex                   # 向量库重建（数据不丢）
 devcontrol release create "v0.1" --target 2026-12-01   # 发布：plan 挂任务，ship 全部 done 才放行
 devcontrol release plan R-001 T-003 T-004
@@ -342,7 +342,7 @@ Jira 只有**验收**（Acceptance，功能做对了没）。代码写得怎么�
 `requirements` `paths` `tasks` `bugs` `docs` `questions` `events` `runs` `patch_ids`，外加 `meta`（schema 版本、单调 ID 计数器、一次性 waive 标记）。
 
 - ID 单调递增不复用：`FR-xxx` / `P-xxx` / `T-xxx` / `B-xxx` / `Q-xxx` / `D-xxx`。
-- `runs` 存每次验收重跑的命令、退出码、HEAD、指纹、输出（截断 20k）、耗时——可复核。
+- `runs` 存 Agent 跑过的验收命令、退出码、HEAD、指纹、输出（截断 20k）、耗时——可复核。
 - 唯一可写入口是内核函数；库里出现 `done` 却没有 `close` 事件，`devcontrol doctor` 会报 `GHOST_DONE`。
 
 ## 6. 自检
@@ -400,7 +400,7 @@ devcontrol export   # markdown 快照（只读，别拿去改状态）
 
 - patch-id 兜底只用于「本任务历史提交被 rebase」的识别，不做跨分支 cherry-pick 的完整归并证明。
 - 新增文件必须在 `task.scope` 里**显式列出**，或由 Path 的 `allow_new_files` 放行；`allow_new_files` 目前只能在建 Path 时设定（控制台没给开关）。
-- 默认不用 worktree 隔离开发，只有 R2 重跑用临时 worktree。
+- 不用 worktree 隔离：内核从不执行你的测试，所以不需要干净副本。
 - 没有审批链、没有租约恢复、没有多 Owner。Owner 是单人。
 - 不做账号体系：控制台没有用户名/密码/多角色。跨机器访问靠「一次性令牌」，不是靠登录；多 Owner 不支持。
 - `amend` 把 Path 打回 `draft` 时，控制台只提示、不提供一键重批按钮（用 `approve` 重建）。

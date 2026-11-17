@@ -89,7 +89,7 @@ export function disciplineStats(db) {
   return { blocked, rework, bypassed, done };
 }
 
-/** 证据流：每次验收重跑的命令/退出码/HEAD/指纹，可复核 */
+/** 证据流：Agent 跑过的验收命令/退出码/HEAD/指纹，可复核 */
 export function listRuns(db, limit = 20) {
   return db
     .prepare(
