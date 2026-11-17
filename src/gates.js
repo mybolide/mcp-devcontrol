@@ -144,12 +144,23 @@ export function taskClaim(db, root, input, actor = "agent") {
     }
     const fp = fingerprint(root, t.scope, anchor);
     const exp = new Date(Date.now() + CLAIM_TTL_MS).toISOString();
+    // parked 必须由 Owner reopen，Agent 不能自己重开：连续失败 3 次是「需要人看一眼」的信号，
+    // 让它自己领回去重试第 4 次，等于把这套门禁当摆设。
+    if (t.status === "parked") {
+      fail("E_PARKED", `${t.id} 已 parked（连续失败 3 次），等 Owner 在控制台 reopen；Agent 不能自己重开`, { taskId: t.id });
+    }
     const res = db
       .prepare(
-        "UPDATE tasks SET status='doing', claimed_by=?, claimed_at=?, claim_expires_at=?, claim_fingerprint=?, contract_hash=?, contract_commit=?, base_head=?, updated_at=? WHERE id=? AND status IN ('backlog','parked') AND (claimed_by IS NULL OR claim_expires_at < ?)",
+        "UPDATE tasks SET status='doing', claimed_by=?, claimed_at=?, claim_expires_at=?, claim_fingerprint=?, contract_hash=?, contract_commit=?, base_head=?, updated_at=? WHERE id=? AND status='backlog' AND (claimed_by IS NULL OR claim_expires_at < ?)",
       )
       .run(actor, now(), exp, fp, p.hash, p.contract_commit ?? "", p.contract_commit ?? "", now(), t.id, now());
-    if (res.changes !== 1) fail("E_CLAIMED_BY_OTHER", "任务已被他人领取");
+    if (res.changes !== 1) {
+      const cur = getTask(db, t.id);
+      fail("E_CLAIMED_BY_OTHER", `${t.id} 由 ${cur?.claimed_by ?? "他人"} 持有（租约到 ${cur?.claim_expires_at ?? "?"}）`, {
+        holder: cur?.claimed_by ?? null,
+        expiresAt: cur?.claim_expires_at ?? null,
+      });
+    }
     logEvent(db, { action: "task.claim", taskId: t.id, detail: actor });
     return {
       id: t.id,
@@ -525,7 +536,12 @@ export async function taskClose(db, root, input, opts = {}) {
     const cur = getTask(db, t0.id);
     if (cur && cur.status === "doing" && cur.closing_token === token && last && !ENV_ONLY.has(last)) {
       const n = (cur.review_round ?? 0) + 1;
-      db.prepare("UPDATE tasks SET review_round=?, status=? WHERE id=?").run(n, n >= 3 ? "parked" : "doing", cur.id);
+      const parked = n >= 3;
+      if (parked) {
+        db.prepare("UPDATE tasks SET review_round=?, status='parked', claimed_by=NULL, claim_expires_at=NULL WHERE id=?").run(n, cur.id);
+      } else {
+        db.prepare("UPDATE tasks SET review_round=?, status='doing' WHERE id=?").run(n, cur.id);
+      }
       logEvent(db, { action: "close.fail", taskId: cur.id, code: last, detail: `第 ${n} 次` });
     }
     db.prepare("UPDATE tasks SET closing_at=NULL, closing_token=NULL WHERE id=? AND closing_token=?").run(t0.id, token);

@@ -14,7 +14,10 @@ export function coverage(db) {
   return reqs.map((r) => {
     const covered = new Set();
     for (const t of tasks) {
-      if (t.requirement_id !== r.id || t.status === "parked") continue;
+      if (t.requirement_id !== r.id) continue;
+      // parked 也算覆盖：这条任务还挂着那条验收，只是卡在「等 Owner 决定」。
+      // 早先把它当没覆盖，结果 next 让 Agent 去建一条新任务顶替它——
+      // 于是同一条验收有两张单子，Owner 一 reopen 就撞车。
       for (const a of t.acceptance) if (typeof a.deriveFrom === "number") covered.add(a.deriveFrom);
     }
     const missing = r.acceptance.map((text, idx) => ({ idx, text })).filter((x) => !covered.has(x.idx));
@@ -95,6 +98,17 @@ export function bootstrap(db, root, extra = {}) {
       };
     }
     if (blocked.length) return { action: "wait", args: {}, why: `${blocked[0].id} 等前置 ${blocked[0].dependsOn.join(", ")} 完成`, blocked: blocked.map((t) => t.id) };
+    // 有任务被 parked（连续失败 3 次）时，能做的事已经做完了：剩下的只能等 Owner 决定
+    // 「换个做法重开」还是「这件事不做了」。这时候让 Agent 去建新任务是最差的建议——
+    // 那会变成两张单子管同一条验收。
+    if (parked.length) {
+      return {
+        action: "wait",
+        args: {},
+        why: `${parked.map((t) => t.id).join("、")} 已 parked（连续失败），等 Owner 决定 reopen 还是放弃；不要新建任务顶替它`,
+        blocked: parked.map((t) => t.id),
+      };
+    }
     if (!reqs.some((r) => ["approved", "building"].includes(r.status))) {
       return { action: "wait", args: {}, why: reqs.some((r) => r.status === "draft") ? "等 Owner 批准需求" : "还没有已批准的需求，等 Owner 收件并批准" };
     }
