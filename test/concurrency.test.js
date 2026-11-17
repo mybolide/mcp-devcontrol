@@ -12,7 +12,10 @@ test("intersect：父目录与子路径算相交，前缀相近但不同的路�
   assert.equal(intersect(["src"], ["src"]), true, "完全相同");
   assert.equal(intersect(["src/a.js"], ["src/c.js"]), false, "不同文件不相交");
   assert.equal(intersect(["src/a"], ["src/ab"]), false, "前缀相近但不是父子目录");
-  assert.equal(intersect(["."], ["src/a.js"]), false, "点不是 src 的父路径（只用于契约层）");
+  // "." 是根 scope（Path 允许整个仓库时，任务默认就是这个）。
+  // 它能碰任何文件，所以必须和谁都算相交——早先按纯字符串前缀比，被判成不相交，
+  // 于是两条 scope="." 的任务可以同时领，互相踩了也不知道。
+  assert.equal(intersect(["."], ["src/a.js"]), true, "根 scope 覆盖一切");
 });
 
 test("scope 相交的任务不能被同时领取（E_SCOPE_OVERLAP）", () => {

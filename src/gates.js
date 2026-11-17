@@ -25,14 +25,30 @@ import { isVendorPath } from "./vendor.js";
 // 后面每次收口都得补 --resolved-by，纯属噪音。
 const ENV_ONLY = new Set(["E_DIRTY_SCOPE", "E_BUSY", "E_TIMEOUT", "E_NO_EVIDENCE", "E_EVIDENCE_STALE", "E_NO_DELIVERY"]);
 
+/** 路径 a 是否覆盖路径 b；"." 表示根，覆盖一切（和 fingerprint 里的 inScope 保持一致） */
+function coversPath(a, b) {
+  const p = String(a).replace(/\/+$/, "");
+  const q = String(b).replace(/\/+$/, "");
+  if (p === "" || p === ".") return true;
+  return q === p || q.startsWith(`${p}/`);
+}
+
 export function intersect(a, b) {
-  return a.some((x) =>
-    b.some((y) => {
-      const p = String(x).replace(/\/+$/, "");
-      const q = String(y).replace(/\/+$/, "");
-      return p === q || p.startsWith(`${q}/`) || q.startsWith(`${p}/`);
-    }),
-  );
+  return a.some((x) => b.some((y) => coversPath(x, y) || coversPath(y, x)));
+}
+
+/**
+ * 两个 scope 是不是「同一片地」——这才该拦。
+ *
+ * 相交不等于冲突：所有任务都要写测试，scope 里都带 test/，
+ * 但一个改 src/model、一个改 src/rating，井水不犯河水。
+ * 早先只判「相交」，结果多个 Agent 根本没法同时干活——它们永远在 test/ 上打架。
+ *
+ * 真正的冲突是「一方完全落在另一方地盘里」：那时候谁改了什么就说不清了。
+ */
+export function conflicts(a, b) {
+  const covers = (outer, inner) => inner.every((p) => outer.some((o) => coversPath(o, p)));
+  return covers(a, b) || covers(b, a);
 }
 
 function within(scope, allowed) {
@@ -135,11 +151,24 @@ export function taskClaim(db, root, input, actor = "agent") {
       const d = getTask(db, dep);
       if (!d || d.status !== "done") fail("E_DEP_OPEN", `前置 ${dep} 未完成`, { dep, status: d?.status ?? "missing" });
     }
-    // 注意：这里必须传 t.id，否则 id<>NULL 恒不成立，相交检查会形同虚设（并发探针发现的）
-    const doing = db.prepare("SELECT * FROM tasks WHERE status='doing' AND id<>? AND closing_token IS NULL").all(t.id).map((r) => JSON.parse(r.scope_json));
-    for (const other of doing) if (intersect(t.scope, other)) fail("E_SCOPE_OVERLAP", "与其他在办任务 scope 相交", { conflict: other });
+    // WIP 先查：手上有活是最根本的原因。先报 scope 冲突会把人引到错的方向——
+    // 他换个 scope 再来，照样被 WIP 挡住。
     const mine = db.prepare("SELECT id FROM tasks WHERE status='doing' AND claimed_by=? AND id<>?").all(actor, t.id);
     if (mine.length) fail("E_WIP_LIMIT", `你手上还有 ${mine[0].id}`, { holding: mine[0].id });
+    // 注意：这里必须传 t.id，否则 id<>NULL 恒不成立，相交检查会形同虚设（并发探针发现的）
+    const doing = db
+      .prepare("SELECT id, scope_json FROM tasks WHERE status='doing' AND id<>? AND closing_token IS NULL")
+      .all(t.id)
+      .map((r) => ({ id: r.id, scope: JSON.parse(r.scope_json) }));
+    const shared = [];
+    for (const other of doing) {
+      if (conflicts(t.scope, other.scope)) {
+        fail("E_SCOPE_OVERLAP", `与在办任务 ${other.id} 抢同一片地`, { conflict: other.id, scope: other.scope });
+      }
+      // 相交但不冲突：共享目录（多半是 test/）。不拦，但要告诉 Agent 别改同一个文件。
+      const overlap = t.scope.filter((p) => intersect([p], other.scope));
+      if (overlap.length) shared.push({ task: other.id, paths: overlap });
+    }
     for (const row of db.prepare("SELECT id FROM tasks WHERE status='doing' AND closing_token IS NULL AND claim_expires_at < ?").all(now())) {
       db.prepare("UPDATE tasks SET status='backlog', claimed_by=NULL, claimed_at=NULL, claim_expires_at=NULL WHERE id=?").run(row.id);
     }
@@ -178,6 +207,10 @@ export function taskClaim(db, root, input, actor = "agent") {
         // 没有具体的人持有它：真实原因只能是「状态不对」，不要编一个持有者出来
         fail("E_ILLEGAL_TRANSITION", `${t.id} 当前 ${cur?.status ?? "?"}，不是可领取状态`, { taskId: t.id, status: cur?.status ?? null });
       }
+      if (cur.claimed_by === actor) {
+        // 自己已经拿着它了：说「别人持有」会让人去找一个不存在的人
+        fail("E_ALREADY_HELD", `${t.id} 已经在你手上（租约到 ${cur.claim_expires_at ?? "?"}）`, { taskId: t.id });
+      }
       fail("E_CLAIMED_BY_OTHER", `${t.id} 由 ${cur.claimed_by} 持有（租约到 ${cur.claim_expires_at ?? "?"}）`, {
         holder: cur.claimed_by,
         expiresAt: cur.claim_expires_at ?? null,
@@ -192,6 +225,8 @@ export function taskClaim(db, root, input, actor = "agent") {
       dependsOn: t.dependsOn,
       // Agent 开工时就该知道「代码要怎么写」，而不是收口被拦才第一次听说
       standards: body.standards ?? [],
+      // 和别的在办任务共享的目录：不冲突，但这些地方别同时改
+      shared,
       contractHash: p.hash,
       contractCommit: p.contract_commit,
       baseHead: p.contract_commit ?? "",

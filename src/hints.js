@@ -14,6 +14,7 @@ const HINTS = {
   E_ASSERTION_FAILED: "验收命令没通过。看证据：devcontrol evidence run-xxxx（不给编号看最近 8 次），或控制台「证据」页。",
   E_TIMEOUT: "验收命令超时。先确认它在本机跑得完，再收口。",
   E_WIP_LIMIT: "WIP=1：你手上还有在办任务。先收了它（devcontrol close），或者 devcontrol renew 续租。",
+  E_ALREADY_HELD: "这条任务已经在你手上了，不用再领。继续干活，长时间不做就 renew 续租。",
   E_CLAIMED_BY_OTHER: "任务正在别人手上。两条路：① 等租约到期（message 里写了具体时间），到期后你直接 claim 就能接；② 立刻要接就请 Owner 在控制台点「交接」——那会释放它并生成一张交接卡。",
   E_SCOPE_OVERLAP: "别人正在改同一片代码。换一片，或者等他收口——别硬改，冲突是这么来的。",
   E_EVIDENCE_DRIFT: "重跑期间仓库被动了。别在收口时改文件，收完再说。",
