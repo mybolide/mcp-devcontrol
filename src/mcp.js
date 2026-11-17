@@ -1,5 +1,5 @@
 // devcontrol — MCP stdio 服务（官方 SDK：@modelcontextprotocol/sdk）
-// 单工具 devcontrol，13 个动作；连接即拉起 Owner 控制台
+// 单工具 devcontrol（动作清单见 ACTIONS）；连接即拉起 Owner 控制台
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
@@ -20,7 +20,7 @@ export const TOOL_NAME = "devcontrol";
 export const INSTRUCTIONS = `你是本项目的编码 Agent。工作纪律（由 devcontrol 内核强制）：
 1. 第一个动作必须是 devcontrol.bootstrap。它返回的 next 就是**你现在该做的下一件事**（内核已按依赖和验收覆盖排好序），不要自己挑；actions 是当前只该用的动作；plan 里是还没被任务覆盖的验收，拆任务时照它来。
 2. 改代码前必须 task.claim；只改任务 scope 内的文件；不许改 acceptance 或自选命令。
-3. 完成后 devcontrol commit -m "..."（只提交 scope 内文件），再 task.close —— 内核不跑你的测试，它核验你留下的证据：命令在契约白名单里、是在当前这份代码上跑的、退出码满足断言。
+3. 收尾只有一套顺序：先 devcontrol run -- <验收命令>（自己跑也行，但证据必须落在当前这份代码上），全部通过后 devcontrol commit -m "..."（只提交 scope 内文件），最后才 task.close —— 内核不跑你的测试，它只核验你留下的证据：命令在契约白名单里、是在当前这份代码上跑的、退出码满足断言。没跑就 close 会被 E_NO_EVIDENCE 拦下；在办期间随时 bootstrap 看 next，它按你实际走到哪一步给下一条命令。
 4. 遇到歧义用 ask，不要猜。
 5. bootstrap 返回的 console 地址就是 Owner 控制台：MCP 启动时自动拉起、挂掉时 bootstrap 自动重建。把它转告 Owner 即可，人不需要手动启动或重启。
 6. memory 是**这个项目自己的经验库**（存在本仓库 .devcontrol/memory.db，不写远程）：踩到的坑/解法、定下的约定、踩过的 SDK 怪癖，随时可以 memory.write（title + body + kind/tags）；动手前先用 memory.search 查一下。任务失败过（bootstrap.task.reviewRound > 0）时，task.close 必须带 resolvedBy，内核会自动记一条 pitfall。`;

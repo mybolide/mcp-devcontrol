@@ -77,15 +77,17 @@ devcontrol init
 
 ### 3.1 Agent（MCP 或 CLI 等价）
 
-MCP 只有一个工具 `devcontrol`，十三个动作（`wait` 是 `next` 告诉你「现在别动手」时唯一可调的动作）：
+MCP 只有一个工具 `devcontrol`，动作用 `action` 区分（`wait` / `task.work` 是 `next` 告诉你「现在别动内核，去干活或等着」时可调的动作）：
 
 | action | 用途 | 关键约束 |
 |---|---|---|
 | `wait` | 内核说等（等批准/等前置/等 Owner）时用；只返回当前状态 | 不改变任何状态 |
+| `task.work` | 领了活但还没写码 / 没留证据：内核说「该你干活了」，并给出四步顺序（写码 → `run` → `commit` → `close`） | 同样不改变状态；它不会替你写代码，也不会替你跑测试 |
 | `bootstrap` | 开局定向：**`next`（内核排好的下一件事）** + `actions` + `plan`（未覆盖的验收）+ 控制台地址 | 第一个动作必须是它；照 `next` 做，不自己挑 |
 | `task.create` | 拆任务（scope / 验收 / 依赖 / 预算） | 验收命令必须落在 Path 契约白名单内 |
 | `task.claim` | 领任务（45 分钟租约，WIP=1） | 与其他在办任务 scope 相交会被拒 |
 | `task.renew` | 续租：长任务超过 45 分钟时续一次（`commit` 等写操作也会自动续） | 租期已被回收 → `E_CLAIM_STALE`，必须重新 `task.claim` |
+| `evidence.record` | 走 MCP 时：把你自己 shell 里跑出的验收结果交上来（`command` 原文 + `exit`） | 命令必须在契约白名单内；同一条只留当前代码上的最新一份 |
 | `task.close` | 收口：**核验 Agent 留下的测试证据**（不执行测试） | 有交付提交 + 每条断言都有当前代码上的证据且满足才 `done` |
 | `bug.report` | 报 Bug（现象 + 复现步骤） | 不能直接改代码 |
 | `ask` | 歧义就问，不猜 | 问完任务 `parked`，Owner 回答后回到队列 |
