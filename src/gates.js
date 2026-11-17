@@ -515,7 +515,11 @@ export async function taskClose(db, root, input, opts = {}) {
     // 伪造的 approve 提交（身份/前缀/路径都对，但内核从没写过这个 sha）按无主处理
     const unowned = commits.filter((c) => (!isKernelCommit(c) || fakeApprove(c)) && !owned.includes(c) && !validOwner(c));
     if (unowned.length) fail("E_UNOWNED_COMMIT", `${unowned.length} 个无主提交`, { commits: unowned.map((c) => c.sha) });
-    if (!owned.length) fail("E_NO_DELIVERY", "区间内没有本任务的提交", { hint: "devcontrol commit -m ..." });
+    if (!owned.length) {
+      // 别再在这里补一句半截 hint：它会被当成"更具体的提示"盖掉 hints.js 里的完整说明，
+      // 结果人只看到"devcontrol commit -m ..."，反而先 commit 再补测试（T-111）。
+      fail("E_NO_DELIVERY", "区间内没有本任务的提交");
+    }
 
     // 契约完整性
     if (readContract(root, t.contract_commit, p.id).hash !== t.contract_hash) fail("E_CONTRACT", "契约哈希不符");

@@ -929,11 +929,15 @@ export function cmdApprove(args) {
   if (!requirementId || !pathId) {
     const pending = listReqs(db).filter((r) => r.status === "draft");
     const paths = listPaths(db).filter((p) => p.status === "draft" || p.status === "approved");
+    // 这不是「命令写错了」——人只是少给了一个参数，而且下一步用哪个号只有内核知道。
+    // 所以先把能用的号摆出来，再给一条照抄就能过的命令。
+    const pending2 = pending.length ? `待批准的需求：${pending.map((r) => r.id).join("、")}` : "（当前没有待批准的需求：devcontrol intake \"…\" --accept \"…\" 先收一条）";
+    const paths2 = paths.length ? `可用 Path：${paths.map((p) => `${p.id}(${p.allowedPaths.join(",") || "."})`).join("、")}` : "";
+    const example = pending.length && paths.length ? `devcontrol approve ${pending[0].id} --path ${paths[0].id}` : null;
     return failCli(
-      `用法：devcontrol approve FR-001 --path P-001${
-        pending.length ? `\n待批准的需求：${pending.map((r) => r.id).join("、")}` : "\n（当前没有待批准的需求：devcontrol intake \"…\" --accept \"…\" 先收一条）"
-      }${paths.length ? `\n可用 Path：${paths.map((p) => `${p.id}(${p.allowedPaths.join(",") || "."})`).join("、")}` : ""}`,
+      `用法：devcontrol approve FR-001 --path P-001\n${pending2}${paths2 ? `\n${paths2}` : ""}`,
       "E_USAGE",
+      { ...(example ? { hint: `照抄这条：${example}` } : {}) },
     );
   }
   try {
