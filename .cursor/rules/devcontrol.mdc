@@ -7,4 +7,4 @@ alwaysApply: true
 
 1. 开工先 `devcontrol status`（MCP 里是 `bootstrap`），照它给的 `next` 做。
 2. 改代码前 `task.claim`；只改 scope 内的文件。
-3. 改完 `devcontrol commit`，自己跑 `devcontrol run -- <命令>` 留证据，再 `devcontrol close`（只核验证据）。
+3. 自己跑 `devcontrol run -- <命令>` 留证据 → `devcontrol commit` → `devcontrol close`（只核验证据）。
