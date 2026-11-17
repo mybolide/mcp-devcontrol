@@ -308,11 +308,18 @@ function noteRejection(code) {
 
 function failCli(message, code = "E_USAGE", data = null, exit = 2) {
   noteRejection(code);
-  const hint = hintFor({ code });
+  // 具体报错往往比通用提示更有用（"任务不存在" → 直接摆出真实存在的编号）。
+  // 调用方在 data.hint 里给了具体的，就用它；没给才退回按错误码的通用提示。
+  const specific = data && typeof data === "object" && typeof data.hint === "string" ? data.hint : null;
+  const hint = specific ?? hintFor({ code });
   console.log(JSON.stringify({ ok: false, code, message, data, hint }, null, 2));
   console.error(`${code}: ${message}`);
   if (hint) console.error(`  → ${hint}`);
-  if (data) console.error(JSON.stringify(data, null, 2));
+  // data 里那份 hint 已经单独印过了，别在 JSON 里再重复一遍
+  if (data) {
+    const rest = specific ? { ...data, hint: undefined } : data;
+    console.error(JSON.stringify(rest, null, 2));
+  }
   return exit;
 }
 
@@ -1037,6 +1044,9 @@ export function cmdRelease(args) {
     const i = args.indexOf(`--${name}`);
     return i >= 0 ? args[i + 1] : undefined;
   };
+  // 同名开关可以出现多次（--tasks A --tasks B），flag 只取第一个，这里全收
+  const flags = (name) =>
+    args.reduce((acc, a, i) => (a === `--${name}` && args[i + 1] !== undefined ? [...acc, args[i + 1]] : acc), []);
   try {
     if (sub === "list") {
       const rows = listReleases(db);
@@ -1055,7 +1065,22 @@ export function cmdRelease(args) {
     }
     if (sub === "plan") {
       const id = args[1];
-      const tasks = args.slice(2).filter((a) => /^T-/.test(a));
+      // 三种写法都认：`plan R-001 T-003 T-004`（README 里的）、`--tasks T-003,T-004`、
+      // 以及 `--tasks T-003 --tasks T-004`。早先只认第一种，逗号串会被整段当成一个编号，
+      // 报错只说「任务不存在：T-003,T-004」——人看了只会怀疑任务号写错了。
+      const tasks = [
+        ...new Set(
+          [...args.slice(2), ...flags("tasks")]
+            .flatMap((a) => String(a).split(/[\s,]+/))
+            .filter((a) => /^T-/.test(a)),
+        ),
+      ];
+      if (!tasks.length) {
+        return failCli(
+          "用法：devcontrol release plan R-004 T-108 T-109（也接受 --tasks T-108,T-109）",
+          "E_USAGE",
+        );
+      }
       console.log(JSON.stringify(planRelease(db, { id, tasks }), null, 2));
       return 0;
     }

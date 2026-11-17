@@ -38,10 +38,20 @@ export function planRelease(db, { id, tasks } = {}) {
   const r = getRelease(db, id);
   if (!r) fail("NOT_FOUND", `发布不存在：${id}`);
   if (r.status === "shipped") fail("E_ILLEGAL_TRANSITION", `${id} 已发布`);
-  const list = Array.isArray(tasks) ? tasks.map(String) : [];
-  if (!list.length) fail("E_CONTRACT", "plan 需要至少一个任务号");
+  const list = (Array.isArray(tasks) ? tasks : []).map(String).filter(Boolean);
+  if (!list.length) fail("E_CONTRACT", "plan 需要至少一个任务号", { hint: `devcontrol release plan ${id} T-001 T-002` });
+  const bad = list.filter((taskId) => !taskExists(db, taskId));
+  if (bad.length) {
+    // 只说「任务不存在」等于让人自己回去数编号；把真实存在的当前任务摆出来
+    const known = db.prepare("SELECT id FROM tasks WHERE archived_at IS NULL ORDER BY id").all().map((r) => r.id);
+    fail("NOT_FOUND", `任务不存在：${bad.join("、")}`, {
+      missing: bad,
+      // 只给最近的 12 个，列表本身不该成为噪音
+      known: known.slice(-12),
+      hint: `逗号分隔或空格分隔都行：devcontrol release plan ${id} ${known.slice(-2).join(" ")}`,
+    });
+  }
   for (const taskId of list) {
-    if (!taskExists(db, taskId)) fail("NOT_FOUND", `任务不存在：${taskId}`);
     db.prepare("INSERT OR IGNORE INTO release_tasks(release_id,task_id) VALUES(?,?)").run(id, taskId);
   }
   db.prepare("UPDATE releases SET status='building' WHERE id=? AND status='planned'").run(id);
