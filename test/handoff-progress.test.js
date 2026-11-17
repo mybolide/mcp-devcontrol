@@ -98,3 +98,48 @@ test("交接仍然顺手释放：卡片和可领状态是一起的", () => {
   assert.match(r.text, /已释放/);
   assert.equal(db.prepare("SELECT claimed_by FROM tasks WHERE id=?").get(t.id).claimed_by, null);
 });
+// ── scope 覆盖度：剩下的活由内核数，不让人填 ──────────────────────────────
+
+test("scope 里没碰过的直接列出来，接手的人不用自己比对", () => {
+  const root = makeRepo();
+  const { db, reqId } = initFlow(root, { allowed: ["src", "test"] });
+  const t = newTask(db, root, reqId, { scope: ["src/a.js", "src/b.js", "test/c.test.js"], title: "三处" });
+  taskClaim(db, root, { id: t.id }, "agent-x");
+  land(root, "src/a.js", t.id);
+
+  const card = handoff(db, { taskId: t.id }, root).text;
+  assert.match(card, /还有 2 处没碰：src\/b\.js、test\/c\.test\.js/, card);
+});
+
+test("全碰过了就不啰嗦", () => {
+  const root = makeRepo();
+  const { db, reqId } = initFlow(root);
+  const t = newTask(db, root, reqId, { scope: ["src/a.js"], title: "就一处" });
+  taskClaim(db, root, { id: t.id }, "agent-x");
+  land(root, "src/a.js", t.id);
+
+  const card = handoff(db, { taskId: t.id }, root).text;
+  assert.doesNotMatch(card, /没碰/);
+});
+
+test("目录 scope 被目录里的文件覆盖，不算没碰", () => {
+  const root = makeRepo();
+  const { db, reqId } = initFlow(root);
+  const t = newTask(db, root, reqId, { scope: ["src"], title: "整片" });
+  taskClaim(db, root, { id: t.id }, "agent-x");
+  land(root, "src/deep/x.js", t.id);
+
+  const card = handoff(db, { taskId: t.id }, root).text;
+  assert.doesNotMatch(card, /没碰/, "目录内的文件算碰过了");
+});
+
+test("一行都没提时不说「还有 N 处没碰」，那是废话", () => {
+  const root = makeRepo();
+  const { db, reqId } = initFlow(root);
+  const t = newTask(db, root, reqId, { scope: ["src/a.js", "src/b.js"], title: "还没动" });
+  taskClaim(db, root, { id: t.id }, "agent-x");
+
+  const card = handoff(db, { taskId: t.id }, root).text;
+  assert.match(card, /还没有提交，从头做/);
+  assert.doesNotMatch(card, /没碰/);
+});

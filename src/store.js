@@ -559,23 +559,31 @@ export function taskRelease(db, input) {
  */
 function progressOf(db, root, t) {
   const out = [];
+  let touched = null;
   if (root && t.base_head) {
     try {
       const mine = logCommits(root, `${t.base_head}..HEAD`).filter((c) => trailers(c.body, "Task-Id").includes(t.id));
       if (mine.length) {
         let lines = 0;
-        const files = new Set();
+        touched = new Set();
         for (const c of mine) {
           for (const s of numstat(root, c.sha)) {
             lines += s.added + s.deleted;
-            files.add(s.file);
+            touched.add(s.file);
           }
         }
-        out.push(`已提交 ${mine.length} 个（${lines} 行 / ${files.size} 处文件）`);
+        out.push(`已提交 ${mine.length} 个（${lines} 行 / ${touched.size} 处文件）`);
       }
     } catch {
       // 弱模式或没有 git：进度说不准就别说
     }
+  }
+  // scope 覆盖度：申报的范围里，哪些还完全没碰过。
+  // 这是内核数得出来的事实；「下一步该干什么」是判断，不归内核（见 T-077 那条分工线）。
+  // 所以这里不让人填一句话，只把「还剩哪几处」摆出来。
+  if (touched?.size) {
+    const cold = (t.scope ?? []).filter((s) => ![...touched].some((f) => inScope(f, [s])));
+    if (cold.length) out.push(`还有 ${cold.length} 处没碰：${cold.join("、")}`);
   }
   const lastFail = db.prepare("SELECT code, detail FROM events WHERE task_id=? AND action='close.fail' ORDER BY id DESC LIMIT 1").get(t.id);
   if (lastFail) out.push(`上次被拦 ${lastFail.code}（${lastFail.detail}）`);
