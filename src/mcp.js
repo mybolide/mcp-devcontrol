@@ -8,6 +8,7 @@ import { bootstrap } from "./digest.js";
 import { VERSION } from "./protocol.js";
 import { installAgentFiles } from "./skill.js";
 import { taskCreate, taskClaim, taskRenew, taskClose, bugReport, ask } from "./gates.js";
+import { hintFor } from "./hints.js";
 import { resolveRoot } from "./cli.js";
 import { ensureConsole, readConsoleMeta } from "./console-boot.js";
 import { mapTask } from "./store.js";
@@ -186,7 +187,15 @@ export function createServer({ db, root, consoleUrl }) {
         const result = await dispatch(db, root, args, { consoleUrl, signal: extra?.signal });
         return { content: [{ type: "text", text: compact(result) }] };
       } catch (error) {
-        const payload = { ok: false, code: error.code ?? "E_INTERNAL", message: error.message, data: error.data ?? null };
+        // 失败的样子必须和 CLI 一模一样：ok/code/message/data/hint。
+        // Agent 主要走 MCP，这里少一个 hint，等于把「下一步该干什么」丢在了另一条路上。
+        const payload = {
+          ok: false,
+          code: error.code ?? "E_INTERNAL",
+          message: error.message,
+          data: error.data ?? null,
+          hint: hintFor(error),
+        };
         return { content: [{ type: "text", text: JSON.stringify(payload) }], isError: true };
       }
     },
