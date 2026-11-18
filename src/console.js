@@ -338,21 +338,35 @@ export async function startConsole(args) {
     if (req.method === "POST" && url.pathname === "/api/owner") {
       const denied = guard(req);
       if (denied) return json(denied.code, denied.body);
+      // 请求体超限要回 413，但必须先把剩下的字节排空再回：早先是先 req.destroy()
+      // 再 json(413)，连接已被 reset，客户端一句都收不到（T-125）。
+      const MAX_BODY = 1_000_000;
       let body = "";
+      let oversized = false;
       for await (const chunk of req) {
+        if (oversized) continue;
         body += chunk;
-        if (body.length > 1_000_000) {
-          req.destroy();
-          return json(413, { ok: false, code: "E_FORBIDDEN", message: "请求体过大" });
+        if (body.length > MAX_BODY) {
+          oversized = true;
+          body = "";
         }
       }
+      if (oversized) return json(413, { ok: false, code: "E_FORBIDDEN", message: "请求体过大" });
+      // body 不是 JSON 是「命令写错了」，不是内核崩了：用 E_INTERNAL 会把
+      // 内核故障计数虚增，也会让人以为该上报 bug（T-123）。
+      const notJson = () => json(400, { ok: false, code: "INVALID_ARGUMENT", message: "body 不是 JSON" });
       let payload;
       try {
         payload = JSON.parse(body || "{}");
       } catch {
-        // body 不是 JSON 是「命令写错了」，不是内核崩了：用 E_INTERNAL 会把
-        // 内核故障计数虚增，也会让人以为该上报 bug（T-123）。
-        return json(400, { ok: false, code: "INVALID_ARGUMENT", message: "body 不是 JSON" });
+        return notJson();
+      }
+      // JSON.parse 还会吐 null / 数组 / 字符串 / 数字，它们没有 .action，
+      // 下一行直接读就是 TypeError → HTTP 500 E_INTERNAL，同样是「打错格式算
+      // 内核崩」——和 T-123 自相矛盾。先挡成 400（T-125）。
+      if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
+        const kind = payload === null ? "null" : Array.isArray(payload) ? "数组" : typeof payload;
+        return json(400, { ok: false, code: "INVALID_ARGUMENT", message: `body 必须是 JSON 对象，收到${kind}` });
       }
       // 只认自有键：早先用 OWNER_ACTIONS[payload.action]，于是 action=constructor /
       // toString 会沿原型链命中，200 回一句 ok:true 并把库句柄的内部属性吐出去（T-123）。

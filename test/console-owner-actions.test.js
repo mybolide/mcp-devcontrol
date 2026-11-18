@@ -128,3 +128,37 @@ test("真正的合法动作照样能用：adjust 仍然生效", async () => {
     assert.ok(body.result, "要真的执行并给出结果，不是回个空壳");
   });
 });
+
+// T-125：JSON.parse 能吐出 null / 数组 / 字符串 / 数字，它们没有 .action。
+// 早先直接读 payload.action 就是 TypeError → HTTP 500 E_INTERNAL，
+// 等于把「body 写错了」记成「内核崩了」，与 T-123 自相矛盾。
+test("payload 不是 JSON 对象：null / 数组 / 字符串 / 数字一律 400，不许崩 500", async () => {
+  await withConsole(async (port) => {
+    for (const raw of ["null", "[]", '"adjust"', "42", "true", "[{\"action\":\"adjust\"}]"]) {
+      const res = await post(port, "/api/owner", raw);
+      assert.equal(res.status, 400, `body=${raw} 应当是 400，实际 ${res.status}：${res.text}`);
+      const body = res.json();
+      assert.equal(body.ok, false, `body=${raw} 不该 ok`);
+      // 内核故障计数（T-119）只该记真正的内核故障
+      assert.equal(body.code, "INVALID_ARGUMENT", `body=${raw} 不该记成内核故障：${res.text}`);
+      assert.match(body.message, /JSON 对象/);
+    }
+  });
+});
+
+test("空 body 当成 {}，报「未知 owner action」而不是 TypeError", async () => {
+  await withConsole(async (port) => {
+    const res = await post(port, "/api/owner", "");
+    assert.equal(res.status, 400, res.text);
+    assert.equal(res.json().code, "INVALID_ARGUMENT");
+  });
+});
+
+// 413 那条：早先是先 req.destroy() 再 json(413)，连接已被 reset，客户端一句都收不到。
+test("请求体超过 1MB：客户端真能收到 413，不是连接被 reset", async () => {
+  await withConsole(async (port) => {
+    const res = await post(port, "/api/owner", JSON.stringify({ action: "adjust", pad: "x".repeat(1_200_000) }));
+    assert.equal(res.status, 413, `应当是 413，实际 ${res.status}：${res.text.slice(0, 200)}`);
+    assert.equal(res.json().ok, false);
+  });
+});
