@@ -379,13 +379,16 @@ export function cmdCommit(args) {
   const mine = dirty.filter((f) => inScope(f, task.scope));
   const foreign = dirty.filter((f) => !inScope(f, task.scope) && !f.startsWith(".devcontrol/"));
   if (foreign.length) {
+    // scope 里若有一条带着空白，说明它是被整串塞进来的（老数据或别的入口）。
+    // 报错里必须看得出来「这是一条」，不能长得跟两个文件一模一样——否则这句话
+    // 自相矛盾：骂人家「不在 scope 内」，可 scope 印出来就是那两个文件（T-126）。
+    const scopeText = task.scope.map((s) => (/\s/.test(s) ? JSON.stringify(s) : s)).join(", ") || ".";
     return failCli(
-      `以下改动不在 ${task.id} 的 scope 内（scope=${task.scope.join(",") || "."}）：${foreign.slice(0, 8).join("、")}${foreign.length > 8 ? ` …共 ${foreign.length} 个` : ""}`,
+      `以下改动不在 ${task.id} 的 scope 内（scope=${scopeText}）：${foreign.slice(0, 8).join("、")}${foreign.length > 8 ? ` …共 ${foreign.length} 个` : ""}`,
       "E_SCOPE_VIOLATION",
       { taskId: task.id, scope: task.scope, files: foreign },
       1,
     );
-    return 1;
   }
   if (!mine.length) {
     return failCli(
@@ -548,6 +551,27 @@ export function cmdTask(args) {
     return i >= 0 ? args[i + 1] : undefined;
   };
   const every = (name) => args.flatMap((a, i) => (a === `--${name}` && args[i + 1] ? [args[i + 1]] : []));
+  // 多值开关：收到下一个 --flag 之前的所有参数（`--scope a b` 这种不加引号的写法也要认），
+  // 再按逗号/空白切开。三种写法都认：可重复、逗号分隔、空格分隔（T-126）。
+  // 早先是 every() 只取紧邻一个，且只按 "," 切——`--scope "a.js b.js"` 整串变一条
+  // scope，两个文件反而都算「scope 外」，Agent 会卡死在这条自相矛盾的报错上。
+  const listOf = (name) => {
+    const out = [];
+    for (let i = 0; i < args.length; i += 1) {
+      if (args[i] !== `--${name}`) continue;
+      for (let j = i + 1; j < args.length && !String(args[j]).startsWith("--"); j += 1) out.push(args[j]);
+    }
+    // 整串本身就是一个真实存在的路径时不拆：文件名里带空格是合法的
+    return out
+      .flatMap((v) => {
+        const s = String(v).trim();
+        if (!s) return [];
+        if (/\s/.test(s) && !s.includes(",") && fs.existsSync(path.join(root, s))) return [s];
+        return s.split(/[\s,]+/);
+      })
+      .map((s) => s.trim())
+      .filter(Boolean);
+  };
   const actor = flag("actor") ?? (process.env.DEVCONTROL_ACTOR || "agent");
   const sub = args[0];
   if (sub === "create") {
@@ -578,17 +602,10 @@ export function cmdTask(args) {
       const idx = reqAcceptance.findIndex((a) => assertionCommand(a) === cmd);
       return { deriveFrom: idx >= 0 ? idx : 0, assertion };
     });
-    // scope：--scope 可重复，也可逗号分隔。早先只取最后一段，多写一次就把前一段悄悄吃掉（T-087）
-    const scopeList = every("scope")
-      .flatMap((v) => String(v).split(","))
-      .map((s) => s.trim())
-      .filter(Boolean);
+    // scope / depends：三种写法都认（可重复 / 逗号 / 空格），见上面 listOf（T-126）
+    const scopeList = listOf("scope");
     const scope = scopeList.length ? scopeList : undefined;
-    // 依赖：MCP 侧叫 dependsOn，CLI 这边用 --depends（可重复，也可逗号分隔）——纯 CLI 用户也要能表达「前端等后端」
-    const dependsOn = every("depends")
-      .flatMap((v) => String(v).split(","))
-      .map((s) => s.trim())
-      .filter(Boolean);
+    const dependsOn = listOf("depends");
     const task = taskCreate(db, root, { requirementId: req, pathId, kind: flag("kind") ?? "feature", title, scope, acceptance, dependsOn }, actor);
     console.log(`${task.id}  已建  ${task.title}`);
     console.log(`scope: ${(task.scope ?? []).join(", ")}`);
