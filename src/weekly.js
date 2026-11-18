@@ -78,12 +78,25 @@ export function weekly(db, { days = 7, now = new Date() } = {}) {
   // 与 disciplineStats 拆成两笔、两笔都算：① 门禁拒了几轮 ② 跑挂过又跑过了（T-116）。
   // 早先这里只数第 ② 笔，于是同一个词在 stats 是 28 轮、在周报是 2 轮，读者没法判断该信谁（T-119）。
   totals.reworks = countGateRounds(db, { since, until }) + countRework(db, { since, until });
-
-  // 这段时间里收口的任务规模：从 tasks 表按 closed_at 取，比数事件准
+  // 「收口几条」早先只数 close 事件，于是 Owner 用 force-close 放行收口的那几条
+  // 在周报里凭空消失：stats 说「已完成 119」、周报说「收口 116」，同一个词两个数（T-121）。
+  // 这里只补这一笔差额——不放宽 close 的口径，也不改「任务规模从 tasks 取」的老约定。
   const closedTasks = db
-    .prepare("SELECT id, changed_lines, closed_at FROM tasks WHERE closed_at >= ? AND closed_at <= ?")
+    .prepare("SELECT id, changed_lines, closed_at, closed_by FROM tasks WHERE closed_at >= ? AND closed_at <= ?")
     .all(since, until);
   const lines = closedTasks.reduce((n, t) => n + (t.changed_lines ?? 0), 0);
+  const closedEventTasks = new Set(events.filter((e) => e.action === "close").map((e) => e.task_id));
+  for (const t of closedTasks) {
+    if (closedEventTasks.has(t.id)) continue;
+    // 没有 close 事件却已经 done 的，只会是 Owner 用 override 放行收口的
+    // （closed_by='force-close'）。按天归到收口那天，按人记在 owner 名下——
+    // 这是 Owner 签的字，不是某个 Agent 自己收的工。
+    if (t.closed_by !== "force-close") continue;
+    const d = dayOf(t.closed_at);
+    totals.closed += 1;
+    bump(byDay, d, "closed");
+    bumpActor("owner", "closed");
+  }
 
   return {
     since,
