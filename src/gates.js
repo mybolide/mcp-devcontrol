@@ -18,6 +18,7 @@ import {
 } from "./store.js";
 import { contractCommands, parseAssertion, readContract } from "./contract.js";
 import { fingerprint, inScope, sha256 } from "./fingerprint.js";
+import { assertScopeInsideRepo } from "./scope.js";
 import { addedFiles, git, head, isAncestor, logCommits, numstat, patchId, statusPorcelain, trailers } from "./git.js";
 import { evaluate } from "./exec.js";
 import { generalizeHint, memoryConfig, rememberTaskPitfall } from "./memory.js";
@@ -125,6 +126,7 @@ export function taskCreate(db, root, input, actor = "agent") {
     if (!p || p.status !== "approved") fail("E_NEED_APPROVED", `Path ${input.pathId} 未批准`);
     const body = contractOf(db, root, p);
     const scope = Array.isArray(input.scope) && input.scope.length ? input.scope : p.allowedPaths;
+    assertScopeInsideRepo(scope);
     within(scope, body.allowedPaths);
     const acceptance = (input.acceptance ?? []).map((a) =>
       typeof a === "string" ? { deriveFrom: 0, assertion: a } : { deriveFrom: a.deriveFrom ?? 0, assertion: a.assertion },

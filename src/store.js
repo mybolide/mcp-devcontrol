@@ -7,6 +7,7 @@ import { inScope } from "./fingerprint.js";
 import { logCommits, numstat, trailers } from "./git.js";
 import { sha256 } from "./fingerprint.js";
 import { assertionCommand, detectTestCmds, retargetAssertion } from "./testcmd.js";
+import { assertScopeInsideRepo } from "./scope.js";
 
 export const now = () => new Date().toISOString();
 export const MIN = 60_000;
@@ -544,6 +545,9 @@ export function taskAdjust(db, root, input) {
     if (!t) fail("NOT_FOUND", `任务不存在：${input.taskId}`);
     const scope = input.scope ?? t.scope;
     const budget = input.budgetLines ?? t.budget_lines;
+    // Owner 放宽 scope 也要守同一道边界：否则 Agent 求 Owner「把 /tmp/x 加进 scope」，
+    // 这条路一样能把仓库外的文件变成「内核批准过」的（T-124）。
+    assertScopeInsideRepo(scope);
     // 收紧/放宽 scope 都不能越过契约：真想改 allowed_paths 得走 req.amend（Owner 重新批准）
     const p = getPath(db, t.path_id);
     if (p?.contract_commit || p?.hash) {
