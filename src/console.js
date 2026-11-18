@@ -350,9 +350,13 @@ export async function startConsole(args) {
       try {
         payload = JSON.parse(body || "{}");
       } catch {
-        return json(400, { ok: false, code: "E_INTERNAL", message: "body 不是 JSON" });
+        // body 不是 JSON 是「命令写错了」，不是内核崩了：用 E_INTERNAL 会把
+        // 内核故障计数虚增，也会让人以为该上报 bug（T-123）。
+        return json(400, { ok: false, code: "INVALID_ARGUMENT", message: "body 不是 JSON" });
       }
-      const action = OWNER_ACTIONS[payload.action];
+      // 只认自有键：早先用 OWNER_ACTIONS[payload.action]，于是 action=constructor /
+      // toString 会沿原型链命中，200 回一句 ok:true 并把库句柄的内部属性吐出去（T-123）。
+      const action = Object.hasOwn(OWNER_ACTIONS, payload.action) ? OWNER_ACTIONS[payload.action] : undefined;
       if (!action) return json(400, { ok: false, code: "INVALID_ARGUMENT", message: `未知 owner action：${payload.action}` });
       const active = pickProject(payload.project ?? payload.payload?.project);
       if (!active) return json(400, { ok: false, code: "INVALID_ARGUMENT", message: "未知 project" });
