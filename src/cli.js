@@ -1094,7 +1094,16 @@ export function cmdRelease(args) {
         }
         positional.push(a);
       }
-      const title = positional[0] ?? flag("title");
+      // --title 显式给了就用它；没给才把位置参数当标题。
+      // 早先是 `positional[0] ?? flag("title")`，于是 `release create "R-011" --title "…"`
+      // 里那句 --title 被静默忽略，标题变成 "R-011"。这和 T-115 / T-120 是同一个坑的
+      // 第三个入口：开关的值被别的东西压掉，而表面上一切正常（T-128）。
+      const title = flag("title") ?? positional[0];
+      // 位置参数长得像发布号时提醒一句：发布号是内核自动生成的，这里该写标题
+      const looksLikeId = /^R-\d+$/.test(String(positional[0] ?? ""));
+      if (looksLikeId && !flag("title")) {
+        console.error(`注意：${positional[0]} 看起来是发布号。发布号由内核自动生成，位置参数是标题——要写标题就用 --title "…"。`);
+      }
       if (!title) {
         return failCli('用法：devcontrol release create "v0.1" [--target 2026-01-01]', "E_USAGE");
       }
