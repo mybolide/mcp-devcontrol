@@ -1063,10 +1063,21 @@ export function cmdRelease(args) {
       return 0;
     }
     if (sub === "create") {
-      const title = args[1] ?? flag("title");
+      // 位置参数要跳过开关的值。早先直接取 args[1]，
+      // `release create --title "客户合并"` 就把 `--title` 本身当成了标题，
+      // tag 于是成了 release/R-002-title-…（T-120）。
+      const positional = [];
+      for (let i = 1; i < args.length; i += 1) {
+        const a = args[i];
+        if (a.startsWith("--")) {
+          i += 1; // 跳过开关的值，值由 flag() 收
+          continue;
+        }
+        positional.push(a);
+      }
+      const title = positional[0] ?? flag("title");
       if (!title) {
         return failCli('用法：devcontrol release create "v0.1" [--target 2026-01-01]', "E_USAGE");
-        return 2;
       }
       console.log(JSON.stringify(createRelease(db, { title, targetDate: flag("target") }), null, 2));
       return 0;
