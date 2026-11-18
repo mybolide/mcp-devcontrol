@@ -10,8 +10,11 @@ function seedEvents(db, rows) {
   const stmt = db.prepare(
     "INSERT INTO events(at, actor, channel, action, task_id, code, detail) VALUES(?,?,?,?,?,?,?)",
   );
+  // 每条 close 都来自不同的任务：同一个任务收口两次是不存在的情形（T-127 起收口按任务去重，
+  // 用同一个 task_id 造两条 close，测的就不再是「两条任务收口」，而是「一条任务收两次」）。
+  let n = 0;
   for (const [at, actor, action, code] of rows) {
-    stmt.run(at, actor, "agent", action, "T-001", code ?? null, "");
+    stmt.run(at, actor, "agent", action, `T-${String(++n).padStart(3, "0")}`, code ?? null, "");
   }
 }
 

@@ -463,7 +463,9 @@ export function cmdStats() {
   const tail = s.envOnly ? `（另有 ${s.envOnly} 次用法/环境类，补一步就好，不算被拦）` : "";
   // 内核自己的故障单独说，并且明说不是 Agent 的账——不说是替内核遮丑（T-119）。
   const fault = s.faults ? ` · 内核自身故障 ${s.faults} 次（不算你的账）` : "";
-  console.log(`被拦 ${s.blocked} 次${tail}${fault} · 返工 ${s.rework} 轮 · 绕过 ${s.bypassed} 次 · 已完成 ${s.done} 个任务`);
+  // 措辞要说清窗口：这是「累计」不是「本周」。否则和周报的「收口 N 条（近 7 天）」
+  // 并排放着，就又是同一个词两个数——数没错，读者会以为错（T-127）。
+  console.log(`被拦 ${s.blocked} 次${tail}${fault} · 返工 ${s.rework} 轮 · 绕过 ${s.bypassed} 次 · 累计已完成 ${s.done} 个任务`);
   return 0;
 }
 /**

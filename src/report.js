@@ -21,9 +21,15 @@ export function doctor(db, root) {
   }
   for (const t of listTasks(db)) {
     if (t.status === "done") {
-      const closed = db.prepare("SELECT 1 FROM events WHERE task_id=? AND action IN ('close','override')").get(t.id);
-      if (!closed) items.push({ severity: "error", code: "GHOST_DONE", taskId: t.id, detail: "标记完成但没有任何收口记录（疑似直接改库）" });
-      if (t.closed_by === "override" || t.closed_by === "force-close") {
+      // 「有收口记录」只认真正收口的那两种凭据：close 事件，或者 Owner 的 force-close
+      // 放行。早先把 override 一起算上，于是 waive（只是放行了某一条门禁，不改任务状态）
+      // 也能让一条被手工改成 done 的任务蒙混过关（T-127）。
+      const closed = db.prepare("SELECT 1 FROM events WHERE task_id=? AND action='close'").get(t.id);
+      const forceClosed = t.closed_by === "force-close";
+      if (!closed && !forceClosed) {
+        items.push({ severity: "error", code: "GHOST_DONE", taskId: t.id, detail: "标记完成但没有任何收口记录（疑似直接改库）" });
+      }
+      if (forceClosed) {
         items.push({ severity: "warn", code: "OVERRIDDEN", taskId: t.id, detail: "这条是 Owner 手下放行收口，没有跑验收" });
       }
     }

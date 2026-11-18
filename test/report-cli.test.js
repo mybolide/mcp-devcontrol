@@ -10,10 +10,11 @@ const cli = (root, ...args) =>
     encoding: "utf8",
     env: { ...process.env, DEVCONTROL_ROOT: root, DEVCONTROL_ACTOR: "cli-agent" },
   });
-
 const seed = (db, rows) => {
   const stmt = db.prepare("INSERT INTO events(at, actor, channel, action, task_id, code, detail) VALUES(?,?,?,?,?,?,?)");
-  for (const [at, actor, action, code] of rows) stmt.run(at, actor, "agent", action, "T-001", code ?? null, "");
+  // 每条 close 对应一条独立任务：同一任务收口两次不是真实情形（T-127 按任务去重）
+  let n = 0;
+  for (const [at, actor, action, code] of rows) stmt.run(at, actor, "agent", action, `T-${String(++n).padStart(3, "0")}`, code ?? null, "");
 };
 
 // 相对「现在」造数据，避开各机器时钟差

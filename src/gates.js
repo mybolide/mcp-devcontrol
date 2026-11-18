@@ -663,21 +663,24 @@ export async function taskClose(db, root, input, opts = {}) {
       if (notLanded.length) throw new DFError("E_UNMERGED_WORK", "归属提交不在 HEAD 祖先链上", { commits: notLanded.map((c) => c.sha) });
     }
 
-    // 收口
+    // 收口。时间戳只取一次：closed_at 和下面那条 close 事件必须是同一个时刻，
+    // 否则「按 closed_at 归天」与「按事件时间归天」会在窗口边界上分家（T-127）。
+    const closedAt = now();
     const done = db
       .prepare("UPDATE tasks SET status='done', changed_lines=?, closed_by='evidence', closed_at=?, closing_at=NULL, closing_token=NULL, updated_at=? WHERE id=? AND status='doing' AND closing_token=?")
-      .run(lines, now(), now(), t.id, token);
+      .run(lines, closedAt, closedAt, t.id, token);
     if (done.changes !== 1) throw new DFError("E_BUSY", "任务状态已被改变");
     for (const c of owned) {
       if (c.patch) db.prepare("INSERT OR REPLACE INTO patch_ids(patch_id,task_id,commit_sha) VALUES(?,?,?)").run(c.patch, t.id, c.sha);
     }
     if (observations.length) {
-      logEvent(db, { actor: actorOf(db, t.id), action: "close.observed", taskId: t.id, detail: observations.map((o) => o.detail).join("；") });
+      logEvent(db, { actor: actorOf(db, t.id), action: "close.observed", taskId: t.id, at: closedAt, detail: observations.map((o) => o.detail).join("；") });
     }
     logEvent(db, {
       actor: actorOf(db, t.id),
       action: "close",
       taskId: t.id,
+      at: closedAt,
       detail: weak
         ? `弱模式 · ${runs.length} 断言`
         : `${lines} 行 / ${files.length} 文件 / ${runs.length} 断言${observations.length ? ` / ${observations.length} 条规范提醒` : ""}`,

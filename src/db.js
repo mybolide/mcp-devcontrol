@@ -179,9 +179,13 @@ export function assertNoSlowWork(what) {
  * 现在漏传直接崩：新加事件忘了填，npm test 第一轮就红，不用等下次压测才发现。
  *
  * Owner 的动作传 "owner"，系统自己的动作（如过期回收）传 "system"，其余传 Agent 标识。
+ *
+ * `at` 可以显式给：收口时 closed_at 和 close 事件必须是同一个时刻。
+ * 早先两次各调一次 new Date()，差几毫秒就会让「按 closed_at 归天」和
+ * 「按事件时间归天」在窗口边界上分家，同一个任务算进这边不算进那边（T-127）。
  */
-export function logEvent(db, { actor, channel = "agent", action, taskId = null, code = null, detail = "" }) {
+export function logEvent(db, { actor, channel = "agent", action, taskId = null, code = null, detail = "", at = null }) {
   if (!actor) throw new Error(`logEvent 缺 actor：事件「${action}」必须记到谁头上（Owner→"owner"、系统→"system"）`);
   db.prepare("INSERT INTO events(at,actor,channel,action,task_id,code,detail) VALUES(?,?,?,?,?,?,?)")
-    .run(new Date().toISOString(), actor, channel, action, taskId, code, String(detail).slice(0, 300));
+    .run(at ?? new Date().toISOString(), actor, channel, action, taskId, code, String(detail).slice(0, 300));
 }

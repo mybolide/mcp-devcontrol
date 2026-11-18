@@ -229,19 +229,46 @@ export function countGateRounds(db, { since = null, until = null } = {}) {
 }
 
 /**
- * 纪律三数：被拦多少次、返工多少轮、绕过多少次。
+ * 纪律三数：被拦多少次、返工多少轮、绕过多少次。外加已完成多少任务。
+ *
  * 这是「内核到底有没有生效」的可核对证据，不靠人回忆。
+ *
+ * `since` / `until` 不是可选项里的装饰：周报按窗口算「收口几条」，
+ * 这里不认窗口就必然对不上（stats 说全时 125、周报说本周 38），
+ * 「同一个词两个数」的账就会一直挂着（T-127）。
+ * 传了窗口，两者就能逐字相等；不传就是全时——那是另一个问题，措辞要说清。
  */
-export function disciplineStats(db) {
+export function disciplineStats(db, { since = null, until = null } = {}) {
   // 「被拦」= 所有实质拒绝 + 收口失败（T-097）。早先只数 close.fail，指标恒为 0；
   // 现在按 code 现算分类，名单改了历史行也跟着重算（T-118）。
-  const { blocked, envOnly, faults } = classifyRejections(db);
+  const { blocked, envOnly, faults } = classifyRejections(db, { since, until });
   // 「返工」= 两笔账：① 门禁拒了几轮（从事件流数，reopen 抹不掉）
   // ② 真跑挂过的证据之后又跑过了（T-116：Agent 自己测试红了再修好，这才最该被看见）
-  const rework = countGateRounds(db) + countRework(db);
-  const bypassed = db.prepare("SELECT COUNT(*) AS c FROM events WHERE action='override'").get().c;
-  const done = db.prepare("SELECT COUNT(*) AS c FROM tasks WHERE status='done'").get().c;
+  const rework = countGateRounds(db, { since, until }) + countRework(db, { since, until });
+  const bypassed = countEvents(db, "action='override'", since, until);
+  // 「已完成」数的是任务现状（status='done'）。给了窗口就按 closed_at 切，
+  // 和周报的「收口」用同一个判据、同一段时间——两边必须能对上。
+  const done = since || until
+    ? db
+        .prepare(`SELECT COUNT(*) AS c FROM tasks WHERE status='done'${since ? " AND closed_at >= ?" : ""}${until ? " AND closed_at <= ?" : ""}`)
+        .get(...[since, until].filter(Boolean)).c
+    : db.prepare("SELECT COUNT(*) AS c FROM tasks WHERE status='done'").get().c;
   return { blocked, envOnly, faults, rework, bypassed, done };
+}
+
+/** 按条件数事件：三个计数都走它，保证窗口过滤只有一套写法。 */
+function countEvents(db, condition, since, until) {
+  const where = [condition];
+  const params = [];
+  if (since) {
+    where.push("at >= ?");
+    params.push(since);
+  }
+  if (until) {
+    where.push("at <= ?");
+    params.push(until);
+  }
+  return db.prepare(`SELECT COUNT(*) AS c FROM events WHERE ${where.join(" AND ")}`).get(...params).c;
 }
 
 /** 证据流：Agent 跑过的验收命令/退出码/HEAD/指纹，可复核 */
@@ -683,10 +710,14 @@ export function override(db, input) {
     // 错误码只有 waive 才需要：force-close 是"整体签字收工"，不针对某一条门禁
     if (input.mode !== "force-close" && !input.code) fail("E_CONTRACT", "放行要指明拦下的是哪个错误码（例如 E_DEP_OR_TEST_TOUCH）");
     if (input.mode === "force-close") {
-      db.prepare("UPDATE tasks SET status='done', closed_by='force-close', closed_at=?, closing_at=NULL, closing_token=NULL, updated_at=? WHERE id=?").run(now(), now(), t.id);
-    } else {
-      setWaive(db, t.id, input.code);
+      // 同一个时刻写 closed_at 和 override 事件：两处各调一次 now() 会让
+      // 「按 closed_at 归天」与「按事件归天」差几毫秒，窗口边界上就分家（T-127）。
+      const closedAt = now();
+      db.prepare("UPDATE tasks SET status='done', closed_by='force-close', closed_at=?, closing_at=NULL, closing_token=NULL, updated_at=? WHERE id=?").run(closedAt, closedAt, t.id);
+      logEvent(db, { actor: "owner", channel: "owner", action: "override", taskId: t.id, code: input.code, at: closedAt, detail: input.reason });
+      return { taskId: t.id, mode: input.mode, code: input.code };
     }
+    setWaive(db, t.id, input.code);
     logEvent(db, { actor: "owner", channel: "owner", action: "override", taskId: t.id, code: input.code, detail: input.reason });
     return { taskId: t.id, mode: input.mode ?? "waive", code: input.code };
   });

@@ -41,6 +41,8 @@ export function weekly(db, { days = 7, now = new Date() } = {}) {
     byActor.set(actor, cur);
   };
 
+  // 每条任务在本窗口内的「最后一次收口」：天 + 人。去重和归因都靠它。
+  const closedInWindow = new Map();
   for (const e of events) {
     const d = dayOf(e.at);
     if (e.action === "task.create") {
@@ -51,9 +53,11 @@ export function weekly(db, { days = 7, now = new Date() } = {}) {
       bump(byDay, d, "claimed");
       bumpActor(e.actor, "claimed");
     } else if (e.action === "close") {
-      totals.closed += 1;
-      bump(byDay, d, "closed");
-      bumpActor(e.actor, "closed");
+      // 「收口」按任务去重，只认最后那一次（T-127）。这里只记录，不记账：
+      // 早先每条 close 都 +1，于是「收口 → Owner 打回 → 再收口」的任务
+      // 周报说 2 条、stats 说 1 条，同一个词又变成两个数。
+      // 先记账再回撤会把「减到 0」的空行留在按天表里，所以统一到最后一次算。
+      closedInWindow.set(e.task_id, { d, actor: e.actor });
       // 收口事件只说明「这一下过了」；返工怎么算见下面的 totals.reworks
     } else if (e.action === "close.fail" || e.action === "rejected") {
       // 收口失败和被拒绝是同一类事：内核不让过。至于算不算「被拦」，按 code 现算——
@@ -74,6 +78,26 @@ export function weekly(db, { days = 7, now = new Date() } = {}) {
       bump(byDay, d, "overridden");
     }
   }
+  // 去重后再落数：这时才知道每条任务只该记一次。
+  // 收口之后又被 Owner 打回 / 需求作废的任务要剔掉——事件流里留着 close，
+  // 但任务已经不是 done 了，而 stats 的「已完成」数的是现状。两个数必须同源（T-121/T-127）。
+  // 没有任务行的（纯事件流数据）判断不了现状，就按事件算：宁可照实说，也不猜。
+  if (closedInWindow.size) {
+    const ids = [...closedInWindow.keys()];
+    const statusOf = new Map(
+      db
+        .prepare(`SELECT id, status FROM tasks WHERE id IN (${ids.map(() => "?").join(",")})`)
+        .all(...ids)
+        .map((r) => [r.id, r.status]),
+    );
+    for (const [taskId, at] of closedInWindow) {
+      const st = statusOf.get(taskId);
+      if (st !== undefined && st !== "done") continue; // 已打回/作废：不算收口
+      totals.closed += 1;
+      bump(byDay, at.d, "closed");
+      bumpActor(at.actor, "closed");
+    }
+  }
 
   // 与 disciplineStats 拆成两笔、两笔都算：① 门禁拒了几轮 ② 跑挂过又跑过了（T-116）。
   // 早先这里只数第 ② 笔，于是同一个词在 stats 是 28 轮、在周报是 2 轮，读者没法判断该信谁（T-119）。
@@ -85,9 +109,9 @@ export function weekly(db, { days = 7, now = new Date() } = {}) {
     .prepare("SELECT id, changed_lines, closed_at, closed_by FROM tasks WHERE closed_at >= ? AND closed_at <= ?")
     .all(since, until);
   const lines = closedTasks.reduce((n, t) => n + (t.changed_lines ?? 0), 0);
-  const closedEventTasks = new Set(events.filter((e) => e.action === "close").map((e) => e.task_id));
   for (const t of closedTasks) {
-    if (closedEventTasks.has(t.id)) continue;
+    // 已经在上面按 close 事件记过账的，别再补一次
+    if (closedInWindow.has(t.id)) continue;
     // 没有 close 事件却已经 done 的，只会是 Owner 用 override 放行收口的
     // （closed_by='force-close'）。按天归到收口那天，按人记在 owner 名下——
     // 这是 Owner 签的字，不是某个 Agent 自己收的工。
