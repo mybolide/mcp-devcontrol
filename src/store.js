@@ -142,11 +142,34 @@ export const ENV_ONLY_CODES = new Set([
 ]);
 
 /**
+ * 一次拒绝算不算「被拦」——按 code 现算，不看写入时记下的结论。
+ *
+ * T-118：早先把分类结果（`detail='env-only'`）在写事件那一刻就固化下来，于是
+ * 规则一改，历史行永远不认账——crm-suite 上把名单改对了、stats 照样说「被拦 3 次」。
+ * 事件的 `code` 是事实，分类是解释；解释会演进，事实不会，所以解释必须每次重算。
+ * `rejected` 和 `close.fail` 用同一条判据：门禁里判 `review_round` 用的也是它。
+ */
+export function classifyRejections(db) {
+  const rows = db
+    .prepare("SELECT code, COUNT(*) AS c FROM events WHERE action IN ('rejected','close.fail') GROUP BY code")
+    .all();
+  let blocked = 0;
+  let envOnly = 0;
+  for (const r of rows) {
+    if (ENV_ONLY_CODES.has(r.code)) envOnly += r.c;
+    else blocked += r.c;
+  }
+  return { blocked, envOnly };
+}
+
+/**
  * 记一次拒绝。CLI 和 MCP 都走这里，否则「被拦」只算得到一半路径上的事。
  * 记账失败不能把错误提示也弄丢，所以调用方一律用 try 包住。
  */
 export function logRejection(db, actor, code) {
-  logEvent(db, { actor: actor || "agent", action: "rejected", code, detail: ENV_ONLY_CODES.has(code) ? "env-only" : "" });
+  // detail 不再写分类结论：那是「写入时的解释」，统计时会被当成事实用，两套口径就此分家（T-118）。
+  // code 就是全部事实，怎么归类由 classifyRejections 在读取时现算。
+  logEvent(db, { actor: actor || "agent", action: "rejected", code });
 }
 
 /**
@@ -154,14 +177,9 @@ export function logRejection(db, actor, code) {
  * 这是「内核到底有没有生效」的可核对证据，不靠人回忆。
  */
 export function disciplineStats(db) {
-  // 「被拦」= 所有实质拒绝 + 收口失败。早先只数 close.fail，于是 claim/commit 阶段
-  // 的拒绝一次都不进这个数，指标恒为 0，等于自证无效（T-097）。
-  const blocked = db
-    .prepare(
-      "SELECT COUNT(*) AS c FROM events WHERE action='close.fail' OR (action='rejected' AND COALESCE(detail,'') <> 'env-only')",
-    )
-    .get().c;
-  const envOnly = db.prepare("SELECT COUNT(*) AS c FROM events WHERE action='rejected' AND detail='env-only'").get().c;
+  // 「被拦」= 所有实质拒绝 + 收口失败（T-097）。早先只数 close.fail，指标恒为 0；
+  // 现在按 code 现算分类，名单改了历史行也跟着重算（T-118）。
+  const { blocked, envOnly } = classifyRejections(db);
   // 「返工」= 两笔账：① 门禁记的 review_round（收口被拒，改完再来）
   // ② 真跑挂过的证据之后又跑过了（T-116：Agent 自己测试红了再修好，这才最该被看见）
   const gateRounds = db.prepare("SELECT COALESCE(SUM(review_round),0) AS c FROM tasks").get().c;

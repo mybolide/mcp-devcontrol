@@ -89,12 +89,14 @@ test("两层接口对得上：weekly() 的输出直接喂给 renderWeekly()", ()
     "INSERT INTO events(at, actor, channel, action, task_id, code, detail) VALUES(?,?,?,?,?,?,?)",
   );
   stmt.run("2026-03-05T10:00:00.000Z", "agent-a", "agent", "task.claim", "T-001", null, "");
-  stmt.run("2026-03-05T11:00:00.000Z", "agent-a", "agent", "close.fail", "T-001", "E_NO_EVIDENCE", "第 1 次");
+  // 用真会被拦的码：close.fail + E_NO_EVIDENCE 属于「补一步就好」，
+  // 统一口径后不再算被拦（T-118），拿它当样本等于在测旧账。
+  stmt.run("2026-03-05T11:00:00.000Z", "agent-a", "agent", "close.fail", "T-001", "E_SCOPE_VIOLATION", "第 1 次");
   stmt.run("2026-03-06T11:00:00.000Z", "agent-a", "agent", "close", "T-001", null, "");
 
   const md = renderWeekly(weekly(db, { days: 7, now: new Date("2026-03-10T12:00:00.000Z") }));
   assert.match(md, /# 周报 2026-03-03 ~ 2026-03-10/);
   assert.match(md, /收口 1 条（领了 1，成率 100%）/);
-  assert.match(md, /`E_NO_EVIDENCE` × 1/);
+  assert.match(md, /`E_SCOPE_VIOLATION` × 1/);
   assert.match(md, /^\| agent-a \| 1 \| 1 \| 1 \|$/m);
 });

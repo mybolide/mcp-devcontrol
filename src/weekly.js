@@ -3,7 +3,7 @@
 // 数据全在 events / tasks / runs 里：事件流是「发生了什么」的账本，runs 是「跑成没成」的账本，
 // 这里只是按天、按人把它们归拢一下。分开写是为了让渲染层能换样子而不动口径。
 
-import { countRework } from "./store.js";
+import { countRework, ENV_ONLY_CODES } from "./store.js";
 
 const DAY = 86_400_000;
 
@@ -21,19 +21,15 @@ export function weekly(db, { days = 7, now = new Date() } = {}) {
   const until = now.toISOString();
   const since = new Date(now.getTime() - days * DAY).toISOString();
 
+  // 只需要事实（code），不需要写入时记下的分类结论：怎么算「被拦」在这里现算（T-118）。
   const events = db
-    // detail 必须选出来：下面按 detail==='env-only' 排除「补一步就好」的拒绝，
-    // 早先查询里没这一列，过滤条件恒为真，于是一条都没被排除过（T-117）。
-    .prepare(
-      "SELECT at, actor, channel, action, task_id, code, detail FROM events WHERE at >= ? AND at <= ? ORDER BY at",
-    )
+    .prepare("SELECT at, actor, channel, action, task_id, code FROM events WHERE at >= ? AND at <= ? ORDER BY at")
     .all(since, until);
 
   const byDay = new Map();
   const byActor = new Map();
   const blockedCodes = new Map();
-  const totals = { created: 0, claimed: 0, closed: 0, blocked: 0, overridden: 0, reworks: 0 };
-
+  const totals = { created: 0, claimed: 0, closed: 0, blocked: 0, envOnly: 0, overridden: 0, reworks: 0 };
   const bump = (map, key, field, n = 1) => {
     const cur = map.get(key) ?? { day: key, created: 0, claimed: 0, closed: 0, blocked: 0, overridden: 0 };
     cur[field] += n;
@@ -59,18 +55,18 @@ export function weekly(db, { days = 7, now = new Date() } = {}) {
       bump(byDay, d, "closed");
       bumpActor(e.actor, "closed");
       // 收口事件只说明「这一下过了」；返工是「跑挂过几次」，得看证据，见下面的 totals.reworks
-    } else if (e.action === "close.fail") {
-      totals.blocked += 1;
-      bump(byDay, d, "blocked");
-      bumpActor(e.actor, "blocked");
-      if (e.code) blockedCodes.set(e.code, (blockedCodes.get(e.code) ?? 0) + 1);
-    } else if (e.action === "rejected" && e.detail !== "env-only") {
-      // 被拒绝也是「被拦」：claim/commit/create 阶段的拒绝和收口失败一样进这个数。
-      // 只统计 env-only 以外的，那类属于「补一步就好」（T-097）。
-      totals.blocked += 1;
-      bump(byDay, d, "blocked");
-      bumpActor(e.actor, "blocked");
-      if (e.code) blockedCodes.set(e.code, (blockedCodes.get(e.code) ?? 0) + 1);
+    } else if (e.action === "close.fail" || e.action === "rejected") {
+      // 收口失败和被拒绝是同一类事：内核不让过。至于算不算「被拦」，按 code 现算——
+      // 名单会演进，历史行不会自我更新，所以写入时记下的结论一概不采信（T-118）。
+      // env-only 那几类（证据/环境、用法、找错了）属于「补一步就好」，单独计数（T-117）。
+      if (ENV_ONLY_CODES.has(e.code)) {
+        totals.envOnly += 1;
+      } else {
+        totals.blocked += 1;
+        bump(byDay, d, "blocked");
+        bumpActor(e.actor, "blocked");
+        if (e.code) blockedCodes.set(e.code, (blockedCodes.get(e.code) ?? 0) + 1);
+      }
     } else if (e.action === "override") {
       totals.overridden += 1;
       bump(byDay, d, "overridden");
@@ -108,6 +104,9 @@ export function verdict(w) {
   const pass = t.claimed ? Math.round((t.closed / t.claimed) * 100) : 0;
   const parts = [`收口 ${t.closed} 条（领了 ${t.claimed}，成率 ${pass}%）`];
   if (t.blocked) parts.push(`被拦 ${t.blocked} 次`);
+  // 「补一步就好」的那几次也说出来：不说，读者会以为这周什么都没发生；
+  // 说成「被拦」，又等于把打错命令算成内核抓住了问题（T-117/T-118）。
+  if (t.envOnly) parts.push(`另有 ${t.envOnly} 次补一步就好`);
   if (t.reworks) parts.push(`返工 ${t.reworks} 轮`);
   if (t.overridden) parts.push(`Owner 放行 ${t.overridden} 次`);
   if (t.lines) parts.push(`净改动 ${t.lines} 行`);
