@@ -455,7 +455,9 @@ export function cmdStats() {
   const root = resolveRoot();
   const db = openDb(root);
   const s = disciplineStats(db);
-  const tail = s.envOnly ? `（另有 ${s.envOnly} 次缺证据/工作树脏这类补一步就好）` : "";
+  // 说清「另外那些为什么不算被拦」：用法错、编号找不到、缺证据——看一眼就能改的，
+  // 记进被拦只会让这个数虚高（T-117）。
+  const tail = s.envOnly ? `（另有 ${s.envOnly} 次用法/环境类，补一步就好，不算被拦）` : "";
   console.log(`被拦 ${s.blocked} 次${tail} · 返工 ${s.rework} 轮 · 绕过 ${s.bypassed} 次 · 已完成 ${s.done} 个任务`);
   return 0;
 }

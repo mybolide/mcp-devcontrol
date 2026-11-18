@@ -114,15 +114,31 @@ export function countRework(db, { since = null, until = null } = {}) {
 }
 /**
  * 哪些拒绝算「补一步就好」，不算纪律问题。
- * 忘了跑测试、工作树脏这类不该和「改到 scope 外面」记在同一个数里。
+ *
+ * 三类：
+ * ① 证据/环境类——忘了跑测试、工作树脏、超时（本来就不该算 Agent 的账）；
+ * ② 用法类——命令拼错、参数不认识（T-117：这是打字问题，不是纪律问题）；
+ * ③ 没找到东西——编号不存在（同上，找错了不等于越界）。
+ *
+ * 判据是「补一步就能好、没有任何信息量可学」：这类数进「被拦」只会让指标虚高，
+ * 而指标的唯一用途是看内核到底拦住了什么真问题。
+ *
+ * 唯一事实源：gates.js 判 review_round 时也用这一份（T-117 之前是两处各写一遍，
+ * 谁改漏一处就会出现「stats 说没拦、review_round 却涨了」这种自相矛盾）。
  */
 export const ENV_ONLY_CODES = new Set([
+  // ① 证据 / 环境
   "E_DIRTY_SCOPE",
   "E_BUSY",
   "E_TIMEOUT",
   "E_NO_EVIDENCE",
   "E_EVIDENCE_STALE",
   "E_NO_DELIVERY",
+  // ② 用法
+  "E_USAGE",
+  "INVALID_ARGUMENT",
+  // ③ 找错了
+  "NOT_FOUND",
 ]);
 
 /**

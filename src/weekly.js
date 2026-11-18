@@ -22,7 +22,11 @@ export function weekly(db, { days = 7, now = new Date() } = {}) {
   const since = new Date(now.getTime() - days * DAY).toISOString();
 
   const events = db
-    .prepare("SELECT at, actor, channel, action, task_id, code FROM events WHERE at >= ? AND at <= ? ORDER BY at")
+    // detail 必须选出来：下面按 detail==='env-only' 排除「补一步就好」的拒绝，
+    // 早先查询里没这一列，过滤条件恒为真，于是一条都没被排除过（T-117）。
+    .prepare(
+      "SELECT at, actor, channel, action, task_id, code, detail FROM events WHERE at >= ? AND at <= ? ORDER BY at",
+    )
     .all(since, until);
 
   const byDay = new Map();

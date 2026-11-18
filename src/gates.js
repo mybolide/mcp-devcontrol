@@ -13,6 +13,7 @@ import {
   waiveFor,
   consumeWaive,
   taskExists,
+  ENV_ONLY_CODES,
 } from "./store.js";
 import { contractCommands, parseAssertion, readContract } from "./contract.js";
 import { fingerprint, inScope, sha256 } from "./fingerprint.js";
@@ -20,10 +21,8 @@ import { addedFiles, git, head, isAncestor, logCommits, numstat, patchId, status
 import { evaluate } from "./exec.js";
 import { generalizeHint, memoryConfig, rememberTaskPitfall } from "./memory.js";
 import { isVendorPath } from "./vendor.js";
-// 这些失败不计入 review_round：它们都是「补一步就能好」，不是「试了没成功」。
-// 证据类（忘了跑 / 跑完又改）尤其不能算——否则每个 Agent 第一次忘跑测试，
-// 后面每次收口都得补 --resolved-by，纯属噪音。
-const ENV_ONLY = new Set(["E_DIRTY_SCOPE", "E_BUSY", "E_TIMEOUT", "E_NO_EVIDENCE", "E_EVIDENCE_STALE", "E_NO_DELIVERY"]);
+// 这些失败不计入 review_round：都是「补一步就能好」，不是「试了没成功」。
+// 名单只有一份，在 store.js（ENV_ONLY_CODES）——早先这里抄了一遍，两处一漏就不自洽（T-117）。
 
 /**
  * 事件流的 actor：任务在谁手上，这条事就是谁干的。
@@ -708,7 +707,7 @@ export async function taskClose(db, root, input, opts = {}) {
     throw error;
   } finally {
     const cur = getTask(db, t0.id);
-    if (cur && cur.status === "doing" && cur.closing_token === token && last && !ENV_ONLY.has(last)) {
+    if (cur && cur.status === "doing" && cur.closing_token === token && last && !ENV_ONLY_CODES.has(last)) {
       const n = (cur.review_round ?? 0) + 1;
       const parked = n >= 3;
       if (parked) {

@@ -57,20 +57,22 @@ test("补一步就好的拒绝单独计数，不混进纪律数", async () => {
   assert.equal(s.blocked, 0, "它不该污染「被拦」");
 });
 
-test("三次不同阶段的拒绝累加，stats 和 weekly 都看得到", () => {
+test("三个阶段的拒绝分开记：真问题进被拦，找错了进「补一步就好」", () => {
   const root = makeRepo();
   const { db } = initFlow(root);
 
-  cli(root, "a", "commit", "-m", "x"); // E_NO_TASK
+  cli(root, "a", "commit", "-m", "x"); // E_NO_TASK：没领任务就想提交，是真问题
   cli(root, "a", "task", "claim", "T-999"); // NOT_FOUND
   cli(root, "a", "close", "T-999"); // 还是 NOT_FOUND
 
+  // T-117 之后：编号不存在属于「找错了」，补一步就好，不能算成「内核抓住了问题」。
+  // 早先这里断言被拦 = 3，等于让两条打字错误替内核刷业绩。
   const s = disciplineStats(db);
-  assert.equal(s.blocked, 3, "三个阶段各算一次");
+  assert.deepEqual({ blocked: s.blocked, envOnly: s.envOnly }, { blocked: 1, envOnly: 2 });
 
   const w = weekly(db, { days: 7 });
-  assert.equal(w.totals.blocked, 3, "周报的口径要跟 stats 一致");
-  assert.ok(w.topBlocked.some((b) => b.code === "NOT_FOUND"), "拦在哪要看得出来");
+  assert.equal(w.totals.blocked, 1, "周报的口径要跟 stats 一致");
+  assert.ok(w.topBlocked.some((b) => b.code === "E_NO_TASK"), "拦在哪要看得出来");
 });
 
 test("还没有项目库时，失败也不会凭空造一个 state.db", () => {
