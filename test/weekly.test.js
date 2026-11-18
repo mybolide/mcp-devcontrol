@@ -38,7 +38,7 @@ test("weekly：按天/按人/按拦截码归拢事件", () => {
   );
   assert.equal(w.totals.blocked, 1);
   assert.equal(w.totals.overridden, 1);
-  assert.equal(w.totals.reworks, 1, "返工 = 失败次数，不猜");
+  assert.equal(w.totals.reworks, 0, "只有事件、没有跑挂过的证据：返工就是 0，不能拿被拦次数充数");
 
   assert.deepEqual(
     w.byDay.map((d) => [d.day, d.created, d.claimed, d.closed, d.blocked, d.overridden]),

@@ -1,7 +1,9 @@
 // devcontrol — 周报的统计层：只算数，不管怎么排版。
 //
-// 数据全在 events / tasks 里，不需要新表：事件流本来就是"发生了什么"的账本，
-// 这里只是按天、按人把它归拢一下。分开写是为了让渲染层能换样子而不动口径。
+// 数据全在 events / tasks / runs 里：事件流是「发生了什么」的账本，runs 是「跑成没成」的账本，
+// 这里只是按天、按人把它们归拢一下。分开写是为了让渲染层能换样子而不动口径。
+
+import { countRework } from "./store.js";
 
 const DAY = 86_400_000;
 
@@ -52,14 +54,11 @@ export function weekly(db, { days = 7, now = new Date() } = {}) {
       totals.closed += 1;
       bump(byDay, d, "closed");
       bumpActor(e.actor, "closed");
-      // 收口事件里带着"失败过几次"的信息：detail 形如「578 行 / 26 文件 / 1 断言」
-      // 返工次数单独从 close.fail 数，这里不猜。
+      // 收口事件只说明「这一下过了」；返工是「跑挂过几次」，得看证据，见下面的 totals.reworks
     } else if (e.action === "close.fail") {
       totals.blocked += 1;
       bump(byDay, d, "blocked");
       bumpActor(e.actor, "blocked");
-      // 「返工」= 同一任务失败后又收口成功；这里先按失败次数记，够用且不骗人
-      totals.reworks += 1;
       if (e.code) blockedCodes.set(e.code, (blockedCodes.get(e.code) ?? 0) + 1);
     } else if (e.action === "rejected" && e.detail !== "env-only") {
       // 被拒绝也是「被拦」：claim/commit/create 阶段的拒绝和收口失败一样进这个数。
@@ -73,6 +72,10 @@ export function weekly(db, { days = 7, now = new Date() } = {}) {
       bump(byDay, d, "overridden");
     }
   }
+
+  // 「返工」的事实是「跑挂过、之后又跑过了」，只有 runs 表说得清：不从事件数，
+  // 按证据的时间窗单独算（与 disciplineStats 同一口径，免得两处数字打架）。
+  totals.reworks = countRework(db, { since, until });
 
   // 这段时间里收口的任务规模：从 tasks 表按 closed_at 取，比数事件准
   const closedTasks = db
@@ -101,6 +104,7 @@ export function verdict(w) {
   const pass = t.claimed ? Math.round((t.closed / t.claimed) * 100) : 0;
   const parts = [`收口 ${t.closed} 条（领了 ${t.claimed}，成率 ${pass}%）`];
   if (t.blocked) parts.push(`被拦 ${t.blocked} 次`);
+  if (t.reworks) parts.push(`返工 ${t.reworks} 轮`);
   if (t.overridden) parts.push(`Owner 放行 ${t.overridden} 次`);
   if (t.lines) parts.push(`净改动 ${t.lines} 行`);
   return parts.join(" · ");

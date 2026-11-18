@@ -78,9 +78,40 @@ export function listDocs(db) {
   return db.prepare("SELECT * FROM docs ORDER BY id").all();
 }
 /**
- * 纪律三数：被拦多少次、返工多少轮、绕过多少次。
- * 这是「内核到底有没有生效」的可核对证据，不靠人回忆。
+ * 「返工」的另一半：同一任务上，一条 exit≠0 的证据之后又跑过了，记一轮。
+ *
+ * 早先返工只数 review_round（门禁拒绝），于是「测试红了 → 改 → 绿了」这一整轮
+ * 在指标里完全看不见——那恰恰是最典型的返工（T-116）。内核不跑测试，但 Agent
+ * 留下的每条证据都带退出码，数得清就不该装作没看见。
+ *
+ * 边界：最后一次尝试仍是失败（还没通过）的不算——那不是返工，是还没成。
  */
+export function countRework(db, { since = null, until = null } = {}) {
+  const where = ["r.exit_code <> 0"];
+  const params = [];
+  if (since) {
+    where.push("r.started_at >= ?");
+    params.push(since);
+  }
+  if (until) {
+    where.push("r.started_at <= ?");
+    params.push(until);
+  }
+  // 先后用 started_at 定，同一毫秒内的两条再按 rowid 排——不能把「同时」当成「之后」
+  const row = db
+    .prepare(
+      `SELECT COUNT(*) AS c FROM runs r
+        WHERE ${where.join(" AND ")}
+          AND EXISTS (
+            SELECT 1 FROM runs p
+             WHERE p.task_id = r.task_id
+               AND p.exit_code = 0
+               AND (p.started_at > r.started_at
+                    OR (p.started_at = r.started_at AND p.rowid > r.rowid)))`,
+    )
+    .get(...params);
+  return row.c;
+}
 /**
  * 哪些拒绝算「补一步就好」，不算纪律问题。
  * 忘了跑测试、工作树脏这类不该和「改到 scope 外面」记在同一个数里。
@@ -102,6 +133,10 @@ export function logRejection(db, actor, code) {
   logEvent(db, { actor: actor || "agent", action: "rejected", code, detail: ENV_ONLY_CODES.has(code) ? "env-only" : "" });
 }
 
+/**
+ * 纪律三数：被拦多少次、返工多少轮、绕过多少次。
+ * 这是「内核到底有没有生效」的可核对证据，不靠人回忆。
+ */
 export function disciplineStats(db) {
   // 「被拦」= 所有实质拒绝 + 收口失败。早先只数 close.fail，于是 claim/commit 阶段
   // 的拒绝一次都不进这个数，指标恒为 0，等于自证无效（T-097）。
@@ -111,7 +146,10 @@ export function disciplineStats(db) {
     )
     .get().c;
   const envOnly = db.prepare("SELECT COUNT(*) AS c FROM events WHERE action='rejected' AND detail='env-only'").get().c;
-  const rework = db.prepare("SELECT COALESCE(SUM(review_round),0) AS c FROM tasks").get().c;
+  // 「返工」= 两笔账：① 门禁记的 review_round（收口被拒，改完再来）
+  // ② 真跑挂过的证据之后又跑过了（T-116：Agent 自己测试红了再修好，这才最该被看见）
+  const gateRounds = db.prepare("SELECT COALESCE(SUM(review_round),0) AS c FROM tasks").get().c;
+  const rework = gateRounds + countRework(db);
   const bypassed = db.prepare("SELECT COUNT(*) AS c FROM events WHERE action='override'").get().c;
   const done = db.prepare("SELECT COUNT(*) AS c FROM tasks WHERE status='done'").get().c;
   return { blocked, envOnly, rework, bypassed, done };
