@@ -142,6 +142,19 @@ export const ENV_ONLY_CODES = new Set([
 ]);
 
 /**
+ * 哪些 code 说明「内核自己出了问题」，跟 Agent 干的活没关系。
+ *
+ * `E_INTERNAL` 是兜底：某处 `throw` 出来的 error 没有 code，或者内核自己写崩了。
+ * 把它算进「被拦」，等于内核的 bug 变成 Agent 的业绩；更糟的是它还会让
+ * `review_round` 涨——攒到三次直接把任务挂起，Agent 拿一个自己碰不到的东西
+ * 永远解不开（T-012 的两轮返工就是这么记的）。
+ *
+ * 归属很清楚：内核的故障该被上报、被发现，但账不记在干活的人头上。
+ * 和 `ENV_ONLY_CODES` 分开放，因为含义不同：那是「补一步就好」，这是「不是你的错」。
+ */
+export const FAULT_CODES = new Set(["E_INTERNAL"]);
+
+/**
  * 一次拒绝算不算「被拦」——按 code 现算，不看写入时记下的结论。
  *
  * T-118：早先把分类结果（`detail='env-only'`）在写事件那一刻就固化下来，于是
@@ -149,17 +162,31 @@ export const ENV_ONLY_CODES = new Set([
  * 事件的 `code` 是事实，分类是解释；解释会演进，事实不会，所以解释必须每次重算。
  * `rejected` 和 `close.fail` 用同一条判据：门禁里判 `review_round` 用的也是它。
  */
-export function classifyRejections(db) {
+export function classifyRejections(db, { since = null, until = null } = {}) {
+  const where = ["action IN ('rejected','close.fail')"];
+  const params = [];
+  if (since) {
+    where.push("at >= ?");
+    params.push(since);
+  }
+  if (until) {
+    where.push("at <= ?");
+    params.push(until);
+  }
   const rows = db
-    .prepare("SELECT code, COUNT(*) AS c FROM events WHERE action IN ('rejected','close.fail') GROUP BY code")
-    .all();
+    .prepare(`SELECT code, COUNT(*) AS c FROM events WHERE ${where.join(" AND ")} GROUP BY code`)
+    .all(...params);
   let blocked = 0;
   let envOnly = 0;
+  let faults = 0;
   for (const r of rows) {
-    if (ENV_ONLY_CODES.has(r.code)) envOnly += r.c;
+    // 判据顺序有意义：先认「内核自己的锅」，再认「补一步就好」，剩下的才算被拦。
+    // 把 FAULT 放进 ENV_ONLY 会丢掉「这是内核 bug」这个信息，反过来则会把它算成 Agent 的账。
+    if (FAULT_CODES.has(r.code)) faults += r.c;
+    else if (ENV_ONLY_CODES.has(r.code)) envOnly += r.c;
     else blocked += r.c;
   }
-  return { blocked, envOnly };
+  return { blocked, envOnly, faults };
 }
 
 /**
@@ -173,20 +200,47 @@ export function logRejection(db, actor, code) {
 }
 
 /**
+ * 门禁拒了几轮 —— 从事件流数，不读 tasks.review_round。
+ *
+ * 为什么不读那个字段：`taskReopen` 会把它清零（打回重做等于重新开始），
+ * 于是「返工」这个数只要被 reopen 一次就凭空少几轮，历史被抹掉。
+ * 事件是不可变的，数它才数得准，也能按时间窗切。
+ *
+ * 只数真正记到 Agent 账上的（排除补一步就好与内核自身故障），与门禁加轮的判据一致。
+ */
+export function countGateRounds(db, { since = null, until = null } = {}) {
+  const where = ["action = 'close.fail'"];
+  const params = [];
+  if (since) {
+    where.push("at >= ?");
+    params.push(since);
+  }
+  if (until) {
+    where.push("at <= ?");
+    params.push(until);
+  }
+  const rows = db.prepare(`SELECT code, COUNT(*) AS c FROM events WHERE ${where.join(" AND ")} GROUP BY code`).all(...params);
+  let n = 0;
+  for (const r of rows) {
+    if (!ENV_ONLY_CODES.has(r.code) && !FAULT_CODES.has(r.code)) n += r.c;
+  }
+  return n;
+}
+
+/**
  * 纪律三数：被拦多少次、返工多少轮、绕过多少次。
  * 这是「内核到底有没有生效」的可核对证据，不靠人回忆。
  */
 export function disciplineStats(db) {
   // 「被拦」= 所有实质拒绝 + 收口失败（T-097）。早先只数 close.fail，指标恒为 0；
   // 现在按 code 现算分类，名单改了历史行也跟着重算（T-118）。
-  const { blocked, envOnly } = classifyRejections(db);
-  // 「返工」= 两笔账：① 门禁记的 review_round（收口被拒，改完再来）
+  const { blocked, envOnly, faults } = classifyRejections(db);
+  // 「返工」= 两笔账：① 门禁拒了几轮（从事件流数，reopen 抹不掉）
   // ② 真跑挂过的证据之后又跑过了（T-116：Agent 自己测试红了再修好，这才最该被看见）
-  const gateRounds = db.prepare("SELECT COALESCE(SUM(review_round),0) AS c FROM tasks").get().c;
-  const rework = gateRounds + countRework(db);
+  const rework = countGateRounds(db) + countRework(db);
   const bypassed = db.prepare("SELECT COUNT(*) AS c FROM events WHERE action='override'").get().c;
   const done = db.prepare("SELECT COUNT(*) AS c FROM tasks WHERE status='done'").get().c;
-  return { blocked, envOnly, rework, bypassed, done };
+  return { blocked, envOnly, faults, rework, bypassed, done };
 }
 
 /** 证据流：Agent 跑过的验收命令/退出码/HEAD/指纹，可复核 */

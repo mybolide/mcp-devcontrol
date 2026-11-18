@@ -43,12 +43,20 @@ export function renderWeekly(w, { title = "周报" } = {}) {
       "",
     );
   }
-
   // 被拦的码只列前 5：周报是给人扫的，不是日志全文
   if (w.topBlocked.length) {
     out.push("## 主要拦在哪", "");
     for (const b of w.topBlocked) out.push(`- \`${b.code}\` × ${b.count}`);
     out.push("");
+  }
+
+  // 不进「被拦」的两类也要摊开：不写，读者会以为这周干干净净；
+  // 写成「被拦」，又等于把打错命令和内核的 bug 都算成内核抓住了问题（T-118/T-119）。
+  const aside = [];
+  if (w.totals.envOnly) aside.push(`- 补一步就好（用法/环境类）：${w.totals.envOnly} 次`);
+  if (w.totals.faults) aside.push(`- 内核自身故障：${w.totals.faults} 次（不算 Agent 的账，值得上报）`);
+  if (aside.length) {
+    out.push("## 不进「被拦」的那些", "", ...aside, "");
   }
 
   return out.join("\n").replace(/\n+$/, "\n");

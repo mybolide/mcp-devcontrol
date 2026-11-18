@@ -3,7 +3,7 @@
 // 数据全在 events / tasks / runs 里：事件流是「发生了什么」的账本，runs 是「跑成没成」的账本，
 // 这里只是按天、按人把它们归拢一下。分开写是为了让渲染层能换样子而不动口径。
 
-import { countRework, ENV_ONLY_CODES } from "./store.js";
+import { countGateRounds, countRework, ENV_ONLY_CODES, FAULT_CODES } from "./store.js";
 
 const DAY = 86_400_000;
 
@@ -29,7 +29,7 @@ export function weekly(db, { days = 7, now = new Date() } = {}) {
   const byDay = new Map();
   const byActor = new Map();
   const blockedCodes = new Map();
-  const totals = { created: 0, claimed: 0, closed: 0, blocked: 0, envOnly: 0, overridden: 0, reworks: 0 };
+  const totals = { created: 0, claimed: 0, closed: 0, blocked: 0, envOnly: 0, faults: 0, overridden: 0, reworks: 0 };
   const bump = (map, key, field, n = 1) => {
     const cur = map.get(key) ?? { day: key, created: 0, claimed: 0, closed: 0, blocked: 0, overridden: 0 };
     cur[field] += n;
@@ -54,12 +54,14 @@ export function weekly(db, { days = 7, now = new Date() } = {}) {
       totals.closed += 1;
       bump(byDay, d, "closed");
       bumpActor(e.actor, "closed");
-      // 收口事件只说明「这一下过了」；返工是「跑挂过几次」，得看证据，见下面的 totals.reworks
+      // 收口事件只说明「这一下过了」；返工怎么算见下面的 totals.reworks
     } else if (e.action === "close.fail" || e.action === "rejected") {
       // 收口失败和被拒绝是同一类事：内核不让过。至于算不算「被拦」，按 code 现算——
       // 名单会演进，历史行不会自我更新，所以写入时记下的结论一概不采信（T-118）。
-      // env-only 那几类（证据/环境、用法、找错了）属于「补一步就好」，单独计数（T-117）。
-      if (ENV_ONLY_CODES.has(e.code)) {
+      if (FAULT_CODES.has(e.code)) {
+        // 内核自己崩了：不是 Agent 的账，但也不能让它消失——单独摊出来（T-119）。
+        totals.faults += 1;
+      } else if (ENV_ONLY_CODES.has(e.code)) {
         totals.envOnly += 1;
       } else {
         totals.blocked += 1;
@@ -73,9 +75,9 @@ export function weekly(db, { days = 7, now = new Date() } = {}) {
     }
   }
 
-  // 「返工」的事实是「跑挂过、之后又跑过了」，只有 runs 表说得清：不从事件数，
-  // 按证据的时间窗单独算（与 disciplineStats 同一口径，免得两处数字打架）。
-  totals.reworks = countRework(db, { since, until });
+  // 与 disciplineStats 拆成两笔、两笔都算：① 门禁拒了几轮 ② 跑挂过又跑过了（T-116）。
+  // 早先这里只数第 ② 笔，于是同一个词在 stats 是 28 轮、在周报是 2 轮，读者没法判断该信谁（T-119）。
+  totals.reworks = countGateRounds(db, { since, until }) + countRework(db, { since, until });
 
   // 这段时间里收口的任务规模：从 tasks 表按 closed_at 取，比数事件准
   const closedTasks = db
@@ -107,6 +109,8 @@ export function verdict(w) {
   // 「补一步就好」的那几次也说出来：不说，读者会以为这周什么都没发生；
   // 说成「被拦」，又等于把打错命令算成内核抓住了问题（T-117/T-118）。
   if (t.envOnly) parts.push(`另有 ${t.envOnly} 次补一步就好`);
+  // 内核自己的故障必须单独说：混进「被拦」是冤枉 Agent，藏起来是替内核遮丑（T-119）。
+  if (t.faults) parts.push(`内核自身故障 ${t.faults} 次（不算你的账，值得上报）`);
   if (t.reworks) parts.push(`返工 ${t.reworks} 轮`);
   if (t.overridden) parts.push(`Owner 放行 ${t.overridden} 次`);
   if (t.lines) parts.push(`净改动 ${t.lines} 行`);

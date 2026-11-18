@@ -75,6 +75,19 @@ test("renderWeekly：没有被拦时不出现「主要拦在哪」", () => {
   assert.match(md, /## 按人/);
 });
 
+test("renderWeekly：不进「被拦」的两类也摊开，读者不会以为这周干干净净", () => {
+  const md = renderWeekly({ ...sample, totals: { ...sample.totals, envOnly: 3, faults: 2 } });
+  assert.match(md, /## 不进「被拦」的那些/);
+  assert.match(md, /补一步就好（用法\/环境类）：3 次/);
+  assert.match(md, /内核自身故障：2 次/, `内核的 bug 也要写出来：${md}`);
+  assert.match(md, /不算 Agent 的账/, "还得说清归属");
+});
+
+test("renderWeekly：两类都是 0 时不摆这一节", () => {
+  const md = renderWeekly({ ...sample, totals: { ...sample.totals, envOnly: 0, faults: 0 } });
+  assert.doesNotMatch(md, /## 不进「被拦」的那些/, "没有就别摆空标题");
+});
+
 test("renderWeekly：自定义标题；结尾正好一个换行", () => {
   const md = renderWeekly(sample, { title: "研发周报" });
   assert.match(md, /^# 研发周报 2026-03-03 ~ 2026-03-10$/m);

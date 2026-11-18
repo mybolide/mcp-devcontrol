@@ -38,7 +38,9 @@ test("weekly：按天/按人/按拦截码归拢事件", () => {
   );
   assert.equal(w.totals.blocked, 1);
   assert.equal(w.totals.overridden, 1);
-  assert.equal(w.totals.reworks, 0, "只有事件、没有跑挂过的证据：返工就是 0，不能拿被拦次数充数");
+  // 门禁拒一轮就是返工一轮：Agent 得改完再来。早先这里只数「跑挂过的证据」，
+  // 于是同一个词在 stats 是 28 轮、在周报是 2 轮（T-119）。
+  assert.equal(w.totals.reworks, 1, "一条 close.fail 就是一轮返工");
 
   assert.deepEqual(
     w.byDay.map((d) => [d.day, d.created, d.claimed, d.closed, d.blocked, d.overridden]),

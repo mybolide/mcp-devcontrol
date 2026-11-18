@@ -14,6 +14,7 @@ import {
   consumeWaive,
   taskExists,
   ENV_ONLY_CODES,
+  FAULT_CODES,
 } from "./store.js";
 import { contractCommands, parseAssertion, readContract } from "./contract.js";
 import { fingerprint, inScope, sha256 } from "./fingerprint.js";
@@ -708,14 +709,21 @@ export async function taskClose(db, root, input, opts = {}) {
   } finally {
     const cur = getTask(db, t0.id);
     if (cur && cur.status === "doing" && cur.closing_token === token && last && !ENV_ONLY_CODES.has(last)) {
-      const n = (cur.review_round ?? 0) + 1;
-      const parked = n >= 3;
-      if (parked) {
-        db.prepare("UPDATE tasks SET review_round=?, status='parked', claimed_by=NULL, claim_expires_at=NULL WHERE id=?").run(n, cur.id);
+      // 内核自己崩了：事件照样记（要看得见、要能上报），但不给 Agent 加轮次。
+      // 早先这里一视同仁，于是 T-012 因为内核的 bug 被记了两轮返工，再撞一次就直接挂起——
+      // 那是 Agent 手里解不开的东西（T-119）。
+      if (FAULT_CODES.has(last)) {
+        logEvent(db, { actor: actorOf(db, cur.id), action: "close.fail", taskId: cur.id, code: last, detail: "内核自身故障，不计入 Agent 轮次" });
       } else {
-        db.prepare("UPDATE tasks SET review_round=?, status='doing' WHERE id=?").run(n, cur.id);
+        const n = (cur.review_round ?? 0) + 1;
+        const parked = n >= 3;
+        if (parked) {
+          db.prepare("UPDATE tasks SET review_round=?, status='parked', claimed_by=NULL, claim_expires_at=NULL WHERE id=?").run(n, cur.id);
+        } else {
+          db.prepare("UPDATE tasks SET review_round=?, status='doing' WHERE id=?").run(n, cur.id);
+        }
+        logEvent(db, { actor: actorOf(db, cur.id), action: "close.fail", taskId: cur.id, code: last, detail: `第 ${n} 次` });
       }
-      logEvent(db, { actor: actorOf(db, cur.id), action: "close.fail", taskId: cur.id, code: last, detail: `第 ${n} 次` });
     }
     db.prepare("UPDATE tasks SET closing_at=NULL, closing_token=NULL WHERE id=? AND closing_token=?").run(t0.id, token);
   }
