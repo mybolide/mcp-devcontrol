@@ -38,6 +38,7 @@ import { openDb as _openDb } from "./db.js";
 import { weekly } from "./weekly.js";
 import { renderWeekly } from "./weekly-md.js";
 import { installAgentFiles, SKILL_REL } from "./skill.js";
+import { buildContextPlan, contextStatus } from "./context.js";
 
 
 const DEVCONTROL_BIN = fileURLToPath(new URL("../bin/devcontrol.js", import.meta.url));
@@ -246,9 +247,20 @@ export function cmdInit(args) {
   } catch {
     /* 没有可提交改动 */
   }
+  // 项目上下文：init 只产出「该写哪几篇 + 每篇要回答什么问题」的清单，正文由 Agent 写。
+  // 内核不写正文——它不认识业务，硬写出来就是空话（那 5 条「不留 TODO」式的规范就是这么来的）。
+  // 但 Agent 写完之后，claim 会把内容直接塞进返回，省掉每次任务重新探索。
+  const ctxPlan = buildContextPlan(root);
+  const ctxNow = contextStatus(root);
+  const ctxSection = ctxNow.ready
+    ? `- 项目上下文：已就绪（${ctxNow.indexPath} + ${ctxNow.docs} 篇），claim 时会随任务下发`
+    : `- 项目上下文：**还没有**（${ctxPlan.docs.length} 篇待写，claim 时会提示）
+  让 Agent 按这个清单写（每篇都问一个「它每次都会重新摸一遍」的问题）：
+${ctxPlan.steps.map((s, i) => `    ${i + 1}. ${s.action}${s.ask ? `\n       要回答：${s.ask}` : ""}`).join("\n")}
+  硬要求：${ctxPlan.rules.join("；")}`;
   console.log(`devcontrol init 完成：
-- 数据目录 .devcontrol/（state.db / contracts / runs）
 - 模式：${gitMode ? "git（完整门禁）" : "weak（无 git：只跑验收，无归属校验）"}
+${ctxSection}
 ${unignored ? "- .gitignore：已移除整体忽略 .devcontrol/ 的规则（契约必须能进 git）\n" : ""}- Path 草稿 ${created} 条（都还是 draft，需要 Owner 批准）
 - 客户端配置：.mcp.json ${label(wroteMcp)} / .cursor/mcp.json ${label(wroteCursor)} / opencode.json ${label(wroteOpencode)}
 - Agent 说明：${Object.keys(agentFiles).join(" / ")}（${SKILL_REL} 是规范，其余是指针）
@@ -628,6 +640,15 @@ export function cmdTask(args) {
     if (claimed.standards?.rules?.length) {
       console.log(`规范（${claimed.standards.enforced?.length ? `内核会拦：${claimed.standards.enforced.join("、")}；` : ""}其余靠自觉）：`);
       for (const st of claimed.standards.rules) console.log(`  · ${st.text}`);
+    }
+    // 项目上下文：一次性写好的「这个项目怎么回事」，直接印出来。
+    // 只给路径的话，Agent 会不会读是运气；印出来才是真的省掉它每轮重新探索。
+    if (claimed.context) {
+      console.log("");
+      console.log(claimed.context);
+      if (claimed.contextHint) console.log(`\n（${claimed.contextHint}）`);
+    } else if (claimed.contextHint) {
+      console.log(`\n注意：${claimed.contextHint}`);
     }
     return 0;
   }

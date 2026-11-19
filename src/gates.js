@@ -19,6 +19,7 @@ import {
 import { contractCommands, parseAssertion, readContract } from "./contract.js";
 import { fingerprint, inScope, sha256 } from "./fingerprint.js";
 import { assertScopeInsideRepo, assertScopeIsSpecific, suggestScope } from "./scope.js";
+import { CONTEXT_MAX_CHARS, loadContext } from "./context.js";
 import { addedFiles, git, head, isAncestor, logCommits, numstat, patchId, statusPorcelain, trailers } from "./git.js";
 import { evaluate } from "./exec.js";
 import { generalizeHint, memoryConfig, rememberTaskPitfall } from "./memory.js";
@@ -275,6 +276,8 @@ export function taskClaim(db, root, input, actor = "agent") {
       });
     }
     logEvent(db, { actor, action: "task.claim", taskId: t.id, detail: actor });
+    // 项目上下文在 claim 这一刻读一次，随返回一起下发（见下面 return 里的 context）。
+    const ctxLoaded = loadContext(root);
     // 接活那一刻工作区里已经有的改动，不是这个任务干的（多半是上一任留下的）。
     // 记下来，commit 时才分得清「我写的」和「我继承的」——否则接手的人把前任的活
     // 一起提交，盖上自己的 Task-Id，归属就说不清了（T-095）。
@@ -306,6 +309,16 @@ export function taskClaim(db, root, input, actor = "agent") {
       budgetLines: t.budget_lines,
       claimExpiresAt: exp,
       testCmds: contractCommands(body),
+      // 项目上下文：init 时 Agent 写好的「这个项目怎么回事」，这里**直接把内容塞进来**。
+      // 只给路径的话，Agent 会不会去读是运气；给内容才是真的省掉它重新探索的时间。
+      // 没写就明说没写——静默省略等于让它以为这项目没有约定。
+      context: ctxLoaded ? ctxLoaded.text : null,
+      contextHint: ctxLoaded
+        ? ctxLoaded.truncated
+          ? `项目上下文共 ${ctxLoaded.docs} 篇，超过 ${CONTEXT_MAX_CHARS} 字符的部分没随任务下发：改到那部分模块时先读 docs/project-context/ 下对应文件`
+          : null
+        : `项目还没有上下文文档（docs/project-context.md）。写之前先读一遍项目，或让 Owner 跑 devcontrol init 看该写哪几篇`,
+      contextChars: ctxLoaded ? ctxLoaded.chars : 0,
     };
   });
 }
