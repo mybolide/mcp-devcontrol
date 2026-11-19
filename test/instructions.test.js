@@ -48,8 +48,8 @@ test("README（中英两份）的 MCP 动作表覆盖了每个真实动作，且
   // 两份都得守：只守中文那份，英文版会悄悄漂；只守英文那份，中文用户看到的是旧表。
   // 每份 README 用自己语言里那节的起止标记定位。
   const mark = {
-    "README.zh-CN.md": ["MCP 只有一个工具", "CLI 等价"],
-    "README.md": ["MCP surface is a single tool", "CLI equivalents"],
+    "README.zh-CN.md": ["一个 MCP 工具", "不接 MCP 的客户端用 CLI"],
+    "README.md": ["One MCP tool", "CLI equivalents"],
   };
   for (const [rel, [from, to]] of Object.entries(mark)) {
     const readme = read(`../${rel}`);
