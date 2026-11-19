@@ -168,13 +168,28 @@ export function contextDrift(root, change = {}) {
 
   // ① 出现了规范里从没提过的目录 → architecture 那篇该补
   //
-  // 判据只看「目录路径在上下文里出现过没有」，不猜语义。
+  // 判据只看「这个目录在上下文里出现过没有」，不猜语义。
   // 比顶层目录更细一层：`src/` 早就写过，但 `src/billing/` 是新的，这才是该补的东西。
+  //
+  // 命中口径有两种，缺一不可：
+  //   ① 全路径出现过（`src/mapper`）
+  //   ② 目录名作为独立词出现过（`mapper -> db`）
+  // 只认全路径会把「文档写了 controller/service/mapper、代码在 src/controller/」判成没覆盖，
+  // 逼着人给每个目录补 `src/` 前缀——那不是上下文，那是抄目录树。
+  // 词边界只排除字母数字和连字符/下划线：`/` 要算边界——
+  // 常见写法是 `controller/service/mapper`，拦掉斜杠等于把最常见的写法漏掉。
   const dirsOf = (files) =>
     files
       .map((f) => String(f).split("/").slice(0, -1).join("/")) // 去掉文件名
       .filter((d) => d && d !== "." && !d.startsWith(".") && !d.startsWith(CONTEXT_DIR));
-  const newDirs = [...new Set([...dirsOf(added), ...dirsOf(changed)])].filter((d) => !docs.includes(d));
+  const mentioned = (dir) => {
+    if (docs.includes(dir)) return true;
+    const base = dir.split("/").pop() ?? "";
+    if (base.length < 2) return false;
+    const word = base.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp(`(^|[^\\w-])${word}($|[^\\w-])`).test(docs);
+  };
+  const newDirs = [...new Set([...dirsOf(added), ...dirsOf(changed)])].filter((d) => !mentioned(d));
   if (newDirs.length) {
     reasons.push({
       id: "new-dir",

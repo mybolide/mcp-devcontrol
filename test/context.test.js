@@ -221,6 +221,36 @@ test("contextDrift：目录规范里已经提过，就不该再报", () => {
   assert.equal(d.reasons.some((x) => x.id === "new-dir"), false, `src/ 和 test/ 都提过：${JSON.stringify(d.reasons)}`);
 });
 
+test("contextDrift：文档只写了目录名（没写 src/ 前缀），也算提过", () => {
+  // 真实踩到的坑：上下文写「controller -> service -> mapper -> db」，
+  // 代码在 src/controller/、src/mapper/，只认全路径就变成「每个目录都要补 src/ 前缀」，
+  // 那不是写上下文，那是抄目录树 —— 报出来的东西人对不上，只会训练人无脑加 contextNote。
+  const root = makeRepo();
+  write(root, CONTEXT_INDEX, "# 索引\n\n- 三层：controller/service/mapper\n");
+  write(root, `${CONTEXT_DIR}/architecture.md`, "# 架构\n\ncontroller -> service -> mapper -> db\n");
+  const d = contextDrift(root, {
+    addedFiles: ["src/controller/bookController.js"],
+    changedFiles: ["src/service/bookService.js", "src/mapper/bookMapper.js"],
+  });
+  assert.equal(
+    d.reasons.some((x) => x.id === "new-dir"),
+    false,
+    `目录名已经写过了，不该报：${JSON.stringify(d.reasons)}`,
+  );
+});
+
+test("contextDrift：短目录名不许被别的词碰巧命中", () => {
+  // 「db」这种两字母目录，裸 includes 会被 dbmate / sqlitedb 这类词命中，
+  // 于是真·新目录被静默放过 —— 判据就从「提醒」退化成「永远不响」。
+  const root = makeRepo();
+  write(root, CONTEXT_INDEX, "# 索引\n");
+  write(root, `${CONTEXT_DIR}/architecture.md`, "# 架构\n\n迁移用 dbmate 跑，别手写 SQL。\n");
+  const d = contextDrift(root, { addedFiles: ["src/db/pool.js"], changedFiles: [] });
+  const r = d.reasons.find((x) => x.id === "new-dir");
+  assert.ok(r, `dbmate 不等于 db 目录，该报：${JSON.stringify(d.reasons)}`);
+  assert.ok(r.detail.includes("src/db"), `要点名是 src/db：${r.detail}`);
+});
+
 test("contextDrift：改了依赖清单但上下文没跟着改 → 要提醒", () => {
   const root = makeRepo();
   write(root, CONTEXT_INDEX, "# 索引\n\n- 依赖策略：零依赖\n");
