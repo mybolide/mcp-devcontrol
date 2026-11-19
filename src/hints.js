@@ -11,6 +11,7 @@ const HINTS = {
   E_NO_EVIDENCE: "收口只核验证据，不替你跑测试。先自己跑出来：devcontrol run -- <契约里的验收命令>，然后再 devcontrol close。",
   E_EVIDENCE_STALE: "上次跑测试之后代码又改了，那份证据已经不作数。重跑一遍：devcontrol run -- <命令>。",
   E_ASSERTION_FAILED: "验收命令没通过。看证据：devcontrol evidence run-xxxx（不给编号看最近 8 次），或控制台「证据」页。",
+  E_CONTEXT_UNREVIEWED: "这次改动碰了项目上下文没覆盖的东西（新目录 / 依赖变了 / 引用的文件没了）。补一句 contextNote 再收口：更新了哪一篇，或者为什么不用更新。不是让你改代码。",
   E_TIMEOUT: "验收命令超时。先确认它在本机跑得完，再收口。",
   E_WIP_LIMIT: "WIP=1：你手上还有在办任务。先收了它（devcontrol close），或者 devcontrol renew 续租。",
   E_ALREADY_HELD: "这条任务已经在你手上了，不用再领。继续干活，长时间不做就 renew 续租。",

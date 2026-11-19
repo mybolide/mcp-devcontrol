@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { BIN, makeRepo } from "./helpers.js";
+import { BIN, makeRepo, prove } from "./helpers.js";
 import {
   CONTEXT_DIR,
   CONTEXT_INDEX,
@@ -254,29 +254,106 @@ test("contextDrift：没有改动时不去翻旧账（引用丢失是历史问�
   assert.equal(d.reasons.some((x) => x.id === "dangling-ref"), false);
 });
 
-test("close 时把上下文过期记成 observation（摆事实，不硬拦）", async () => {
+test("close 时上下文过期会拒绝收口，并要求带 contextNote", async () => {
   const root = makeRepo();
   const id = readyTask(root, { scope: ["src"] });
   write(root, CONTEXT_INDEX, "# 索引\n");
   write(root, `${CONTEXT_DIR}/architecture.md`, "# 架构\n\n业务在 src/。\n");
-
-  // 造一个规范里没提过的新目录
   fs.mkdirSync(path.join(root, "src/billing"), { recursive: true });
   fs.writeFileSync(path.join(root, "src/billing/invoice.js"), "export const x = 1;\n");
   fs.writeFileSync(path.join(root, "src/a.js"), "export const a = 2;\n");
 
   const { openDb } = await import("../src/db.js");
-  const { taskClaim, recordEvidence, taskClose } = await import("../src/gates.js");
-  const { closeProven } = await import("./helpers.js");
+  const { taskClaim, taskClose } = await import("../src/gates.js");
   const db = openDb(root);
-  // a.js 已存在，用改它来保证有交付；billing/ 是新增目录
   taskClaim(db, root, { id }, "agent");
-
   const { commitFiles } = await import("../src/git.js");
   commitFiles(root, ["src/a.js", "src/billing/invoice.js"], `feat: 加 billing\n\nTask-Id: ${id}`, { author: "agent" });
+  prove(db, root, id, { exit: 0 });
 
-  const res = await closeProven(db, root, { id }, { exit: 0 });
-  const ctxObs = (res.observations ?? []).filter((o) => o.id === "context");
-  assert.ok(ctxObs.length > 0, `close 该把上下文过期摆出来：${JSON.stringify(res.observations)}`);
-  assert.equal(ctxObs.some((o) => o.code === "new-dir"), true, "要点名是哪个目录没写进规范");
+  let err = null;
+  try {
+    await taskClose(db, root, { id });
+  } catch (e) {
+    err = e;
+  }
+  assert.ok(err, "过期了却没拦，等于让 agent 假装没看见");
+  assert.equal(err.code, "E_CONTEXT_UNREVIEWED");
+  // hint 走 data.hint：DFError 的第三参是 data，CLI 从 data.hint 取具体提示（T-110）
+  const hint = err.data?.hint ?? err.hint ?? "";
+  assert.match(hint, /architecture\.md/, `提示里要给出该更新哪一篇：${hint}`);
+});
+
+test("带了 contextNote 就能收口，而且这句话会进事件流", async () => {
+  const root = makeRepo();
+  const id = readyTask(root, { scope: ["src"] });
+  write(root, CONTEXT_INDEX, "# 索引\n");
+  write(root, `${CONTEXT_DIR}/architecture.md`, "# 架构\n\n业务在 src/。\n");
+  fs.mkdirSync(path.join(root, "src/billing"), { recursive: true });
+  fs.writeFileSync(path.join(root, "src/billing/invoice.js"), "export const x = 1;\n");
+  fs.writeFileSync(path.join(root, "src/a.js"), "export const a = 2;\n");
+
+  const { openDb } = await import("../src/db.js");
+  const { taskClaim, taskClose } = await import("../src/gates.js");
+  const db = openDb(root);
+  taskClaim(db, root, { id }, "agent");
+  const { commitFiles } = await import("../src/git.js");
+  commitFiles(root, ["src/a.js", "src/billing/invoice.js"], `feat: 加 billing\n\nTask-Id: ${id}`, { author: "agent" });
+  prove(db, root, id, { exit: 0 });
+
+  const res = await taskClose(db, root, { id, contextNote: "更新了 architecture.md 的目录说明" });
+  assert.equal(res.closedBy, "evidence", `带 contextNote 就该收口：${JSON.stringify(res).slice(0, 200)}`);
+
+
+  const events = db.prepare("select action, detail from events where task_id=? and action='close.context'").all(id);
+  assert.equal(events.length, 1);
+  assert.match(events[0].detail, /architecture\.md/);
+});
+
+test("上下文没过期时，close 不要求 contextNote（不制造额外摩擦）", async () => {
+  const root = makeRepo();
+  const id = readyTask(root, { scope: ["src"] });
+  write(root, CONTEXT_INDEX, "# 索引\n");
+  // 规范里已经提到 src/，也没有新目录、没有新依赖
+  write(root, `${CONTEXT_DIR}/architecture.md`, "# 架构\n\n- src/ 放业务\n- test/ 放测试\n");
+  fs.writeFileSync(path.join(root, "src/a.js"), "export const a = 3;\n");
+
+  const { openDb } = await import("../src/db.js");
+  const { taskClaim, taskClose } = await import("../src/gates.js");
+  const db = openDb(root);
+  taskClaim(db, root, { id }, "agent");
+  const { commitFiles } = await import("../src/git.js");
+  commitFiles(root, ["src/a.js"], `feat: 改 a\n\nTask-Id: ${id}`, { author: "agent" });
+  prove(db, root, id, { exit: 0 });
+
+  const res = await taskClose(db, root, { id });
+  assert.equal(res.closedBy, "evidence", `没过期就不该额外拦：${JSON.stringify(res).slice(0, 200)}`);
+});
+
+// 「忘了说一句」不是「代码被拒」：它必须能补一句话就过，不能被记成返工轮次，
+// 更不能连锁触发 E_NEED_RESOLUTION（那会让 Agent 以为自己的实现被否了）。
+// 这和 T-117 定的「补一步就好」名单是同一条线：错误信息的性质决定它算不算账。
+test("E_CONTEXT_UNREVIEWED 不记返工轮次，补一句话就能过", async () => {
+  const root = makeRepo();
+  const id = readyTask(root, { scope: ["src"] });
+  write(root, CONTEXT_INDEX, "# 索引\n");
+  write(root, `${CONTEXT_DIR}/architecture.md`, "# 架构\n\n业务在 src/。\n");
+  fs.mkdirSync(path.join(root, "src/billing"), { recursive: true });
+  fs.writeFileSync(path.join(root, "src/billing/invoice.js"), "export const x = 1;\n");
+  fs.writeFileSync(path.join(root, "src/a.js"), "export const a = 5;\n");
+
+  const { openDb } = await import("../src/db.js");
+  const { taskClaim, taskClose } = await import("../src/gates.js");
+  const db = openDb(root);
+  taskClaim(db, root, { id }, "agent");
+  const { commitFiles } = await import("../src/git.js");
+  commitFiles(root, ["src/a.js", "src/billing/invoice.js"], `feat\n\nTask-Id: ${id}`, { author: "agent" });
+  prove(db, root, id, { exit: 0 });
+
+  await assert.rejects(() => taskClose(db, root, { id }), (e) => e.code === "E_CONTEXT_UNREVIEWED");
+  assert.equal(db.prepare("SELECT review_round r FROM tasks WHERE id=?").get(id).r, 0, "补一句话就好的事，不该记返工");
+
+  // 补上那句话，不带 resolvedBy 也应当能过（说明没被当成返工）
+  const res = await taskClose(db, root, { id, contextNote: "src/billing 是新模块，已补进 architecture.md" });
+  assert.equal(res.closedBy, "evidence", `带一句话就该过：${JSON.stringify(res).slice(0, 200)}`);
 });

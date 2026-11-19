@@ -719,7 +719,8 @@ export async function cmdClose(args) {
   };
   const actor = flagValue("--actor") ?? process.env.DEVCONTROL_ACTOR ?? "agent";
   const resolvedBy = flagValue("--resolved-by");
-  const consumed = new Set([actor, resolvedBy].filter(Boolean));
+  const contextNote = flagValue("--context-note");
+  const consumed = new Set([actor, resolvedBy, contextNote].filter(Boolean));
   let id = args.find((a) => !a.startsWith("--") && !consumed.has(a));
   if (!id) {
     const doing = db.prepare("SELECT id FROM tasks WHERE status='doing' AND claimed_by=? AND closing_token IS NULL").all(actor);
@@ -746,7 +747,7 @@ export async function cmdClose(args) {
       process.stderr.write(`\r\x1b[2K[devcontrol ${secs}] ${detail}`);
       if (milestone) process.stderr.write("\n");
     };
-    const res = await taskClose(db, root, { id, resolvedBy }, { onProgress });
+    const res = await taskClose(db, root, { id, resolvedBy, contextNote }, { onProgress });
     if (tty) process.stderr.write("\n");
     // 规范对照只走 stderr（人读）：内核报事实，判不判由人。
     // stdout 仍然是一整段 JSON，observations 在里面，脚本能自己用。

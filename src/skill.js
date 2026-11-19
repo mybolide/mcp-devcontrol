@@ -31,6 +31,7 @@ export function skillBody({ noMcp = false } = {}) {
 4. **先自己跑验收**：CLI 用 \`devcontrol run -- <契约里的命令>\`；走 MCP 就用自己的 shell 跑，然后把结果交给 \`evidence.record\`（command + exit）。跑几次都行，内核取当前代码上的那份。
 5. \`devcontrol commit -m "..."\`：只提交 scope 内的文件，自动写 Task-Id。
 6. \`devcontrol close\`：内核**不执行测试**，只核验你留下的证据（命令对不对、跑的是不是当前这份代码、退出码满足断言）。
+   close 时如果内核说「这次改动碰了上下文没覆盖的东西」，会要求 \`--context-note\`：一句话说清更新了哪篇、或为什么不用更新。规范过期了还被当成权威，比没有规范更糟。
 
 ## Owner 的动作不在 MCP 里
 

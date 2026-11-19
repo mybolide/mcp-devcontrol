@@ -609,15 +609,20 @@ export async function taskClose(db, root, input, opts = {}) {
     if (depOrTest.length) {
       observations.push({ id: "tests", detail: `动了依赖/既有测试：${depOrTest.slice(0, 3).join("、")}`, files: depOrTest });
     }
-    // ── 项目上下文的「是否需要更新」────────────────────────────────────────
-    //
-    // 「这条规则还对不对」是语义判断，内核做不了；「出现了规范里没提过的东西」
-    // 是事实判断，内核做得来。所以这里只回答后者，而且**不拦**——过期不是违规，
-    // 但必须被看见：规范一旦变成权威的错误来源，比没有规范更糟。
+    // 项目上下文：该不该更新，机械判据说了算；更新了没有，要 agent 自己交代一句。
+    // 有提醒就必须带 contextNote——这不是拦「过期」，是拦「假装没看见」。
+    // 和 resolvedBy 同一个道理：失败不丢人，不解释怎么解决的才丢人。
     const drift = contextDrift(root, { addedFiles: [...addedFilesSet], changedFiles: files });
     if (drift.needsAttention) {
       for (const r of drift.reasons) {
         observations.push({ id: "context", code: r.id, detail: r.detail, fix: r.fix });
+      }
+      if (!String(input.contextNote ?? "").trim()) {
+        const lines = drift.reasons.map((r) => `· ${r.detail}\n  → ${r.fix}`).join("\n");
+        fail("E_CONTEXT_UNREVIEWED", "这次改动触碰了项目上下文没覆盖的东西，close 必须带 contextNote（一句话：更新了哪篇 / 为什么不用更新）", {
+          reasons: drift.reasons,
+          hint: `先看一眼这几条：\n${lines}\n\n带上这一句再 close：\n  CLI：devcontrol close ${t.id} --context-note "更新了 architecture.md 的目录说明"\n  MCP：task.close 加 contextNote 字段`,
+        });
       }
     }
     } // ← 闭合上面 324 行的 if (!weak)：这段故意不缩进，别当成多余括号删掉（删了弱模式会跑 R0）
@@ -709,6 +714,12 @@ export async function taskClose(db, root, input, opts = {}) {
     }
     if (observations.length) {
       logEvent(db, { actor: actorOf(db, t.id), action: "close.observed", taskId: t.id, at: closedAt, detail: observations.map((o) => o.detail).join("；") });
+    }
+    // 上下文那句话单独记一条：它和「又是哪条规范提醒了」不是一回事——
+    // 这条是 agent 自己说的「我看见了、我更新了/我故意不改」，人要看得见它的原话。
+    const ctxNote = String(input.contextNote ?? "").trim();
+    if (ctxNote) {
+      logEvent(db, { actor: actorOf(db, t.id), action: "close.context", taskId: t.id, at: closedAt, detail: ctxNote });
     }
     logEvent(db, {
       actor: actorOf(db, t.id),

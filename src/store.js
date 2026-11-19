@@ -135,6 +135,9 @@ export const ENV_ONLY_CODES = new Set([
   "E_NO_EVIDENCE",
   "E_EVIDENCE_STALE",
   "E_NO_DELIVERY",
+  // 「忘了说一句」和「代码被拒」不是一回事：它补一句话就能过，不该记成返工轮次，
+  // 也不该连锁触发 E_NEED_RESOLUTION（那个是「你返工过，解释怎么解决的」）。
+  "E_CONTEXT_UNREVIEWED",
   // ② 用法
   "E_USAGE",
   "INVALID_ARGUMENT",
