@@ -27,6 +27,7 @@ export function skillBody({ noMcp = false } = {}) {
 1. 开工先问内核：${first}。返回的 \`next\` 就是你现在该做的那件事。
 2. **原样执行** next：走 MCP 用 \`next.args\`（缺参数会收到 \`INVALID_ARGUMENT\`）；走 CLI 就用 \`next.cli\` 那一行，粘进终端直接能跑。
 3. 改代码只能动 \`claim\` 返回的 \`scope\` 里的文件。
+   **\`claim\` 的返回里还带项目上下文**（架构、数据约定、怎么加功能、错误怎么处理）——那是这个项目自己的文档，内核直接给你内容、不是路径。开工前先看它，别自己重新摸索一遍项目；它和实际代码冲突时以代码为准，并把冲突告诉人。项目还没写上下文时 claim 会明说，这时按 \`devcontrol init\` 给的清单补上。
 4. **先自己跑验收**：CLI 用 \`devcontrol run -- <契约里的命令>\`；走 MCP 就用自己的 shell 跑，然后把结果交给 \`evidence.record\`（command + exit）。跑几次都行，内核取当前代码上的那份。
 5. \`devcontrol commit -m "..."\`：只提交 scope 内的文件，自动写 Task-Id。
 6. \`devcontrol close\`：内核**不执行测试**，只核验你留下的证据（命令对不对、跑的是不是当前这份代码、退出码满足断言）。
