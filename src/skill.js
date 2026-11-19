@@ -10,7 +10,11 @@ export const CURSOR_RULE_REL = ".cursor/rules/devcontrol.mdc";
 export const CLAUDE_REL = "CLAUDE.md";
 export const AGENTS_REL = "AGENTS.md";
 
-const BEGIN = "<!-- devcontrol:begin — 自动生成，勿手改 -->";
+// 版本号必须进标记里：否则用户看不出装的是哪一版，升级后也无法判断
+// 「这块是新的还是旧的」。v5 的教训就是这个——文档漂了没人知道。
+// 注意格式：`upsertBlock` 用 /<!-- devcontrol:begin[\s\S]*?<!-- devcontrol:end -->/
+// 匹配，所以 begin 里带 `-->` 是安全的（只要不出现 end 标记本身）。
+const BEGIN = `<!-- devcontrol:begin — 自动生成，勿手改；版本 ${VERSION} -->`;
 const END = "<!-- devcontrol:end -->";
 
 /** Skill 正文：Agent 真正要读的「法」 */
@@ -109,7 +113,7 @@ export function agentsBlock() {
   const consoleLine = "控制台地址在 `devcontrol status` 的 console 字段；接了 MCP 会自动拉起，没接就自己 `devcontrol serve`。";
   return `${BEGIN}
 开工先跑 ${open}：它返回的 \`next\` 就是下一件事，不要自己挑。
-改代码前必须 task.claim；不许修改 acceptance，不许自选命令；只改 scope 内的文件。
+改代码前必须 task.claim；**claim 的返回里带着这个项目的上下文**（架构、数据约定、怎么加功能、错误怎么处理），开工前先看它，别自己重新摸索一遍项目。不许修改 acceptance，不许自选命令；只改 scope 内的文件。
 **先自己跑** \`devcontrol run -- <验收命令>\` 留证据；再 \`devcontrol commit -m "..."\`（只提交 scope 内文件）；最后 \`devcontrol close\`（只核验证据）。
 遇到歧义用 ask，不要猜。
 ${consoleLine}
@@ -122,20 +126,21 @@ export function cursorRule() {
   return `---
 description: devcontrol 研发纪律（本项目唯一开发流程）
 alwaysApply: true
+version: "${VERSION}"
 ---
 
 读 \`${SKILL_REL}\`。
 
 1. 开工先 \`devcontrol status\`（MCP 里是 \`bootstrap\`），照它给的 \`next\` 做。
-2. 改代码前 \`task.claim\`；只改 scope 内的文件。
-3. 自己跑 \`devcontrol run -- <命令>\` 留证据 → \`devcontrol commit\` → \`devcontrol close\`（只核验证据）。
+2. 改代码前 \`task.claim\`——**返回值里带着项目上下文（架构、数据约定、怎么加功能），先看它**；只改 scope 内的文件。
+3. 改完**先** \`devcontrol run -- <命令>\` 留证据，**再** \`devcontrol commit\`，**最后** \`devcontrol close\`（只核验证据）。
 `;
 }
 
 export function claudeBlock() {
   return `${BEGIN}
 本项目用 devcontrol 管研发纪律，完整规矩见 \`${SKILL_REL}\`。
-开工 \`devcontrol status\`（MCP 里是 \`bootstrap\`），改代码前 \`task.claim\`，只改 scope 内文件，改完 \`commit\` → \`run\` 留证据 → \`close\`。
+开工 \`devcontrol status\`（MCP 里是 \`bootstrap\`）；改代码前 \`task.claim\`（**返回值里带着项目上下文，先看它**），只改 scope 内文件；改完**先** \`run\` 留证据 → **再** \`commit\` → **最后** \`close\`。
 ${END}`;
 }
 

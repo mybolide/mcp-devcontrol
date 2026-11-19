@@ -116,8 +116,7 @@ export async function dispatch(db, root, args, ctx = {}) {
       //
       // 只报一次：第二次 bootstrap 时项目早就初始化好了，再喊一遍是在骗人
       // （Agent 会以为它每次连上都把项目重建了一遍）。
-      const autoInitOnce = ctx.autoInit ?? null;
-      if (ctx.autoInit) ctx.autoInit = null;
+      const autoInitOnce = ctx.takeAutoInit ? ctx.takeAutoInit() : (ctx.autoInit ?? null);
       return bootstrap(db, root, {
         console: ctx.consoleUrl ? await ctx.consoleUrl() : null,
         memories: memory.memories,
@@ -219,6 +218,16 @@ export function compact(result, limit = 12000) {
 
 /** 组装 MCP server（供 runMcp 与测试复用） */
 export function createServer({ db, root, consoleUrl, autoInit = null }) {
+  // 「本次连接替它做过的初始化」只该报一次。状态必须活在这个闭包里：
+  // 早先想靠 `ctx.autoInit = null` 清空，但每次调用都新建一个 ctx 对象，
+  // 清的是一次性的壳，闭包里的值没变——于是每次 bootstrap 都在喊「刚初始化」。
+  // 这种「以为清了其实没清」的错，只有走真实 MCP 调用才看得出来（见 npm run packcheck）。
+  let pendingAutoInit = autoInit;
+  const takeAutoInit = () => {
+    const once = pendingAutoInit;
+    pendingAutoInit = null;
+    return once;
+  };
   const server = new McpServer({ name: TOOL_NAME, version: VERSION }, { instructions: INSTRUCTIONS, capabilities: { tools: {} } });
   server.registerTool(
     TOOL_NAME,
@@ -231,7 +240,7 @@ export function createServer({ db, root, consoleUrl, autoInit = null }) {
     },
     async (args, extra) => {
       try {
-        const result = await dispatch(db, root, args, { consoleUrl, autoInit, signal: extra?.signal });
+        const result = await dispatch(db, root, args, { consoleUrl, takeAutoInit, signal: extra?.signal });
         return { content: [{ type: "text", text: compact(result) }] };
       } catch (error) {
         // 记一笔拒绝：stats 的「被拦」靠它。CLI 那边走 failCli，这边是唯一入口。

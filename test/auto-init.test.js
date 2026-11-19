@@ -187,16 +187,32 @@ test("真实入口 `devcontrol mcp`：未初始化也能进，不被 NEEDS_DB �
   assert.ok(fs.existsSync(path.join(root, "AGENTS.md")), "AGENTS.md 要写出来");
 });
 
-test("bootstrap 的 autoInit 只报一次（第二次已经是「配好的项目」了）", () => {
+// 上一轮的这条测试是**假测试**：它自己写了个 take() 然后测自己，
+// 完全不碰生产代码。于是真正的缺陷（`ctx.autoInit = null` 清的是临时对象，
+// 闭包里没清）一直绿着，直到 `npm run packcheck` 走真实 MCP 调用才抓出来。
+// 现在改成真调 dispatch：同一个 ctx 连问两次，第二次必须拿不到。
+test("bootstrap 的 autoInit 只报一次（真调 dispatch，不是测自己写的桩）", async () => {
   const root = makeRepo();
   initializeProject(root, { noMcp: true });
-  // 用一个最小 ctx 走两遍 bootstrap 分支：第二次不该再说「刚初始化」
-  const ctx = { autoInit: { at: "t", pathsCreated: 1 }, consoleUrl: null };
-  const take = () => {
-    const once = ctx.autoInit ?? null;
-    if (ctx.autoInit) ctx.autoInit = null;
-    return once;
+  const { openDb } = await import("../src/db.js");
+  const { dispatch } = await import("../src/mcp.js");
+  const db = openDb(root);
+
+  // 模拟一条连接：takeAutoInit 就是 createServer 闭包里那个函数
+  let pending = { at: "t", pathsCreated: 1 };
+  const ctx = {
+    takeAutoInit: () => {
+      const once = pending;
+      pending = null;
+      return once;
+    },
   };
-  assert.ok(take(), "第一次要报");
-  assert.equal(take(), null, "第二次不能再报——项目早就配好了，再喊一遍是在骗人");
+
+  const first = await dispatch(db, root, { action: "bootstrap" }, ctx);
+  const second = await dispatch(db, root, { action: "bootstrap" }, ctx);
+  assert.ok(first.autoInit, "第一次要报「我刚初始化过」");
+  assert.equal(second.autoInit, null, "第二次不能再报——项目早就配好了，再喊一遍是在骗人");
+  // 上下文状态每次都要有（这条和 autoInit 是一对：一个只报一次，一个每次都报）
+  assert.equal(typeof first.context?.ready, "boolean");
+  assert.equal(typeof second.context?.ready, "boolean");
 });
