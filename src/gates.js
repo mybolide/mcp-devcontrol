@@ -23,6 +23,7 @@ import { CONTEXT_MAX_CHARS, contextDrift, loadContext } from "./context.js";
 import { addedFiles, git, head, isAncestor, logCommits, numstat, patchId, statusPorcelain, trailers } from "./git.js";
 import { evaluate } from "./exec.js";
 import { generalizeHint, memoryConfig, rememberTaskPitfall } from "./memory.js";
+import { refreshAgentFiles } from "./skill.js";
 import { isVendorPath } from "./vendor.js";
 // 这些失败不计入 review_round：都是「补一步就能好」，不是「试了没成功」。
 // 名单只有一份，在 store.js（ENV_ONLY_CODES）——早先这里抄了一遍，两处一漏就不自洽（T-117）。
@@ -364,7 +365,11 @@ function isKernelCommit(c) {
   if (c.authorEmail !== "devcontrol@localhost") return false;
   const subject = c.subject ?? "";
   if (/^chore\(devcontrol\): (approve|amend)\b/.test(subject)) return true;
-  return /^chore\(devcontrol\): init$/.test(subject) && c.files.length > 0 && c.files.every((f) => INIT_MANAGED.some((p) => f === p || f.startsWith(p)));
+  // init 与「同步 Agent 说明」都是内核自己动托管文件产生的提交，不属于任何任务；
+  // 不认它们的话，下一个任务收口时会把它们当成无主提交拦死（T-146 踩过）。
+  // 边界照样卡住：只认托管文件，动了别的一律不算。
+  const managed = /^chore\(devcontrol\): (init|同步 Agent 说明)$/.test(subject);
+  return managed && c.files.length > 0 && c.files.every((f) => INIT_MANAGED.some((p) => f === p || f.startsWith(p)));
 }
 function decorate(root, commits) {
   return commits.map((c) => ({
@@ -738,6 +743,16 @@ export async function taskClose(db, root, input, opts = {}) {
       memory = await rememberTaskPitfall(root, t, resolvedBy, lastFail ? `${lastFail.code}: ${lastFail.detail}` : null, memoryConfig(process.env, root));
     }
     if (memory?.status === "candidate") memory.hint = generalizeHint(memory.reasons ?? []);
+    if (memory?.status === "candidate") memory.hint = generalizeHint(memory.reasons ?? []);
+    // 收口之后工作树刚提交完、最干净——正是补托管文件的最好时机。
+    // MCP 连上时那条路遇到「有在办任务」会跳过重扫（怕弄脏工作树），
+    // 所以整个开发期间装的客户端只有这里能补上。托管文件该自愈，不该靠人记得跑 init。
+    let agentFiles = [];
+    try {
+      agentFiles = refreshAgentFiles(root).changed;
+    } catch {
+      // 托管文件同步失败不该影响收口——它和这次交付无关
+    }
     return {
       id: t.id,
       lines,
@@ -750,6 +765,8 @@ export async function taskClose(db, root, input, opts = {}) {
       observations,
       memory,
       memoryHint: memory?.hint ?? null,
+      // 收口时顺手补的托管文件（MCP 连上时因为「有在办任务」被跳过的那次）
+      agentFiles,
       weak,
     };
   } catch (error) {

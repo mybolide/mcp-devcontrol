@@ -2,6 +2,7 @@
 // 思路同 v5：正文只有一份（.agents/skills/<name>/SKILL.md），别的客户端只放指针，避免多份内容各自漂移。
 import fs from "node:fs";
 import path from "node:path";
+import { commitFiles } from "./git.js";
 import { VERSION } from "./protocol.js";
 
 export const SKILL_NAME = "devcontrol";
@@ -187,4 +188,30 @@ export function installAgentFiles(root, opts = {}) {
   if (usesClaude(root)) out[CLAUDE_REL] = upsertBlock(path.join(root, CLAUDE_REL), claudeBlock());
   if (usesCursor(root)) out[CURSOR_RULE_REL] = writeIfChanged(path.join(root, CURSOR_RULE_REL), cursorRule());
   return out;
+}
+
+// 重扫托管文件，有变化就提交。一处逻辑，两个时机共用。
+//
+// 时机一：MCP 每次连上（有在办任务时跳过——那时写会把工作树弄脏、卡住 commit/close）
+// 时机二：每次 close 之后（这时工作树刚提交完，是最干净的时刻）
+//
+// 为什么需要时机二：只看时机一的话，整个开发期间装的客户端永远补不上——
+// 有在办任务就跳过，而收口后又不会重扫，只剩手动 `init` 一条路。
+// 托管文件本该自愈，不该靠人记得。
+//
+// 提交用 commitFiles（只 add 指定文件），不会把用户别的改动卷进来；
+// 弱模式（没有 git）或没有可提交改动时静默返回，不阻塞收口。
+export function refreshAgentFiles(root, { commit = true } = {}) {
+  const status = installAgentFiles(root);
+  const changed = Object.entries(status).filter(([, s]) => s !== "unchanged");
+  if (!changed.length) return { changed: [], commit: null };
+  let sha = null;
+  if (commit) {
+    try {
+      sha = commitFiles(root, changed.map(([rel]) => rel), "chore(devcontrol): 同步 Agent 说明");
+    } catch {
+      // 弱模式 / 非 git 仓库 / 正好没有可提交内容：都不是错误，别影响收口
+    }
+  }
+  return { changed: changed.map(([rel, s]) => ({ path: rel, status: s })), commit: sha };
 }

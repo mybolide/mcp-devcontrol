@@ -14,7 +14,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { VERSION } from "../src/protocol.js";
+import { makeRepo } from "./helpers.js";
 import { AGENTS_REL, CLAUDE_REL, CURSOR_RULE_REL, SKILL_REL, agentsBlock, claudeBlock, cursorRule, installAgentFiles, skillContent } from "../src/skill.js";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -103,3 +105,62 @@ test("升级场景：旧版本的 AGENTS 块会被整块替换，不残留两套
   assert.match(after, /用户写在后面的东西/, "不许吞用户内容");
   fs.rmSync(root, { recursive: true, force: true });
 });
+
+// ── T-146：收口之后补托管文件 ─────────────────────────────────────────────
+//
+// 场景：开发期间装了新客户端（比如 Cursor）。MCP 连上时那条重扫因为「有在办任务」被跳过
+// （怕弄脏工作树、卡住 commit/close），所以只能靠 close 之后补。
+//
+// 踩到的坑：close 里补完要提交，而那个提交没有 Task-Id。**串行时看不出来**——
+// 第二个任务的 base_head 已经包含它；只有并行时（另一个任务已在办、基线已定）
+// 它才落进别人的收口区间，被当成「无主提交」拦死。所以这条必须用并行场景验。
+test("收口后补托管文件并提交，且那个提交不毒害另一个在办任务", async () => {
+  const { initFlow, newTask, prove } = await import("./helpers.js");
+  const { openDb } = await import("../src/db.js");
+  const { taskClaim, taskClose } = await import("../src/gates.js");
+  const { commitFiles } = await import("../src/git.js");
+  const { getTask } = await import("../src/store.js");
+
+  const root = makeRepo();
+  const { db, reqId } = initFlow(root, { allowed: ["src", "test"] });
+  const a = newTask(db, root, reqId, { title: "甲", scope: ["src/a", "test"] });
+  const b = newTask(db, root, reqId, { title: "乙", scope: ["src/b", "test"] });
+  // 两个任务同时领走：b 的 base_head 就此定死
+  taskClaim(db, root, { id: a.id }, "agent-1");
+  taskClaim(db, root, { id: b.id }, "agent-2");
+
+  // 干活期间装了 Cursor（这正是 MCP 那条路补不到、只能 close 补的场景）
+  fs.mkdirSync(path.join(root, ".cursor"), { recursive: true });
+  fs.mkdirSync(path.join(root, "src/a"), { recursive: true });
+  fs.mkdirSync(path.join(root, "src/b"), { recursive: true });
+  fs.writeFileSync(path.join(root, "src/a/x.js"), "export const x = 1;\n");
+  fs.writeFileSync(path.join(root, "src/b/y.js"), "export const y = 2;\n");
+  commitFiles(root, ["src/a/x.js"], `feat\n\nTask-Id: ${a.id}`, { author: "agent-1" });
+  commitFiles(root, ["src/b/y.js"], `feat\n\nTask-Id: ${b.id}`, { author: "agent-2" });
+  prove(db, root, a.id);
+  prove(db, root, b.id);
+
+  // 甲先收口：这会顺手补 .cursor 指针并提交一个 chore 提交
+  await taskClose(db, root, { id: a.id });
+  assert.ok(
+    fs.existsSync(path.join(root, ".cursor", "rules", "devcontrol.mdc")),
+    "收口后要补 .cursor/rules/devcontrol.mdc——否则装了 Cursor 也读不到规矩",
+  );
+  assert.match(
+    spawnSyncG(root, ["log", "--oneline"]),
+    /同步 Agent 说明/,
+    "补完要提交，别留脏工作树",
+  );
+
+  // 乙收口：那个 chore 提交落在乙的区间里，必须被认成内核提交，不能算无主
+  await assert.doesNotReject(
+    () => taskClose(db, root, { id: b.id }),
+    "另一个任务的托管提交被当成了无主提交（E_UNOWNED_COMMIT）",
+  );
+  assert.equal(getTask(db, b.id).status, "done");
+});
+
+/** 在仓库里跑 git，返回 stdout */
+function spawnSyncG(root, args) {
+  return spawnSync("git", args, { cwd: root, encoding: "utf8" }).stdout ?? "";
+}

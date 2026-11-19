@@ -8,7 +8,7 @@ import { z } from "zod";
 import { openDb } from "./db.js";
 import { bootstrap } from "./digest.js";
 import { VERSION } from "./protocol.js";
-import { installAgentFiles } from "./skill.js";
+import { refreshAgentFiles } from "./skill.js";
 import { recordEvidence, taskCreate, taskClaim, taskRenew, taskClose, bugReport, ask } from "./gates.js";
 import { hintFor } from "./hints.js";
 import { resolveRoot } from "./cli.js";
@@ -304,14 +304,17 @@ export async function runMcp() {
   const db = openDb(root);
 
   // MCP 每次连上都把 Agent 说明按当前代码对齐：升级后（哪怕版本号没变）也能自愈。
-  // 但有任务在办时先不动——说明文件在任务 scope 外，改了会把工作树弄脏、把 commit/close 卡死。
+  // MCP 每次连上都把 Agent 说明按当前代码对齐：升级后（哪怕版本号没变）也能自愈。
+  // 有任务在办时先不动——说明文件在任务 scope 外，改了会把工作树弄脏、把 commit/close 卡死。
+  // 那种情况由 close 之后补上（见 gates.js taskClose），所以托管文件终究会自愈。
   const busy = db.prepare("SELECT id FROM tasks WHERE status='doing' LIMIT 1").get();
   if (!busy) {
-    const refreshed = Object.entries(installAgentFiles(root)).filter(([, status]) => status !== "unchanged");
+    const refreshed = refreshAgentFiles(root).changed;
     if (refreshed.length) {
       // stdout 是 JSON-RPC 通道，日志只能走 stderr
-      const detail = refreshed.map(([rel, status]) => `${rel}（${status === "created" ? "新建" : "更新"}）`).join("、");
-      process.stderr.write(`[devcontrol] Agent 说明已同步：${detail}（记得 commit）\n`);
+      const detail = refreshed.map((f) => `${f.path}（${f.status === "created" ? "新建" : "更新"}）`).join("、");
+      // 已经自动提交了，不再说「记得 commit」——那会让人以为还有活没干
+      process.stderr.write(`[devcontrol] Agent 说明已同步并提交：${detail}\n`);
     }
   }
   const consoleReady = ensureConsole(root).catch(() => null);
