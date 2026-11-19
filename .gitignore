@@ -24,3 +24,10 @@ coverage/
 __pycache__/
 .venv/
 target/
+
+# MCP 客户端配置：写的是本机绝对路径（node 在哪、脚本在哪）。
+# 提交进仓库 = 给每个 clone 的人一份指向别人机器的死配置，也把自己的主目录结构晾在公网上。
+# 这些是 init 生成的本机配置，不是项目文件。
+.mcp.json
+opencode.json
+.cursor/mcp.json

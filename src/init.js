@@ -152,6 +152,13 @@ export function initializeProject(root, opts = {}) {
   const unignored = dropBlanketDataDirIgnore(root);
   // 依赖/构建产物默认忽略——但项目特意提交过的（dist/ 进了 git）不能忽略，
   // 否则 git 拒绝再 add，反而把正常提交挡住。
+  // MCP 配置里写的是本机绝对路径（node 装在哪、脚本在哪）。提交进仓库等于
+  // 给每个 clone 的人留一份指向别人机器的死配置，换台电脑自己也坏；而且公开
+  // 仓库里会露出作者的主目录结构。所以它们是本机配置，不是项目文件。
+  // 但已经被跟踪的项目（老项目/团队共享配置）不翻案：git 对已跟踪文件不会
+  // 因为后加的 ignore 而停止跟踪，硬加只会造出「被跟踪却被忽略」的怪状态。
+  const mcpFiles = noMcp ? [] : [".mcp.json", ".cursor/mcp.json", "opencode.json"];
+  const mcpIgnorable = notAlreadyTracked(root, mcpFiles);
   appendLines(root, ".gitignore", [
     ...notAlreadyTracked(root, vendorIgnores(root)),
     ".devcontrol/state.db*",
@@ -164,6 +171,7 @@ export function initializeProject(root, opts = {}) {
     // 不进 ignore 的话 `git status` 会一直挂着一条 ?? —— 人每天看到它，
     // 迟早会手滑提交进去。
     ".devcontrol/context-plan.md",
+    ...mcpIgnorable,
   ]);
   appendLines(root, ".gitattributes", ["* text=auto eol=lf"]);
 
@@ -212,11 +220,13 @@ export function initializeProject(root, opts = {}) {
   // Agent 侧安装物：规范 Skill 只有一份，其余都是指针（避免多份内容各自漂移）
   const agentFiles = installAgentFiles(root, { noMcp });
   // init 自己写的配置要自己提交：否则第一次 close 会被 E_DIRTY_SCOPE 拦住
+  // 已经被跟踪的 MCP 配置继续跟着一起提交（老项目不翻案）；
+  // 新生成的那些进了 ignore，再交给 git 提交只会被拒。
   const managed = [
     ".gitignore",
     ".gitattributes",
     ...Object.keys(agentFiles),
-    ...(noMcp ? [] : [".mcp.json", ".cursor/mcp.json", "opencode.json"]),
+    ...mcpFiles.filter((f) => !mcpIgnorable.includes(f)),
   ].filter((f) => fs.existsSync(path.join(root, f)));
   let initCommit = null;
   try {
