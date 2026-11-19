@@ -122,6 +122,15 @@ export function weekly(db, { days = 7, now = new Date() } = {}) {
     bumpActor("owner", "closed");
   }
 
+  const blockedList = [...blockedCodes.entries()]
+    .map(([code, count]) => ({ code, count }))
+    .sort((a, b) => b.count - a.count || a.code.localeCompare(b.code));
+  const topBlocked = blockedList.slice(0, 5);
+  // 只列前 5 是对的（周报给人扫），但列出来的合计和「被拦 N 次」对不上就必须说明白。
+  // 不说明，读的人会以为内核少记了一笔——诚实度是这个产品唯一的卖点，不能栽在排版上。
+  const rest = blockedList.slice(5);
+  const blockedOmitted = { codes: rest.length, count: rest.reduce((n, b) => n + b.count, 0) };
+
   return {
     since,
     until,
@@ -129,10 +138,8 @@ export function weekly(db, { days = 7, now = new Date() } = {}) {
     totals: { ...totals, tasks: closedTasks.length, lines },
     byDay: [...byDay.values()].sort((a, b) => a.day.localeCompare(b.day)),
     byActor: [...byActor.values()].sort((a, b) => b.closed - a.closed || a.actor.localeCompare(b.actor)),
-    topBlocked: [...blockedCodes.entries()]
-      .map(([code, count]) => ({ code, count }))
-      .sort((a, b) => b.count - a.count || a.code.localeCompare(b.code))
-      .slice(0, 5),
+    topBlocked,
+    blockedOmitted,
   };
 }
 

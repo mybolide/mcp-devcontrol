@@ -824,7 +824,7 @@
           <table><thead><tr><th>谁</th><th>收口</th><th>领取</th><th>被拦</th></tr></thead>
             <tbody>${actorRows || `<tr><td colspan="4" class="empty">这周没人领活</td></tr>`}</tbody></table>
           <h3 style="margin-top:20px">主要拦在哪</h3>
-          <div class="row wrap">${blocked || `<span class="mu">这周没被拦过</span>`}</div>
+          <div class="row wrap">${blocked || `<span class="mu">这周没被拦过</span>`}${w.blockedOmitted?.count ? `<span class="mu">另有 ${w.blockedOmitted.count} 次在其余 ${w.blockedOmitted.codes} 种错误码里，只列前 5</span>` : ""}</div>
         `;
       }
 

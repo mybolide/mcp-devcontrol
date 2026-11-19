@@ -43,10 +43,15 @@ export function renderWeekly(w, { title = "周报" } = {}) {
       "",
     );
   }
-  // 被拦的码只列前 5：周报是给人扫的，不是日志全文
+  // 被拦的码只列前 5：周报是给人扫的，不是日志全文。
+  // 但被截掉的那部分要交代——不交代，读者拿这 5 行的合计去对「被拦 N 次」会对不上。
   if (w.topBlocked.length) {
     out.push("## 主要拦在哪", "");
     for (const b of w.topBlocked) out.push(`- \`${b.code}\` × ${b.count}`);
+    const omitted = w.blockedOmitted;
+    if (omitted?.count) {
+      out.push(`- （另有 ${omitted.count} 次在其余 ${omitted.codes} 种错误码里，只列前 5）`);
+    }
     out.push("");
   }
 

@@ -112,6 +112,11 @@ test("weekly：topBlocked 只留前 5，按次数降序", () => {
   assert.equal(w.topBlocked.length, 5);
   assert.deepEqual(w.topBlocked[0], { code: "CODE_05", count: 3 });
   assert.equal(w.totals.blocked, 9);
+  // 只列 5 条没问题，但「列出来的合计」和「被拦 9 次」必须能对上，
+  // 否则读的人会以为内核少记了几笔——对一个卖诚实度的东西来说，这跟记错账一样糟。
+  const shown = w.topBlocked.reduce((n, b) => n + b.count, 0);
+  assert.equal(shown + w.blockedOmitted.count, w.totals.blocked, "截断掉的那几次必须交代清楚");
+  assert.equal(w.blockedOmitted.codes, 2, "7 种码，列 5，剩 2 种");
 });
 
 test("weekly：天数为 0 或负，报 E_INVALID 而不是算出个空周", () => {

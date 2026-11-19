@@ -113,3 +113,26 @@ test("两层接口对得上：weekly() 的输出直接喂给 renderWeekly()", ()
   assert.match(md, /`E_SCOPE_VIOLATION` × 1/);
   assert.match(md, /^\| agent-a \| 1 \| 1 \| 1 \|$/m);
 });
+
+test("renderWeekly：错误码超过 5 种时，被截掉的那几次要交代", () => {
+  // 实测踩到的：周报写「被拦 7 次」，下面只列了 5 行合计 6 次，
+  // 差的那一次没有任何说明。读者第一反应是「内核少记了一笔」。
+  const md = renderWeekly({
+    ...sample,
+    totals: { ...sample.totals, blocked: 9 },
+    topBlocked: [
+      { code: "A", count: 3 },
+      { code: "B", count: 1 },
+      { code: "C", count: 1 },
+      { code: "D", count: 1 },
+      { code: "E", count: 1 },
+    ],
+    blockedOmitted: { codes: 2, count: 2 },
+  });
+  assert.match(md, /另有 2 次在其余 2 种错误码里/, `差的那两次没交代：\n${md}`);
+});
+
+test("renderWeekly：没被截断时不画蛇添足", () => {
+  const md = renderWeekly({ ...sample, blockedOmitted: { codes: 0, count: 0 } });
+  assert.doesNotMatch(md, /另有/, "全列出来了就别多说一句");
+});
