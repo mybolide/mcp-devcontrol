@@ -5,6 +5,7 @@ import { metaGet } from "./db.js";
 import { releaseSummary } from "./release.js";
 import { cliCommand } from "./nextcmd.js";
 import { suggestScope } from "./scope.js";
+import { contextStatus } from "./context.js";
 
 /**
  * 需求覆盖度：每条需求验收有没有任务在管。
@@ -225,6 +226,7 @@ export function bootstrap(db, root, extra = {}) {
             : `需求 ${draft.id} 还没有 Path——先 devcontrol init 建一个草稿 Path，再 approve（${where}）`
           : `还没有需求，需要人收件并批准：控制台「收件箱」，或终端 devcontrol intake "要做什么" --accept "npm test :: exit==0"`,
         ...(draft && p ? { cli: `devcontrol approve ${draft.id} --path ${p.id}` } : {}),
+
       };
     }
     if (!paths.some((p) => p.status === "approved")) {
@@ -257,6 +259,23 @@ export function bootstrap(db, root, extra = {}) {
     plan: gaps.length ? gaps.map((g) => ({ id: g.id, covered: `${g.covered}/${g.total}`, missing: g.missing.slice(0, 3).map((m) => m.text) })) : [],
     memories: extra.memories ?? [],
     console: extra.console ?? null,
+    // MCP 连上时如果替它初始化过，必须说出来：Agent 得知道这是「刚建出来的空项目」
+    // （下一步是等 Owner 批准 Path），而不是「已配好的项目」（可以直接干活）。
+    autoInit: extra.autoInit ?? null,
+    // 项目上下文状态：每次 bootstrap 都要报告，不能只在 init 那次说一次。
+    // 否则「init 了但一直没人写」会永久沉默，而 Agent 会一直自己重新探索。
+    context: (() => {
+      const st = contextStatus(root);
+      return {
+        ready: st.ready,
+        indexPath: st.indexPath,
+        docs: st.docs,
+        plan: st.ready ? null : ".devcontrol/context-plan.md",
+        hint: st.ready
+          ? null
+          : `项目上下文还没写。按 .devcontrol/context-plan.md 里的模板补齐 ${st.indexPath} 和分类文档——写完 Agent 每次接任务都会自动带上，不用再自己重新读项目`,
+      };
+    })(),
     now: now(),
     head: (() => {
       try {

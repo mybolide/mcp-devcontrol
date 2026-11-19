@@ -2,6 +2,8 @@
 // 单工具 devcontrol（动作清单见 ACTIONS）；连接即拉起 Owner 控制台
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import fs from "node:fs";
+import path from "node:path";
 import { z } from "zod";
 import { openDb } from "./db.js";
 import { bootstrap } from "./digest.js";
@@ -11,6 +13,8 @@ import { recordEvidence, taskCreate, taskClaim, taskRenew, taskClose, bugReport,
 import { hintFor } from "./hints.js";
 import { resolveRoot } from "./cli.js";
 import { ensureConsole, readConsoleMeta } from "./console-boot.js";
+import { initializeProject, isInitialized } from "./init.js";
+import { writeContextPlan } from "./context.js";
 import { fail, getTask, logRejection, mapTask } from "./store.js";
 import { generalizeHint, memoryConfig, openMemory, recallMemories, rememberAndIndex, searchMemories } from "./memory.js";
 import { createRelease, planRelease, shipRelease } from "./release.js";
@@ -106,7 +110,14 @@ export async function dispatch(db, root, args, ctx = {}) {
     case "bootstrap": {
       const doing = db.prepare("SELECT * FROM tasks WHERE status='doing' ORDER BY id LIMIT 1").get();
       const memory = await recallMemories(root, doing ? mapTask(doing) : null);
-      return bootstrap(db, root, { console: ctx.consoleUrl ? await ctx.consoleUrl() : null, memories: memory.memories });
+      // ctx.autoInit：MCP 连上时替它做过的初始化。必须让 Agent 看到——
+      // 否则它不知道自己是「接手一个已配置的项目」还是「刚被建出来的空项目」，
+      // 而这两种情况它该做的事完全不同（前者写码，后者先让 Owner 批准 Path）。
+      return bootstrap(db, root, {
+        console: ctx.consoleUrl ? await ctx.consoleUrl() : null,
+        memories: memory.memories,
+        autoInit: ctx.autoInit ?? null,
+      });
     }
     case "wait":
     case "task.work": {
@@ -202,7 +213,7 @@ export function compact(result, limit = 12000) {
 }
 
 /** 组装 MCP server（供 runMcp 与测试复用） */
-export function createServer({ db, root, consoleUrl }) {
+export function createServer({ db, root, consoleUrl, autoInit = null }) {
   const server = new McpServer({ name: TOOL_NAME, version: VERSION }, { instructions: INSTRUCTIONS, capabilities: { tools: {} } });
   server.registerTool(
     TOOL_NAME,
@@ -241,7 +252,41 @@ export function createServer({ db, root, consoleUrl }) {
 }
 
 export async function runMcp() {
-  const root = resolveRoot();
+  // 用 create 模式拿根：**未初始化也要能进来**——否则「没 init」时的表现就是
+  // openDb 静默建一个空库：没有 Path、没有 AGENTS.md、没有上下文，Agent 拿到空壳，
+  // 人还以为配好了。既然已经接了 MCP，就说明要用它，那就自己初始化。
+  const root = resolveRoot({ create: true });
+  let autoInit = null;
+  const dbFile = path.join(root, ".devcontrol", "state.db");
+  const needsInit = !fs.existsSync(dbFile) || !isInitialized(openDb(root));
+  if (needsInit) {
+    const res = initializeProject(root, {});
+    if (!res.ok) {
+      // 不是 git 仓库：没法自动初始化（没有提交归属就没有门禁），如实说清楚
+      process.stderr.write(
+        `[devcontrol] 这个目录不是 git 仓库，没法自动初始化（${root}）。\n` +
+          `            要么先 git init，要么手动跑 devcontrol init --weak 用弱模式。\n`,
+      );
+      throw Object.assign(new Error("E_NOT_REPO: 需要 git 仓库或手动 init --weak"), { code: "E_NOT_REPO" });
+    }
+    // 上下文计划也一并落盘：Agent 一接上就知道该写哪几篇
+    if (!res.context.ready) writeContextPlan(root, res.contextPlan);
+    autoInit = {
+      at: new Date().toISOString(),
+      mode: res.mode,
+      pathsCreated: res.pathsCreated,
+      testCmds: res.testCmds,
+      contextReady: res.context.ready,
+      contextPlan: res.context.ready ? null : ".devcontrol/context-plan.md",
+      contextDocs: res.contextPlan.docs.length,
+    };
+    process.stderr.write(
+      `[devcontrol] 检测到这个项目还没初始化，已自动完成：${res.mode} 模式、` +
+        `${res.pathsCreated} 条 Path 草稿（待 Owner 批准）、` +
+        `${res.testCmds.length ? `验收命令 ${res.testCmds.join(" / ")}` : "**没采到验收命令，需要 Owner 补"}。\n` +
+        (res.context.ready ? "" : `            项目上下文还没写：让 Agent 按 .devcontrol/context-plan.md 补齐。\n`),
+    );
+  }
   const db = openDb(root);
 
   // MCP 每次连上都把 Agent 说明按当前代码对齐：升级后（哪怕版本号没变）也能自愈。
@@ -268,7 +313,7 @@ export async function runMcp() {
     return again?.url ?? null;
   };
 
-  const server = createServer({ db, root, consoleUrl });
+  const server = createServer({ db, root, consoleUrl, autoInit });
   const transport = new StdioServerTransport();
   // 客户端随时可能断开：写 stdout 的 EPIPE 不算错误
   process.stdout.on("error", () => {});

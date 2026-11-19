@@ -38,24 +38,11 @@ import { openDb as _openDb } from "./db.js";
 import { weekly } from "./weekly.js";
 import { renderWeekly } from "./weekly-md.js";
 import { installAgentFiles, SKILL_REL } from "./skill.js";
-import { buildContextPlan, contextStatus, renderContextPlan } from "./context.js";
+import { buildContextPlan, contextStatus, writeContextPlan } from "./context.js";
+import { CODEX_SNIPPET, initializeProject } from "./init.js";
 
 
 const DEVCONTROL_BIN = fileURLToPath(new URL("../bin/devcontrol.js", import.meta.url));
-
-const mcpServerConfig = (root) => ({
-  mcpServers: {
-    "devcontrol": { command: process.execPath, args: [DEVCONTROL_BIN, "mcp"], env: { DEVCONTROL_ROOT: root } },
-  },
-});
-
-const CODEX_SNIPPET = `# ~/.codex/config.toml
-[mcp_servers.devcontrol]
-command = "${process.execPath}"
-args = ["${DEVCONTROL_BIN}", "mcp"]
-env = { DEVCONTROL_ROOT = "<项目绝对路径>" }`;
-
-const SKIP_DIRS = new Set(["node_modules", ".git", "dist", "build", ".devcontrol", "coverage", ".next", "target", "vendor"]);
 
 /**
  * 项目根：优先 DEVCONTROL_ROOT，其次 git 顶层，最后 cwd。
@@ -76,190 +63,25 @@ export function resolveRoot({ create = false } = {}) {
   }
   return root;
 }
-
-function appendLines(file, lines) {
-  const abs = path.join(process.cwd(), file);
-  const cur = fs.existsSync(abs) ? fs.readFileSync(abs, "utf8") : "";
-  const missing = lines.filter((l) => !cur.split("\n").includes(l));
-  if (!missing.length) return false;
-  fs.writeFileSync(abs, `${cur}${cur && !cur.endsWith("\n") ? "\n" : ""}${missing.join("\n")}\n`, "utf8");
-  return true;
-}
-
-/**
- * .devcontrol/contracts/ 必须进 git（契约真源），所以 .gitignore 里"整体忽略
- * .devcontrol/"的规则必须去掉：git 不允许在被排除的父目录下再包含文件，
- * 光追加 !.devcontrol/contracts/ 是无效的。只删这一条，其它忽略规则不动。
- */
-const BLANKET_DATA_DIR = /^\/?\.devcontrol\/?\*?$/;
-function dropBlanketDataDirIgnore(file = ".gitignore") {
-  const abs = path.join(process.cwd(), file);
-  if (!fs.existsSync(abs)) return false;
-  const cur = fs.readFileSync(abs, "utf8");
-  const lines = cur.split("\n");
-  const kept = lines.filter((l) => !BLANKET_DATA_DIR.test(l.trim()));
-  if (kept.length === lines.length) return false;
-  fs.writeFileSync(abs, kept.join("\n"), "utf8");
-  return true;
-}
-
-/**
- * 只保留「还没被 git 跟踪」的忽略条目。
- * 有人特意把 dist/ 提交进仓库时，再忽略它会让 `git add` 直接失败
- * （git 拒绝 add 已被忽略的路径），把正常提交堵死。
- */
-function notAlreadyTracked(root, entries) {
-  if (!isRepo(root)) return entries;
-  let files = [];
-  try {
-    files = lsFiles(root);
-  } catch {
-    return entries;
-  }
-  return entries.filter((entry) => {
-    const prefix = entry.replace(/\/$/, "");
-    return !files.some((f) => f === prefix || f.startsWith(`${prefix}/`));
-  });
-}
-
-function writeIfMissing(rel, value) {
-  const abs = path.join(process.cwd(), rel);
-  if (fs.existsSync(abs)) return false;
-  fs.mkdirSync(path.dirname(abs), { recursive: true });
-  fs.writeFileSync(abs, `${JSON.stringify(value, null, 2)}\n`, "utf8");
-  return true;
-}
-
-/** 已有配置但 DEVCONTROL_ROOT 指向别处（仓库被移动/复制）→ 重写，保留其他 MCP server */
-function writeMcpConfig(rel, value, root) {
-  const abs = path.join(process.cwd(), rel);
-  if (!fs.existsSync(abs)) return writeIfMissing(rel, value) ? "written" : "exists";
-  let current;
-  try {
-    current = JSON.parse(fs.readFileSync(abs, "utf8"));
-  } catch {
-    return "invalid"; // 不碰用户手写的坏文件
-  }
-  const isOpenCode = Boolean(current.mcp);
-  const entry = isOpenCode ? current.mcp?.["devcontrol"] : current.mcpServers?.["devcontrol"];
-  const currentRoot = isOpenCode ? entry?.environment?.DEVCONTROL_ROOT : entry?.env?.DEVCONTROL_ROOT;
-  if (currentRoot && path.resolve(currentRoot) === path.resolve(root)) return "exists";
-  if (isOpenCode) {
-    current.mcp = { ...(current.mcp ?? {}), "devcontrol": value.mcp["devcontrol"] };
-  } else {
-    current.mcpServers = { ...(current.mcpServers ?? {}), "devcontrol": value.mcpServers["devcontrol"] };
-  }
-  fs.writeFileSync(abs, `${JSON.stringify(current, null, 2)}\n`, "utf8");
-  return "updated";
-}
-
 export function cmdInit(args) {
   const root = resolveRoot({ create: true });
-  const weak = args.includes("--weak");
-  const gitMode = isRepo(root);
-  if (!gitMode && !weak) {
-    // 不是用法写错，是环境不满足：退出码 1（被拒），不是 2（用法）
-    return failCli(
-      "这里不是 git 仓库。加 --weak 使用弱模式（只跑验收，没有提交归属与 scope 校验）",
-      "E_NOT_REPO",
-      null,
-      1,
-    );
-    return 1;
-  }
-  process.chdir(root);
-  fs.mkdirSync(path.join(dataDir(root), "runs"), { recursive: true });
-  fs.mkdirSync(path.join(dataDir(root), "contracts"), { recursive: true });
-  const unignored = dropBlanketDataDirIgnore();
-  // 依赖/构建产物默认忽略——但项目特意提交过的（dist/ 进了 git）不能忽略，
-  // 否则 git 拒绝再 add，反而把正常提交挡住。
-  appendLines(".gitignore", [
-    ...notAlreadyTracked(root, vendorIgnores(root)),
-    ".devcontrol/state.db*",
-    ".devcontrol/memory.db*",
-    ".devcontrol/settings.json",
-    ".devcontrol/runs/",
-    ".devcontrol/console.lock",
-    ".devcontrol/console.json",
-  ]);
-  appendLines(".gitattributes", ["* text=auto eol=lf"]);
   const noMcp = args.includes("--no-mcp");
   const onlyIdx = args.indexOf("--only");
   const only = onlyIdx >= 0 ? new Set(String(args[onlyIdx + 1] ?? "").split(",").filter(Boolean)) : null;
 
-  const db = openDb(root);
-  metaSet(db, "mode", gitMode ? "git" : "weak");
-  // 命令从「项目现在的样子」采一次；之后项目变了，Owner 在控制台点「重采验收命令」
-  const detected = detectTestCmds(root);
-  const testCmds = detected.cmds;
-  let created = 0;
-  // 默认只生成一条覆盖全项目的根 Path（"."）：改实现 + 补测试是同一个正常动作，
-  // 按顶层目录切会把它拆成两个任务、还得串依赖，人反而要多批一次。
-  // 想收窄成目录级 Path 时用 --only src,test。
-  const dirs = only
-    ? fs
-        .readdirSync(root, { withFileTypes: true })
-        .filter((e) => e.isDirectory() && !SKIP_DIRS.has(e.name) && !e.name.startsWith(".") && only.has(e.name))
-        .map((e) => e.name)
-    : ["."];
-  for (const dir of dirs) {
-    const exists = db.prepare("SELECT 1 FROM paths WHERE allowed_paths_json=?").get(JSON.stringify([dir]));
-    if (exists) continue;
-    // 计数器可能因为早期手工插库或旧 bug 落后，撞号就往下找空号，别用裸 SQLite 错误崩掉
-    const usedP = new Set(db.prepare("SELECT id FROM paths").all().map((r) => Number(String(r.id).replace(/\D/g, "")) || 0));
-    let n = Number(db.prepare("SELECT value FROM meta WHERE key='counter:P'").get()?.value ?? 0);
-    do {
-      n += 1;
-    } while (usedP.has(n));
-    db.prepare("INSERT INTO paths(id,allowed_paths_json,allow_new_files,budget_lines,test_cmds_json,status) VALUES(?,?,?,?,?,?)").run(
-      `P-${String(n).padStart(3, "0")}`,
-      JSON.stringify([dir]),
-      0,
-      1200,
-      JSON.stringify(testCmds),
-      "draft",
-    );
-    db.prepare("INSERT INTO meta(key,value) VALUES('counter:P',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(String(n));
-    created += 1;
+  // 干活的全在 initializeProject 里（它一个字都不打印——MCP 那条路也要调它，
+  // 而 MCP 的 stdout 是 JSON-RPC 通道）。这里只负责把结果翻译成人话。
+  const res = initializeProject(root, { noMcp, only, weak: args.includes("--weak") });
+  if (!res.ok) {
+    // 不是用法写错，是环境不满足：退出码 1（被拒），不是 2（用法）
+    return failCli("这里不是 git 仓库。加 --weak 使用弱模式（只跑验收，没有提交归属与 scope 校验）", "E_NOT_REPO", null, 1);
   }
+
   const label = (v) => ({ written: "已写", updated: "已按新路径更新", exists: "已存在", invalid: "已存在但解析失败，未改动", skipped: "跳过（--no-mcp）" })[v] ?? v;
-  const wroteMcp = noMcp ? "skipped" : writeMcpConfig(".mcp.json", mcpServerConfig(root), root);
-  const wroteCursor = noMcp ? "skipped" : writeMcpConfig(".cursor/mcp.json", mcpServerConfig(root), root);
-  const wroteOpencode = noMcp
-    ? "skipped"
-    : writeMcpConfig(
-        "opencode.json",
-        { mcp: { "devcontrol": { type: "local", command: [process.execPath, DEVCONTROL_BIN, "mcp"], environment: { DEVCONTROL_ROOT: root } } } },
-        root,
-      );
-  // Agent 侧安装物：规范 Skill 只有一份，其余都是指针（照 v5 的做法，避免多份内容各自漂移）
-  const agentFiles = installAgentFiles(root, { noMcp });
-  // init 自己写的配置要自己提交：否则第一次 close 会被 E_DIRTY_SCOPE 拦住
-  const managed = [
-    ".gitignore",
-    ".gitattributes",
-    ...Object.keys(agentFiles),
-    ...(noMcp ? [] : [".mcp.json", ".cursor/mcp.json", "opencode.json"]),
-  ].filter((f) => fs.existsSync(path.join(root, f)));
-  let initCommit = null;
-  try {
-    initCommit = commitFiles(root, managed, "chore(devcontrol): init");
-  } catch {
-    /* 没有可提交改动 */
-  }
-  // 项目上下文：init 只产出「该写哪几篇 + 每篇要回答什么问题」的清单，正文由 Agent 写。
-  // 内核不写正文——它不认识业务，硬写出来就是空话（那 5 条「不留 TODO」式的规范就是这么来的）。
-  // 但 Agent 写完之后，claim 会把内容直接塞进返回，省掉每次任务重新探索。
-  const ctxPlan = buildContextPlan(root);
-  const ctxNow = contextStatus(root);
+  const { contextPlan: ctxPlan, context: ctxNow } = res;
   // 模板全文很长，不往 stdout 灌——写成一份计划文件，让 Agent 去读。
   // 但摘要必须打在 stdout：Owner 一眼要能看出「这项目还缺项目上下文」。
-  let ctxPlanPath = null;
-  if (!ctxNow.ready) {
-    ctxPlanPath = path.join(root, ".devcontrol", "context-plan.md");
-    fs.mkdirSync(path.dirname(ctxPlanPath), { recursive: true });
-    fs.writeFileSync(ctxPlanPath, renderContextPlan(ctxPlan), "utf8");
-  }
+  if (!ctxNow.ready) writeContextPlan(root, ctxPlan);
   const ctxSection = ctxNow.ready
     ? `- 项目上下文：已就绪（${ctxNow.indexPath} + ${ctxNow.docs} 篇），claim 时会随任务下发`
     : `- 项目上下文：**还没有**（${ctxPlan.docs.length} 篇待写）
@@ -267,12 +89,12 @@ export function cmdInit(args) {
   摘要：${ctxPlan.steps.map((s) => s.action.replace(/^创建 /, "")).join(" / ")}
   硬要求：${ctxPlan.rules.join("；")}`;
   console.log(`devcontrol init 完成：
-- 模式：${gitMode ? "git（完整门禁）" : "weak（无 git：只跑验收，无归属校验）"}
+- 模式：${res.gitMode ? "git（完整门禁）" : "weak（无 git：只跑验收，无归属校验）"}
 ${ctxSection}
-${unignored ? "- .gitignore：已移除整体忽略 .devcontrol/ 的规则（契约必须能进 git）\n" : ""}- Path 草稿 ${created} 条（都还是 draft，需要 Owner 批准）
-- 客户端配置：.mcp.json ${label(wroteMcp)} / .cursor/mcp.json ${label(wroteCursor)} / opencode.json ${label(wroteOpencode)}
-- Agent 说明：${Object.keys(agentFiles).join(" / ")}（${SKILL_REL} 是规范，其余是指针）
-${noMcp ? "" : "- 控制台：随 MCP 连接自动启动并复用（Owner 也可以手动 devcontrol serve）\n"}- 托管文件：${initCommit ? `已提交 chore(devcontrol): init @ ${initCommit.slice(0, 8)}` : "无变化"}
+${res.unignored ? "- .gitignore：已移除整体忽略 .devcontrol/ 的规则（契约必须能进 git）\n" : ""}- Path 草稿 ${res.pathsCreated} 条（都还是 draft，需要 Owner 批准）
+- 客户端配置：.mcp.json ${label(res.wroteMcp)} / .cursor/mcp.json ${label(res.wroteCursor)} / opencode.json ${label(res.wroteOpencode)}
+- Agent 说明：${Object.keys(res.agentFiles).join(" / ")}（${SKILL_REL} 是规范，其余是指针）
+${noMcp ? "" : "- 控制台：随 MCP 连接自动启动并复用（Owner 也可以手动 devcontrol serve）\n"}- 托管文件：${res.initCommit ? `已提交 chore(devcontrol): init @ ${res.initCommit.slice(0, 8)}` : "无变化"}
 ${noMcp ? "- 纯 CLI 模式：没有注册 MCP，Agent 直接用 devcontrol status / commit / close；需要控制台时自己 devcontrol serve" : `- Codex 需要手动加：\n${CODEX_SNIPPET}`}`);
   return 0;
 }

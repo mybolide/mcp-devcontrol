@@ -316,3 +316,14 @@ export function renderContextPlan(plan) {
   });
   return [...head, ...body].join("\n");
 }
+
+/**
+ * 把填写计划写到 .devcontrol/context-plan.md。
+ * CLI 和 MCP 自动初始化都要做这件事，所以放在这里一处。
+ */
+export function writeContextPlan(root, plan) {
+  const abs = path.join(root, ".devcontrol", "context-plan.md");
+  fs.mkdirSync(path.dirname(abs), { recursive: true });
+  fs.writeFileSync(abs, renderContextPlan(plan), "utf8");
+  return abs;
+}
