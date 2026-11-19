@@ -11,7 +11,7 @@ import { cliCommand } from "./nextcmd.js";
 import { doctor, exportMarkdown } from "./report.js";
 import { createRelease, getRelease, listReleases, planRelease, shipRelease } from "./release.js";
 import { FLOWS_REL, flowFromRequirement, flowToRequirement, listFlows, readFlow } from "./flow.js";
-import { getReq, getTask, mapTask, listTasks, listReqs, listPaths, listDocs, reqIntake, reqApprove, disciplineStats, logRejection } from "./store.js";
+import { getReq, getTask, mapTask, listTasks, listReqs, listPaths, listDocs, reqIntake, reqApprove, taskAbandon, disciplineStats, logRejection } from "./store.js";
 import { hintFor } from "./hints.js";
 import { assertionCommand, detectTestCmds } from "./testcmd.js";
 import { isVendorPath, vendorIgnores } from "./vendor.js";
@@ -482,6 +482,31 @@ export function cmdTask(args) {
     }
     return 0;
   }
+  if (sub === "abandon") {
+    const id = args.slice(1).find((a) => /^T-\d+$/.test(a));
+    const reasonIdx = args.indexOf("--reason");
+    const reason = reasonIdx >= 0 ? args[reasonIdx + 1] : undefined;
+    if (!id) {
+      const live = listTasks(db).filter((t) => ["backlog", "parked", "doing"].includes(t.status));
+      const hint = live.length ? `照抄这条：devcontrol task abandon ${live[0].id} --reason "建错了，不做了"` : undefined;
+      return failCli(
+        `用法：devcontrol task abandon T-00x --reason "为什么不做"${
+          live.length ? `\n当前还没做完的任务：${live.map((t) => `${t.id}(${t.status})`).join("、")}` : "\n当前没有还没做完的任务"
+        }`,
+        "E_USAGE",
+        hint ? { hint } : null,
+      );
+    }
+    try {
+      const res = taskAbandon(db, root, { taskId: id, reason, channel: "cli" });
+      console.log(`${res.taskId} 已作废。它不会再出现在 next 里，也不再挡着发布。`);
+      return 0;
+    } catch (error) {
+      return failCli(error.message, error.code ?? "E_ERROR", error.data ?? null, 1);
+    }
+  }
+
+
   if (sub === "list") {
     // 列宽要容得下最长的状态（abandoned = 9），否则 "abandonedfeature" 粘成一坨
     for (const t of db.prepare("SELECT id,status,kind,title FROM tasks ORDER BY id").all()) {
@@ -489,7 +514,7 @@ export function cmdTask(args) {
     }
     return 0;
   }
-  return failCli("用法：devcontrol task <create|claim|list> ...", "E_USAGE");
+  return failCli("用法：devcontrol task <create|claim|list|abandon> ...", "E_USAGE");
   return 2;
 }
 
@@ -1141,6 +1166,7 @@ export async function main(argv) {
                                     确认要一起提交就加 --take-over
   devcontrol renew [T-00x]          续租（TTL 45 分钟；commit 等写操作也会自动续期）
   devcontrol task create --req FR-001 --path P-001 --title "…"   纯 CLI 建任务（--kind/--scope/--accept/--depends 可选）
+  devcontrol task abandon T-00x --reason "为什么不做"   作废一条没做完的任务（建错了/不需要了；它会挡着 WIP 和发布）
   devcontrol task claim T-00x       领取任务（纯 CLI，租约 45 分钟）
   devcontrol task list              任务清单
   devcontrol next                   内核认为你现在该做的那一件事（参数可直接照抄）

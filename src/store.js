@@ -650,6 +650,38 @@ export function reqAbandon(db, root, input) {
 }
 
 /**
+ * Owner 作废单个任务：这一条不做了。
+ *
+ * 为什么不是 reqAbandon：那是「整个需求不做了」，太重。dogfood 里撞到的场景是
+ * 建了一条临时任务去验证一件事，验完没用了——需求还好好的，只是这一条不需要做。
+ * 它卡着 WIP=1，也挡着发布，而 CLI 上一条出口都没有，只能去开控制台。
+ *
+ * 作废是 Owner 的决定，所以不进 MCP（Agent 不能自己甩掉不好做的活）。
+ */
+export function taskAbandon(db, root, input) {
+  return tx(db, () => {
+    const t = getTask(db, input.taskId);
+    if (!t) fail("NOT_FOUND", `任务不存在：${input.taskId}`);
+    if (!["backlog", "parked", "doing"].includes(t.status)) {
+      fail("E_ILLEGAL_TRANSITION", `${t.id} 当前 ${t.status}，不能作废（只有还没做完的任务能作废）`);
+    }
+    const reason = String(input.reason ?? "").trim();
+    if (reason.length < 8) fail("E_CONTRACT", `作废要写理由（至少 8 字，现在 ${reason.length} 字）：以后才知道为什么没做`);
+    db.prepare(
+      "UPDATE tasks SET status='abandoned', claimed_by=NULL, claimed_at=NULL, claim_expires_at=NULL, closing_token=NULL, archived_at=?, updated_at=? WHERE id=?",
+    ).run(now(), now(), t.id);
+    logEvent(db, {
+      actor: "owner",
+      channel: input.channel ?? "owner",
+      action: "task.abandon",
+      taskId: t.id,
+      detail: reason,
+    });
+    return { taskId: t.id, status: "abandoned" };
+  });
+}
+
+/**
  * Owner 调任务顺序。Backlog 的顺序就是优先级——Jira 也是这么干的，不另搞优先级标签。
  *
  * mode:
