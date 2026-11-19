@@ -3,7 +3,7 @@ name: devcontrol
 description: >-
   本项目的研发纪律：开工先问内核，改代码前 claim，只改 scope 内文件，
   你的工作是写代码 + 自己跑测试。内核只核验证据：它不替你跑测试，也不猜你有没有跑过。所有动作走 devcontrol 工具或 devcontrol CLI。
-version: "6.0.0-alpha.1"
+version: "6.0.0-alpha.2"
 ---
 
 # devcontrol —— 本项目的研发纪律

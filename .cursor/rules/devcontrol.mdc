@@ -1,7 +1,7 @@
 ---
 description: devcontrol 研发纪律（本项目唯一开发流程）
 alwaysApply: true
-version: "6.0.0-alpha.1"
+version: "6.0.0-alpha.2"
 ---
 
 读 `.agents/skills/devcontrol/SKILL.md`。

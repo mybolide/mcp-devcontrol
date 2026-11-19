@@ -4,6 +4,7 @@
 # 依赖与临时产物
 node_modules/
 *.log
+*.tgz
 .DS_Store
 
 # 编辑器

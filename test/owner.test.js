@@ -449,7 +449,9 @@ test("MCP 协议协商（官方 SDK）：支持的就回显，不认识的回落
     const known = await mcp.call("initialize", init("2025-03-26"));
     assert.equal(known.result.protocolVersion, "2025-03-26");
     assert.equal(known.result.serverInfo.name, "devcontrol");
-    assert.equal(known.result.serverInfo.version, "6.0.0-alpha.1");
+    // 断言跟 VERSION 走，不写死字面量：写死就变成「升版本还得改测试」，
+    // 下次一定会有人忘了改，然后这条测试红得毫无信息量。
+    assert.equal(known.result.serverInfo.version, VERSION);
     assert.match(known.result.instructions, /bootstrap/);
   } finally {
     mcp.close();
