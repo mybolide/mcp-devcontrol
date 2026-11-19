@@ -19,7 +19,7 @@ import {
 import { contractCommands, parseAssertion, readContract } from "./contract.js";
 import { fingerprint, inScope, sha256 } from "./fingerprint.js";
 import { assertScopeInsideRepo, assertScopeIsSpecific, suggestScope } from "./scope.js";
-import { CONTEXT_MAX_CHARS, loadContext } from "./context.js";
+import { CONTEXT_MAX_CHARS, contextDrift, loadContext } from "./context.js";
 import { addedFiles, git, head, isAncestor, logCommits, numstat, patchId, statusPorcelain, trailers } from "./git.js";
 import { evaluate } from "./exec.js";
 import { generalizeHint, memoryConfig, rememberTaskPitfall } from "./memory.js";
@@ -608,6 +608,17 @@ export async function taskClose(db, root, input, opts = {}) {
     const depOrTest = files.filter((f) => isPkg(f) || (isTestPath(f) && t.kind !== "test" && !addedFilesSet.has(f)));
     if (depOrTest.length) {
       observations.push({ id: "tests", detail: `动了依赖/既有测试：${depOrTest.slice(0, 3).join("、")}`, files: depOrTest });
+    }
+    // ── 项目上下文的「是否需要更新」────────────────────────────────────────
+    //
+    // 「这条规则还对不对」是语义判断，内核做不了；「出现了规范里没提过的东西」
+    // 是事实判断，内核做得来。所以这里只回答后者，而且**不拦**——过期不是违规，
+    // 但必须被看见：规范一旦变成权威的错误来源，比没有规范更糟。
+    const drift = contextDrift(root, { addedFiles: [...addedFilesSet], changedFiles: files });
+    if (drift.needsAttention) {
+      for (const r of drift.reasons) {
+        observations.push({ id: "context", code: r.id, detail: r.detail, fix: r.fix });
+      }
     }
     } // ← 闭合上面 324 行的 if (!weak)：这段故意不缩进，别当成多余括号删掉（删了弱模式会跑 R0）
 

@@ -12,6 +12,7 @@
 // 但内核知道**该问哪些问题**、以及**哪些答案能被代码验证**。
 import fs from "node:fs";
 import path from "node:path";
+import { planSteps } from "./context-templates.js";
 
 /** 上下文文档放这里。放文档目录下，和代码分开，但仍在仓库里（要能进 git） */
 export const CONTEXT_DIR = "docs/project-context";
@@ -125,24 +126,89 @@ export function contextDocsFor(shape) {
  * Agent 从代码里找答案这件事它是会做的。
  */
 export function buildContextPlan(root, shape = detectProjectShape(root)) {
-  const docs = contextDocsFor(shape.shape);
+  // 每篇都带上 shape，模板按形态挑（backend-api 才有「怎么加接口」那篇）
+  const docs = contextDocsFor(shape.shape).map((d) => ({ ...d, shape: shape.shape }));
   return {
     ...shape,
     docsDir: CONTEXT_DIR,
     indexPath: CONTEXT_INDEX,
     docs,
-    steps: [
-      { action: `创建 ${CONTEXT_INDEX}（索引：每篇一句话 + 什么时候看它）` },
-      ...docs.map((d) => ({ action: `创建 ${CONTEXT_DIR}/${d.file}`, ask: d.ask })),
-    ],
+    // 模板 + 问题一起给：模板约束结构（形状一致才扫得动、才看得出哪段过期），
+    // 问题约束内容（答不上来就说明这篇没有真东西）。
+    steps: planSteps(docs, CONTEXT_DIR, CONTEXT_INDEX),
     rules: [
       "每条都要能从代码里指出来源：写 `文件路径:行号`，指不出来就别写",
       "贴代码就贴真实的，不许用 ... 省略，不许编造",
       "只写「看代码看不出来的」：为什么这么选、哪些地方是历史遗留、哪些是约定俗成",
       "已经写在代码里的东西不用复述——Agent 自己能读",
       "反例必须点名：「xxx 是遗留，别扩展」，否则 Agent 会把它当先例",
+      "**模板里填不出真内容的段落，整段删掉**：宁可少一节，不要一节空话",
     ],
   };
+}
+
+/**
+ * 检查项目上下文有没有过期——判据全部是机械的，不需要理解代码语义。
+ *
+ * 为什么需要这个：上下文写完之后代码继续变，规范不跟着变就成了「权威的错误来源」，
+ * 比没有规范更糟。但「这条规则还对不对」是语义判断，内核做不了；
+ * 「出现了规范里没提过的新东西」是事实判断，内核做得来。
+ *
+ * @param {string} root
+ * @param {{addedFiles?: string[], changedFiles?: string[]}} change 本次改动
+ */
+export function contextDrift(root, change = {}) {
+  const loaded = loadContext(root);
+  if (!loaded) return { ready: false, reasons: [], needsAttention: false };
+
+  const docs = loaded.text;
+  const added = change.addedFiles ?? [];
+  const changed = change.changedFiles ?? [];
+  const reasons = [];
+
+  // ① 出现了规范里从没提过的目录 → architecture 那篇该补
+  //
+  // 判据只看「目录路径在上下文里出现过没有」，不猜语义。
+  // 比顶层目录更细一层：`src/` 早就写过，但 `src/billing/` 是新的，这才是该补的东西。
+  const dirsOf = (files) =>
+    files
+      .map((f) => String(f).split("/").slice(0, -1).join("/")) // 去掉文件名
+      .filter((d) => d && d !== "." && !d.startsWith(".") && !d.startsWith(CONTEXT_DIR));
+  const newDirs = [...new Set([...dirsOf(added), ...dirsOf(changed)])].filter((d) => !docs.includes(d));
+  if (newDirs.length) {
+    reasons.push({
+      id: "new-dir",
+      detail: `出现规范里没提过的目录：${newDirs.slice(0, 3).join("、")}`,
+      fix: "architecture.md 该补一句这个目录是干什么的，或说明它不该存在",
+    });
+  }
+
+  // ② 改了依赖清单，但规范里的依赖策略没动 → 依赖策略该更新
+  const depFile = [...added, ...changed].find((f) => /(^|\/)(package\.json|go\.mod|Cargo\.toml|pom\.xml|build\.gradle)$/.test(f));
+  if (depFile && !(changed.includes(CONTEXT_INDEX) || changed.some((f) => f.startsWith(CONTEXT_DIR + "/")))) {
+    reasons.push({
+      id: "deps",
+      detail: `依赖清单变了（${depFile}），但项目上下文没跟着改`,
+      fix: "如果新依赖改变了「可以用什么库」的约定，data-model.md 或索引的「依赖策略」要更新",
+
+    });
+  }
+
+  // ③ 上下文文档自己引用的文件已经不存在了 → 那条规则大概率失效
+  //    只在「本次确实有改动」时检查：没改动时引用丢失是历史问题，不该赖这一笔。
+  if (added.length || changed.length) {
+    const refs = [...docs.matchAll(/`([\w./-]+\.[a-zA-Z]+):\d+`/g)].map((m) => m[1]);
+    const dangling = [...new Set(refs)].filter((rel) => !fs.existsSync(path.join(root, rel)));
+    if (dangling.length) {
+      reasons.push({
+        id: "dangling-ref",
+        detail: `上下文引用的文件已不存在：${dangling.slice(0, 3).join("、")}`,
+        fix: "这几条规则要么删掉，要么更新到新位置——引用了不存在的文件，等于给了个假证据",
+      });
+    }
+  }
+
+  return { ready: true, reasons, needsAttention: reasons.length > 0 };
 }
 
 /** 读一份上下文文档（不读索引，索引单独处理） */
@@ -214,4 +280,39 @@ export function contextStatus(root) {
     }
   })();
   return { ready: hasIndex, indexPath: CONTEXT_INDEX, docs: files.length, dir: CONTEXT_DIR };
+}
+
+/**
+ * 把填写计划渲染成一份可读的文件——**每个 agent 都读这一份，不是读 stdout**。
+ *
+ * 为什么要有这个文件而不是只打 stdout：模板全文有好几百行，灌进终端没人看。
+ * 写成文件之后 Agent 可以按需读、可以分段读，人也能在编辑器里翻。
+ */
+export function renderContextPlan(plan) {
+  const head = [
+    "# 项目上下文填写计划",
+    "",
+    "> 这份文件由 `devcontrol init` 生成。做完之后删掉即可（它不会被 claim 下发）。",
+    "",
+    `项目形态：${plan.shape}　语言：${plan.languages.join(" / ")}`,
+    `顶层目录：${plan.topDirs.join(" / ") || "（无）"}`,
+    "",
+    "## 怎么用",
+    "",
+    "按下面每一节的模板写对应文件。**方括号是占位符，要换成从代码里看出来的真实内容。**",
+    "填不出真内容的段落整段删掉——宁可少一节，不要一节空话。",
+    "",
+    "## 硬要求",
+    "",
+    ...plan.rules.map((r, i) => `${i + 1}. ${r}`),
+    "",
+  ];
+  const body = plan.steps.map((s) => {
+    const parts = [`## ${s.action}`, ""];
+    if (s.ask) parts.push(`**要回答**：${s.ask}`, "");
+    if (s.skeleton) parts.push("**骨架**（照着填，不要改结构）：", "", "````markdown", s.skeleton, "````", "");
+    else parts.push("（这一篇没有固定骨架，按上面的问题自组织。）", "");
+    return parts.join("\n");
+  });
+  return [...head, ...body].join("\n");
 }

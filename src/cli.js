@@ -38,7 +38,7 @@ import { openDb as _openDb } from "./db.js";
 import { weekly } from "./weekly.js";
 import { renderWeekly } from "./weekly-md.js";
 import { installAgentFiles, SKILL_REL } from "./skill.js";
-import { buildContextPlan, contextStatus } from "./context.js";
+import { buildContextPlan, contextStatus, renderContextPlan } from "./context.js";
 
 
 const DEVCONTROL_BIN = fileURLToPath(new URL("../bin/devcontrol.js", import.meta.url));
@@ -252,11 +252,19 @@ export function cmdInit(args) {
   // 但 Agent 写完之后，claim 会把内容直接塞进返回，省掉每次任务重新探索。
   const ctxPlan = buildContextPlan(root);
   const ctxNow = contextStatus(root);
+  // 模板全文很长，不往 stdout 灌——写成一份计划文件，让 Agent 去读。
+  // 但摘要必须打在 stdout：Owner 一眼要能看出「这项目还缺项目上下文」。
+  let ctxPlanPath = null;
+  if (!ctxNow.ready) {
+    ctxPlanPath = path.join(root, ".devcontrol", "context-plan.md");
+    fs.mkdirSync(path.dirname(ctxPlanPath), { recursive: true });
+    fs.writeFileSync(ctxPlanPath, renderContextPlan(ctxPlan), "utf8");
+  }
   const ctxSection = ctxNow.ready
     ? `- 项目上下文：已就绪（${ctxNow.indexPath} + ${ctxNow.docs} 篇），claim 时会随任务下发`
-    : `- 项目上下文：**还没有**（${ctxPlan.docs.length} 篇待写，claim 时会提示）
-  让 Agent 按这个清单写（每篇都问一个「它每次都会重新摸一遍」的问题）：
-${ctxPlan.steps.map((s, i) => `    ${i + 1}. ${s.action}${s.ask ? `\n       要回答：${s.ask}` : ""}`).join("\n")}
+    : `- 项目上下文：**还没有**（${ctxPlan.docs.length} 篇待写）
+  填写计划（含每篇的完整模板骨架）：.devcontrol/context-plan.md
+  摘要：${ctxPlan.steps.map((s) => s.action.replace(/^创建 /, "")).join(" / ")}
   硬要求：${ctxPlan.rules.join("；")}`;
   console.log(`devcontrol init 完成：
 - 模式：${gitMode ? "git（完整门禁）" : "weak（无 git：只跑验收，无归属校验）"}
