@@ -1,7 +1,7 @@
 {
   "name": "mcp-devcontrol",
   "version": "6.0.0-alpha.2",
-  "description": "DevControl：研发纪律内核——门禁即内核、单工具 MCP、SQLite 单一真源、控制台随连接自动托管",
+  "description": "DevControl — a discipline kernel for coding agents: gates in the core, single-tool MCP, SQLite as the only source of truth, console owned by the connection",
   "type": "module",
   "bin": {
     "devcontrol": "bin/devcontrol.js",
@@ -44,6 +44,7 @@
     "public",
     "scripts",
     "README.md",
+    "README.zh-CN.md",
     "LICENSE"
   ],
   "dependencies": {

@@ -43,21 +43,29 @@ test("INSTRUCTIONS 提到的每个动作都在 ACTIONS 里（不教人调非法�
   assert.deepEqual(stray, [], `INSTRUCTIONS 提到了不存在的动作：${stray.join(", ")}`);
 });
 
-test("README 的 MCP 动作表覆盖了每个真实动作，且没有多余的行", async () => {
+test("README（中英两份）的 MCP 动作表覆盖了每个真实动作，且没有多余的行", async () => {
   const { ACTIONS } = await import("../src/mcp.js");
-  const readme = read("../README.md");
-  const start = readme.indexOf("MCP 只有一个工具");
-  const end = readme.indexOf("CLI 等价", start);
-  assert.ok(start >= 0 && end > start, "README 里那节定位不到，测试等于没跑");
-  const section = readme.slice(start, end);
-  // 表格里动作写成行内代码（`release.create` / `release.plan` / `release.ship` 可能挤在一行），
-  // 所以先抓出这一节所有行内代码，再看和 ACTIONS 差在哪
-  const inCode = new Set((section.match(/`[^`]+`/g) || []).map((s) => s.slice(1, -1)));
-  const missing = ACTIONS.filter((a) => !inCode.has(a));
-  assert.deepEqual(missing, [], `README 动作表漏了：${missing.join(", ")}。Owner 或 Agent 翻文档时会以为这些动作不存在`);
-  // 反向也要查：长得像动作却不在 ACTIONS 里的写法，照抄就是一发「非法动作」
-  const extra = [...inCode].filter((t) => /^(task|evidence|bug|memory|release)\./.test(t) && !ACTIONS.includes(t));
-  assert.deepEqual(extra, [], `README 列了代码里没有的动作：${extra.join(", ")}`);
+  // 两份都得守：只守中文那份，英文版会悄悄漂；只守英文那份，中文用户看到的是旧表。
+  // 每份 README 用自己语言里那节的起止标记定位。
+  const mark = {
+    "README.zh-CN.md": ["MCP 只有一个工具", "CLI 等价"],
+    "README.md": ["MCP surface is a single tool", "CLI equivalents"],
+  };
+  for (const [rel, [from, to]] of Object.entries(mark)) {
+    const readme = read(`../${rel}`);
+    const start = readme.indexOf(from);
+    const end = readme.indexOf(to, start);
+    assert.ok(start >= 0 && end > start, `${rel} 里那一节定位不到（找不到「${from}」…「${to}」），测试等于没跑`);
+    const section = readme.slice(start, end);
+    // 表格里动作写成行内代码（`release.create` / `release.plan` / `release.ship` 可能挤在一行），
+    // 所以先抓出这一节所有行内代码，再看和 ACTIONS 差在哪
+    const inCode = new Set((section.match(/`[^`]+`/g) || []).map((s) => s.slice(1, -1)));
+    const missing = ACTIONS.filter((a) => !inCode.has(a));
+    assert.deepEqual(missing, [], `${rel} 动作表漏了：${missing.join(", ")}。Owner 或 Agent 翻文档时会以为这些动作不存在`);
+    // 反向也要查：长得像动作却不在 ACTIONS 里的写法，照抄就是一发「非法动作」
+    const extra = [...inCode].filter((t) => /^(task|evidence|bug|memory|release)\./.test(t) && !ACTIONS.includes(t));
+    assert.deepEqual(extra, [], `${rel} 列了代码里没有的动作：${extra.join(", ")}`);
+  }
 });
 
 test("没有地方再写死动作的个数（全仓扫描，不只 README）", async () => {

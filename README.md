@@ -1,448 +1,438 @@
-# devcontrol v6 — 研发纪律内核
+**English** | [简体中文](README.zh-CN.md)
 
-让 Claude Code / Codex CLI / Cursor / OpenCode 这些编码 Agent 在**同一套规则**里干活：
-改代码前必须领任务、只能改 scope 内的文件、交付必须带着跑过的证据（命令 + 退出码 + 代码指纹）——内核只核验，不代跑。
-人只做三件事：**收件、批准、放行**；工序由 Agent 自己走完。
+# devcontrol v6 — a discipline kernel for coding agents
 
-- **从 mcp-probe-kit v5 迁移记忆**：`node scripts/v5-import.mjs --qdrant http://127.0.0.1:6333 --collection <v5集合>`（默认 dry-run，加 `--write` 才落库）。
-- **下一步由内核决定**：`bootstrap.next` 按「收口 > 依赖已满足的 backlog > 补齐未覆盖的验收 > 等阻塞」排序；人只负责批准和放行。
-- 事实源只有一份：`.devcontrol/state.db`（SQLite 单文件，WAL）。**不用 md 当事实源**，`devcontrol export` 只是只读快照。
-- 契约真源在 git：`.devcontrol/contracts/<pathId>.json`，Owner 批准时写入并提交，Agent 只读。
-- 这是**独立项目**（`mcp-devcontrol`）。`mcp-probe-kit` 的 v4/v5 保持原样、原包名、原 MCP 身份，互不影响：能用 `devcontrol` 的地方不需要卸载 v4。
-- 血缘：v6 的设计是从 mcp-probe-kit v5 的实验里收敛出来的（v5 是过渡版，已冻结），但身份、包名、数据目录、MCP 注册名全部独立。
-- 迁移：v5 的坑库用 `scripts/v5-import.mjs` 读 Qdrant 导进来，不影响 v5 本身。
-- 纪律判定口径见仓库内 `docs/03-discipline-core.md`（v8.8），v6 的取舍/协议/分期见 `docs/04-v6-architecture.md`（这两份随仓库走，不进 npm 包）。
+Keeps Claude Code / Codex CLI / Cursor / OpenCode working **inside one set of rules**: claim a task before touching code, only touch files in your scope, and hand over evidence that you actually ran the check (command + exit code + content fingerprint). The kernel verifies that evidence — it never runs your tests.
+
+A human does three things: **intake, approve, unblock**. The agent walks the rest of the pipeline.
+
+- **Next step is decided by the kernel**: `bootstrap.next` orders by "finish what's open > dependencies satisfied > uncovered acceptance > blocked", so nobody has to pick.
+- **One source of truth**: `.devcontrol/state.db` (a single SQLite file, WAL). Markdown is never the source of truth; `devcontrol export` is a read-only snapshot.
+- **Contracts live in git**: `.devcontrol/contracts/<pathId>.json` is written and committed when the Owner approves, and the agent can only read it.
+- **This is a separate project** (`mcp-devcontrol`). v4/v5 of `mcp-probe-kit` keep their own package name and MCP identity — you don't have to uninstall v4 to use `devcontrol`.
+- **Lineage**: v6's design was distilled from experiments in mcp-probe-kit v5 (a transitional release, now frozen), but the identity, package name, data directory and MCP registration are all independent.
+- **Migration**: memories from v5 can be pulled out of Qdrant with `node scripts/v5-import.mjs --qdrant http://127.0.0.1:6333 --collection <v5-collection>` (dry-run by default, add `--write` to persist). v5 itself is untouched.
+- **How discipline is decided** is written down in `docs/03-discipline-core.md` (v8.8); architecture, trade-offs and phasing in `docs/04-v6-architecture.md`. Both ship with the repo, not with the npm package.
 
 ---
 
-## 1. 安装
+## 1. Install
 
 ```bash
-# Node ≥ 22.5（需要内置 node:sqlite 的 DatabaseSync），git ≥ 2.30
+# Node >= 22.5 (needs the built-in node:sqlite DatabaseSync), git >= 2.30
 node -v && git --version
-npm install          # 唯一依赖：@modelcontextprotocol/sdk
+npm install          # only dependency: @modelcontextprotocol/sdk
 
 cd devcontrol
-npm link            # 之后任意目录可用 devcontrol
-# 或者不 link，直接用绝对路径：node /path/to/devcontrol/bin/devcontrol.js ...
+npm link             # afterwards `devcontrol` works in any directory
+# or skip linking and call it by absolute path: node /path/to/devcontrol/bin/devcontrol.js ...
 ```
 
-无需 build；运行时依赖只有官方 `@modelcontextprotocol/sdk`（协议层），业务与存储全部用 Node 内置模块（`node:sqlite` / `node:http` / `node:child_process`），不联网。
+No build step. The only runtime dependency is the official `@modelcontextprotocol/sdk` (protocol layer); everything else — storage, HTTP console, process spawning — uses Node built-ins (`node:sqlite` / `node:http` / `node:child_process`). Nothing talks to the network.
 
-## 2. 在项目里初始化
+## 2. Initialize inside your project
 
-**两种接入方式，任选**：
+**Two ways in — pick one:**
 
-| 方式 | 命令 | 得到什么 | 代价 |
+| Mode | Command | What you get | Cost |
 |---|---|---|---|
-| MCP（推荐） | `devcontrol init` | Agent 在会话里直接调 `devcontrol` 工具；控制台随连接自动拉起；纪律随 `instructions` 下发 | 要在客户端注册一次（init 帮你写四端配置） |
-| 纯 CLI | `devcontrol init --no-mcp` | 同样的门禁与证据链，Agent 走 `devcontrol status/commit/close`；Owner 用 `devcontrol intake/approve` 收件批准，全程不用开浏览器 | 工具说明靠 `AGENTS.md` |
+| MCP (recommended) | `devcontrol init` | The agent calls the `devcontrol` tool directly in its session; the console is started for you; discipline ships via `instructions` | Register once in the client (init writes config for the four big ones) |
+| CLI only | `devcontrol init --no-mcp` | Same gates and evidence chain; the agent uses `devcontrol status/commit/close`; the Owner uses `devcontrol intake/approve` — never opens a browser | The rules travel via `AGENTS.md` |
 
-纯 CLI 模式的一条完整闭环（全部在终端里）：
+A full loop in CLI-only mode, entirely in the terminal:
 
 ```bash
 devcontrol init --no-mcp
-devcontrol intake "把首页标题改成人话" --accept "npm test :: exit==0"   # 收件
-devcontrol approve FR-001 --path P-001                                  # 批准，契约冻结进 git
-devcontrol next        # 内核说下一步，最后一行是可直接粘贴的命令
-devcontrol run -- npm test   # 自己跑验收，顺手留证据
+devcontrol intake "Make the homepage headline readable" --accept "npm test :: exit==0"
+devcontrol approve FR-001 --path P-001        # approve; the contract is frozen into git
+devcontrol next                               # kernel says what's next; last line is paste-ready
+devcontrol run -- npm test                    # run the check yourself, leave evidence
 devcontrol close
 ```
 
-`intake` / `approve` 是 Owner 的动作，也出现在控制台里。内核不设密码（那是假安全感），
-但它会记下这次批准**从哪个入口来的**（`channel=cli` 还是 `channel=owner`），事后查得到。
+`intake` / `approve` are Owner actions and also exist in the console. There is no password (that would be security theatre), but the kernel records **which entry point** the approval came from (`channel=cli` vs `channel=owner`), so it's auditable afterwards.
 
-**MCP 不是必需的**：内核的状态、契约、门禁、证据全在 `.devcontrol/state.db` + git 里，CLI 与 MCP 走的是同一套函数。MCP 只是让 Agent 不必调 shell，并把控制台生命周期挂上去。
+**MCP is optional.** State, contracts, gates and evidence all live in `.devcontrol/state.db` + git; the CLI and the MCP server call the same functions. MCP only saves the agent a shell call and hangs the console lifecycle off the connection.
 
-### 初始化细节
+### What `init` actually writes
 
 ```bash
-cd <你的仓库>
+cd <your-repo>
 devcontrol init
 ```
 
-`init` 做五件事：
+Five things:
 
-1. 建 `.devcontrol/`（`state.db` / `contracts/` / `runs/`），并把 `state.db*`、`runs/` 写进 `.gitignore`。
-2. 为仓库里每个顶层目录建一条 **Path 草稿**（`allowed_paths` + 预算 + 测试命令），状态 `draft`，等 Owner 批准。
-3. 写四端 MCP 配置（指向本机的 `bin/devcontrol.js`，并带上 `DEVCONTROL_ROOT`）：
-   `.mcp.json`（Claude Code）、`.cursor/mcp.json`（Cursor）、`opencode.json`（OpenCode）；Codex 的 `~/.codex/config.toml` 片段会打印出来，手动贴一次。
-4. 在 `AGENTS.md` 里追加一段 `<!-- devcontrol:begin -->` 标记块，告诉 Agent 先 `bootstrap`、改代码前 `claim`、不许改验收。
-5. 不需要你启动控制台：客户端一连上 MCP，控制台就会自动拉起/复用（见 3.3）。
+1. Creates `.devcontrol/` (`state.db` / `contracts/` / `runs/`) and adds `state.db*`, `runs/` and `.devcontrol/context-plan.md` to `.gitignore`.
+2. Creates one **draft Path** per top-level directory (`allowed_paths` + line budget + test command), status `draft`, waiting for the Owner.
+3. Writes MCP config for four clients (pointing at your local `bin/devcontrol.js`, with `DEVCONTROL_ROOT` set): `.mcp.json` (Claude Code), `.cursor/mcp.json` (Cursor), `opencode.json` (OpenCode); the `~/.codex/config.toml` snippet is printed for you to paste once.
+4. Appends a `<!-- devcontrol:begin -->` block to `AGENTS.md` telling the agent to `bootstrap` first, `claim` before editing, and never touch acceptance.
+5. Starts nothing. The console comes up by itself the moment an MCP client connects (see 3.3).
 
-`init` 会把上面这些自己写的文件**提交**成 `chore(devcontrol): init`，否则第一次 `close` 会被 `E_DIRTY_SCOPE` 拦住。
-仓库被移动/复制后再跑一次 `init`：检测到 `.mcp.json` 里的 `DEVCONTROL_ROOT` 指向旧路径会**自动按新路径重写**，并保留你其他的 MCP server。
+`init` **commits** the files it wrote as `chore(devcontrol): init` — otherwise your first `close` gets stopped by `E_DIRTY_SCOPE`.
 
-### 接上就能用
+If the repo is moved or copied, run `init` again: a stale `DEVCONTROL_ROOT` in `.mcp.json` is rewritten to the new path, and your other MCP servers are left alone.
 
-用 MCP 时**不用记得先跑 `init`**：客户端一连上，内核发现这个仓库还没有 `.devcontrol/`，会自动初始化一遍，并在 `bootstrap` 的 `autoInit` 里报一次「我做了什么」。
+### Connect and go
 
-只报一次不是省话——每次连上都报，就成了噪音，人会开始忽略它。
+With MCP you **don't have to remember to run `init` first**. When a client connects to a repo that has no `.devcontrol/`, the kernel initializes it and reports what it did once, in `bootstrap.autoInit`.
 
-非 git 仓库**不会**自动初始化：没有提交就没有归属，门禁全都无从判断，这种情况下硬建库只会给出假的安全感。
+Once, not every time: repeating it on every connect turns into noise, and people start tuning noise out.
 
-### 项目上下文：写一次，每次任务都带
+A non-git repo is **never** auto-initialized. No commits means no attribution, which means every gate is blind — building a database there would only manufacture false confidence.
 
-Agent 每接一个任务，都要重新摸索一遍「建表写在哪、mapper 怎么命名、业务代码放哪」。小仓库读几个文件就摸清了，几千文件的项目就是纯浪费。
+### Project context: write it once, ship it with every task
 
-所以分成三件事：
+Every new task used to start with the agent re-discovering "where are migrations, how are mappers named, where does business code go". In a small repo that's a few file reads; in a few-thousand-file repo it's pure waste.
 
-1. **`init` 只产出清单，不生成正文**。内核不认识你的业务，硬写就是空话。它给出「该写哪几篇」（架构 / 数据 / 测试 / 错误处理 / 怎么加一个接口…）+ 每篇的模板骨架，真正的内容由 Agent 写进 `docs/project-context/`，作为项目文件进 git。
-2. **`claim` 把内容直接塞进返回**，不是只给路径。只给路径的话，Agent 读不读全凭运气。太长会降级成「索引 + 标题 + 路径」，但不会静默丢掉。
-3. **`close` 检查上下文有没有过期**。判据只有三条机械的：出现了文档没提过的目录、依赖清单变了、文档引用的 `file:line` 那个文件没了。命中就要求一句话交代——`contextNote` 说「更新了哪篇」或「为什么不用更新」。
+So it's split into three moves:
 
-注意第 3 条拦的不是「过期」，是**假装没看见**。没时间更新就明说，但别默默略过。
+1. **`init` produces a checklist, never the prose.** The kernel doesn't know your business, and writing it anyway would produce filler. It says *which* documents to write (architecture / data model / testing / error handling / how to add an endpoint…) plus a template skeleton for each. The agent writes the real content into `docs/project-context/`, as project files in git.
+2. **`claim` inlines the content in its return value**, not just a path. A path means reading it is left to luck. If it's too long it degrades to "index + headings + paths" — but it never silently drops things.
+3. **`close` checks whether that context went stale.** Three mechanical signals only: a directory the docs never mention, a dependency manifest that changed, or a `file:line` the docs cite that no longer exists. A hit requires one sentence — `contextNote` saying which document you updated, or why nothing needed updating.
 
-## 3. 两条工作流
+Note that step 3 doesn't block "stale". It blocks **pretending you didn't notice**. Out of time? Say so. Just don't skip it silently.
 
-### 3.1 Agent（MCP 或 CLI 等价）
+## 3. The two workflows
 
-MCP 只有一个工具 `devcontrol`，动作用 `action` 区分（`wait` / `task.work` 是 `next` 告诉你「现在别动内核，去干活或等着」时可调的动作）：
+### 3.1 Agent (MCP and CLI are equivalent)
 
-| action | 用途 | 关键约束 |
+The MCP surface is a single tool, `devcontrol`, with an `action` field (`wait` and `task.work` are the actions you call when `next` tells you not to touch the kernel yet):
+
+| action | Purpose | Key constraint |
 |---|---|---|
-| `wait` | 内核说等（等批准/等前置/等 Owner）时用；只返回当前状态 | 不改变任何状态 |
-| `task.work` | 领了活但还没写码 / 没留证据：内核说「该你干活了」，并给出四步顺序（写码 → `run` → `commit` → `close`） | 同样不改变状态；它不会替你写代码，也不会替你跑测试 |
-| `bootstrap` | 开局定向：**`next`（内核排好的下一件事）** + `actions` + `plan`（未覆盖的验收）+ 控制台地址 | 第一个动作必须是它；照 `next` 做，不自己挑 |
-| `task.create` | 拆任务（scope / 验收 / 依赖 / 预算） | 验收命令必须落在 Path 契约白名单内 |
-| `task.claim` | 领任务（45 分钟租约，WIP=1） | 与其他在办任务 scope 相交会被拒 |
-| `task.renew` | 续租：长任务超过 45 分钟时续一次（`commit` 等写操作也会自动续） | 租期已被回收 → `E_CLAIM_STALE`，必须重新 `task.claim` |
-| `evidence.record` | 走 MCP 时：把你自己 shell 里跑出的验收结果交上来（`command` 原文 + `exit`） | 命令必须在契约白名单内；同一条只留当前代码上的最新一份 |
-| `task.close` | 收口：**核验 Agent 留下的测试证据**（不执行测试） | 有交付提交 + 每条断言都有当前代码上的证据且满足才 `done` |
-| `bug.report` | 报 Bug（现象 + 复现步骤） | 不能直接改代码 |
-| `ask` | 歧义就问，不猜 | 问完任务 `parked`，Owner 回答后回到队列 |
-| `memory.write` | 随时记一条通用经验（坑 / 解法 / 约定 / 片段） | 不合格会进隔离区并给出改写模板 |
-| `memory.search` | 查本项目记忆 | 只读；命中累计 `hits` |
-| `release.create` / `release.plan` / `release.ship` | 发布：一组任务全 done 才能 ship | 空发布 / 有未完成任务都会被拦 |
+| `wait` | The kernel says hold (waiting on approval / a dependency / the Owner); returns current state | Changes nothing |
+| `task.work` | You claimed a task but haven't written code or left evidence yet: the kernel says "your turn" and gives the four-step order (write → `run` → `commit` → `close`) | Changes nothing; it won't write your code or run your tests |
+| `bootstrap` | Orientation: **`next` (the kernel's ordered next step)** + `actions` + `plan` (uncovered acceptance) + console URL | Must be your first action; follow `next`, don't pick your own |
+| `task.create` | Split work into a task (scope / acceptance / dependencies / budget) | Acceptance command must be in the Path contract's allowlist |
+| `task.claim` | Claim a task (45-minute lease, WIP=1) | Rejected if the scope overlaps another open task |
+| `task.renew` | Extend the lease for long tasks (writes like `commit` renew automatically) | If the lease was already reclaimed → `E_CLAIM_STALE`, re-`task.claim` |
+| `evidence.record` | Over MCP: hand up the acceptance result you got in your own shell (`command` verbatim + `exit`) | Command must be allowlisted; only the latest run against the current code is kept |
+| `task.close` | Close: **verify the evidence the agent left** (does not execute tests) | Needs delivery commits + evidence on current code satisfying every assertion |
+| `bug.report` | Report a bug (symptom + repro steps) | Cannot touch code directly |
+| `ask` | Ask when ambiguous, don't guess | Task goes `parked`, returns to the queue once answered |
+| `memory.write` | Record a reusable lesson anytime (pitfall / how-to / convention / snippet) | Rejected ones go to a quarantine area with a rewrite template |
+| `memory.search` | Search this project's memory | Read-only; accumulates `hits` |
+| `release.create` / `release.plan` / `release.ship` | Releases: a release ships only when every task in it is done | Empty releases and unfinished tasks are blocked |
 
-CLI 等价（不接 MCP 的客户端用这条）：
+CLI equivalents (for clients without MCP):
 
 ```bash
 devcontrol status                     # = bootstrap
-devcontrol commit -m "feat: ..."      # 只提交 scope 内文件，自动写 Task-Id / DevControl-Base trailer
-devcontrol renew                      # = task.renew（续 45 分钟租约；commit 也会自动续）
-devcontrol close                      # = task.close（默认取当前 actor 手上唯一在办任务）
-devcontrol run -- npm test            # 采证执行，记录退出码与耗时
+devcontrol commit -m "feat: ..."      # commits only files in scope; writes Task-Id / DevControl-Base trailers
+devcontrol renew                      # = task.renew (45-minute lease; commit renews too)
+devcontrol close                      # = task.close (defaults to your single open task)
+devcontrol run -- npm test            # run and record exit code, output and duration
 ```
 
-Agent 的典型一轮：
+A typical agent round:
 
 ```text
-bootstrap → task.claim(T-003) → 改代码 → devcontrol commit -m "..." → task.close
-                                                          ↑ 内核核验 Agent 留下的证据，它不跑测试
+bootstrap → task.claim(T-003) → write code → devcontrol commit -m "..." → task.close
+                                                          ↑ kernel verifies the evidence you left; it does not run tests
 ```
 
-### 3.2 Owner（只在控制台）
+### 3.2 Owner (the console)
 
-控制台**不用你自己起**：MCP 连上就自动拉起（见 3.3）。要手动常驻也可以：
+You don't start the console yourself — it comes up with the MCP connection (see 3.3). To keep it running manually:
 
 ```bash
-devcontrol serve            # 前台常驻，http://127.0.0.1:7373
-devcontrol serve --stop     # 停掉本项目自己的控制台（不会误杀别的项目）
+devcontrol serve            # foreground, http://127.0.0.1:7373
+devcontrol serve --stop     # stop this project's console only (won't kill another project's)
 ```
 
-Owner 动作**只在控制台**（`release.ship` 例外，MCP 也能调）：
+Owner actions live on the console **and**, where marked, on the terminal. `intake` and `approve` both have CLI entry points (see §2) — a CLI-only project must not dead-end.
 
-| 动作 | 干什么 |
+| Action | What it does |
 |---|---|
-| `intake` | 收需求 / 收 Bug |
-| `approve` | 需求 + Path 一起冻结并提交契约 |
-| `amend` | 改验收或路径；在办任务自动回 backlog |
-| `adjust` | 改任务的 scope / 预算 |
-| `reopen` | 打回 / 让 parked 的任务重新可领 |
-| `abandon` | **作废需求**：需求归档，还挂着的任务一起放弃（不可逆，要写理由） |
-| `decide` | Bug 采纳或驳回 |
-| `answer` | 回答 Agent 的提问，任务回队列 |
-| `override` | 放行某个拦截码（一次性），或 `force-close` |
-| `path.adjust` / `path.retest` | 改 Path 预算 / 重新采验收命令 |
-| `handoff` | 生成交接卡，可粘给另一个 Agent |
-| `memory.*` | 晋升、编辑、丢弃经验 |
-| `settings.save` / `release.ship` | 保存设置 / 发布打 tag |
+| `intake` | File a requirement or a bug (also `devcontrol intake`) |
+| `approve` | Freeze requirement + Path together and commit the contract (also `devcontrol approve`) |
+| `amend` | Change acceptance or paths; open tasks fall back to backlog |
+| `adjust` | Change a task's scope / budget |
+| `reopen` | Send back / make a parked task claimable again |
+| `abandon` | **Void a requirement**: archive it and drop its open tasks (irreversible, needs a reason) |
+| `decide` | Accept or reject a bug |
+| `answer` | Answer an agent's question; the task returns to the queue |
+| `override` | Waive one blocking code (one-shot), or `force-close` |
+| `path.adjust` / `path.retest` | Change a Path's budget / re-detect acceptance commands |
+| `handoff` | Produce a handoff card you can paste to another agent |
+| `memory.*` | Promote, edit, discard lessons |
+| `settings.save` / `release.ship` | Save settings / tag a release |
 
-控制台九个视图（侧栏切换）：**收件箱**（待批准需求 / 待回答提问 / 待裁决 Bug / parked 任务 / 待提炼记忆）、**需求**、**Bug**、**任务**、**发布**、**记忆**、**文档**、**证据**（Agent 跑过的命令/退出码/HEAD/指纹）、**设置**。
+The console has nine views in the sidebar: **Inbox** (requirements awaiting approval / questions awaiting answers / bugs awaiting a verdict / parked tasks / lessons awaiting promotion), **Requirements**, **Bugs**, **Tasks**, **Releases**, **Memory**, **Docs**, **Evidence** (command, exit code, HEAD, fingerprint for every run), **Settings**.
 
-> `abandon` 是唯一「这件事不做了」的出口。没有它的时候，parked 任务只能 reopen 重试，需求也没有终态——需求会永远占着覆盖率，Agent 的 `next` 永远在等一个不会发生的 reopen。
+> `abandon` is the only way to say "we're not doing this". Without it, parked tasks can only be reopened and requirements have no terminal state — they keep occupying coverage while the agent's `next` waits forever for a reopen that will never happen.
 
-### 3.2b 两台电脑：局域网访问控制台
+### 3.2b Two machines: reaching the console over the LAN
 
-默认只听回环（`127.0.0.1`），别的机器连不上。要从另一台电脑打开：
+By default it listens on loopback only (`127.0.0.1`), so no other machine can connect. To open it from another computer:
 
 ```bash
 devcontrol serve --host 0.0.0.0
-# devcontrol 控制台：http://127.0.0.1:7373
-#   局域网（另一台电脑直接打开）：http://192.168.0.107:7373/
-#   同一局域网的人都能打开。用完 devcontrol serve --stop 就断。
+# devcontrol console: http://127.0.0.1:7373
+#   over LAN (open directly from the other machine): http://192.168.0.107:7373/
+#   anyone on the same LAN can open it. `devcontrol serve --stop` closes it.
 ```
 
-就这样，没有令牌、没有登录、没有额外一步。
+That's it — no token, no login, no extra step.
 
-想加固就设一个环境变量，设了才校验：
+To harden it, set one environment variable; the check only kicks in if it's set:
 
 ```bash
-DEVCONTROL_OWNER_TOKEN=随手定一串 devcontrol serve --host 0.0.0.0
-# 之后打开 http://192.168.0.107:7373/?token=随手定一串
-# 页面把令牌存 localStorage 并放进 X-Owner-Token 头（不用 cookie，别的站点发的请求带不上）
+DEVCONTROL_OWNER_TOKEN=pick-something devcontrol serve --host 0.0.0.0
+# then open http://192.168.0.107:7373/?token=pick-something
+# the page stores the token in localStorage and sends it as X-Owner-Token
+# (no cookies, so a request from another site can't carry it)
 ```
 
-始终保留的一条边界：Host 只认回环和本机网卡地址，陌生 Host 一律 403（挡 DNS rebinding）——它零成本，且挡的是不需要你配合就能发生的攻击。
+One boundary that always holds: the `Host` header must be loopback or a local interface address; anything else gets a 403 (this blocks DNS rebinding). It costs nothing and stops a class of attacks that needs no cooperation from you.
 
-不想开端口也行，SSH 隧道等价且不暴露局域网：
-`ssh -L 7373:127.0.0.1:7373 you@192.168.0.107`，然后在本机开 `http://127.0.0.1:7373/`。
+You can also skip the open port entirely — an SSH tunnel is equivalent and doesn't expose the LAN:
+`ssh -L 7373:127.0.0.1:7373 you@192.168.0.107`, then open `http://127.0.0.1:7373/` locally.
 
-### 3.3 控制台由 MCP 全权托管（和 v5 一样，人不用启动也不用重启）
+### 3.3 The console is owned by MCP (same as v5 — no starting, no restarting)
 
-MCP 连接就是控制台的生命周期触发器。`runMcp` 启动时调用 `ensureConsole(root)`：
+The MCP connection is the console's lifecycle trigger. On startup `runMcp` calls `ensureConsole(root)`:
 
-1. 拿本项目锁 `.devcontrol/console.lock`（`wx` 独占创建，持锁进程死了或超过 30s 自动回收），并发 MCP 不会被互相踩；
-2. 从 `DEVCONTROL_PORT`/`7373` 起逐个探测 `GET /api/meta`：
-   - **是本项目自己的实例** → `SIGTERM` 杀掉、等端口释放，再用当前代码重启（同一端口）。这样升级后不会留旧进程在跑；
-   - **是别的项目** → 绝不杀，换下一个端口；
-   - **被非 devcontrol 服务占着** → 换下一个端口；
-   - **空端口** → 直接起；
-3. 新进程 `detached`，日志在 `$TMPDIR/devcontrol-console-<项目哈希>.log`，MCP 退出不影响页面；
-4. `bootstrap` 把地址放进 `console` 字段，Agent 转告 Owner；`AGENTS.md` 里已写明。
+1. Take this project's lock `.devcontrol/console.lock` (exclusive `wx` create; reclaimed automatically if the holder dies or after 30s) so concurrent MCP servers don't step on each other;
+2. Probe `GET /api/meta` starting from `DEVCONTROL_PORT`/`7373`:
+   - **it's this project's own instance** → `SIGTERM`, wait for the port, restart on the same port with the current code (so an upgrade never leaves an old process running);
+   - **it's another project** → never kill it, move to the next port;
+   - **something else holds it** → move to the next port;
+   - **free port** → start there;
+3. The new process is `detached`, logs go to `$TMPDIR/devcontrol-console-<project-hash>.log`, and MCP exiting doesn't take the page down;
+4. `bootstrap` puts the URL in the `console` field so the agent can tell the Owner. `AGENTS.md` says the same.
 
-没有人需要按的那几个按钮：
+The buttons nobody has to press:
 
-- **不用启动**：MCP 连上就有；
-- **不用重启**：控制台被停掉/崩了，下一次 `bootstrap` 发现地址死了就**就地重建**（自愈）；
-- **不用刷新页面**：控制台页面每 4s 自轮询，断线时显示「重连中…」，恢复后自己回到「已连接」；
-- **不会互相杀**：刚起来 10s 内的自己人复用不重启（`DEVCONTROL_RESTART_GRACE_MS`），避免多个 MCP 连续启动把页面刷来刷去。
+- **No start**: it exists as soon as MCP connects.
+- **No restart**: if the console is stopped or crashes, the next `bootstrap` notices the address is dead and **rebuilds it in place**.
+- **No page refresh**: the page polls every 4s, shows "reconnecting…" when the line drops, and returns to "connected" by itself.
+- **No mutual killing**: an instance started less than 10s ago is reused rather than restarted (`DEVCONTROL_RESTART_GRACE_MS`), so several MCP servers starting in a row don't thrash the page.
 
-两个刻意的取舍：
+Two deliberate trade-offs:
 
-- **独立进程**：MCP 重启不打断阅读；代价是进程活到你 `devcontrol serve --stop` 或重启机器。
-- **没有实例注册表**：v5 还维护 `workspace-runtime` 记录 + 版本握手，devcontrol 只靠 `/api/meta` 里的 `root/pid/startedAt` 做身份判断——少一个可能失配的状态文件。
+- **Separate process**: restarting MCP doesn't interrupt your reading; the cost is the process lives until `devcontrol serve --stop` or a reboot.
+- **No instance registry**: v5 kept a `workspace-runtime` record plus a version handshake; devcontrol identifies instances purely from `root/pid/startedAt` in `/api/meta` — one less state file that can drift.
 
+Switches: `DEVCONTROL_CONSOLE=0` disables auto-start; `DEVCONTROL_PORT=<n>` changes the starting port; `DEVCONTROL_RESTART_GRACE_MS=<ms>` widens the grace window.
 
-开关：`DEVCONTROL_CONSOLE=0` 关掉自动拉起；`DEVCONTROL_PORT=<n>` 换起始端口；`DEVCONTROL_RESTART_GRACE_MS=<ms>` 调宽限期。
+### 3.4 Project memory
 
-### 3.4 项目记忆（memory）
+**Memory belongs to the project**: pitfalls hit, conventions agreed, solutions used — it travels with the repo. Cross-project sharing is a future sync feature, not local default behaviour.
 
-**记忆是「这个项目自己的」**：踩过的坑、定下的约定、用过的解法，跟着仓库走。跨项目共享是以后同步到远程的事，不是本地默认行为。
-
-- 真源是本仓库的 `.devcontrol/memory.db`（一张 `pitfalls` 表，不进 git）；Qdrant 只是**可重建的向量索引**，挂了不丢数据。
-- 写：`memory.write` 随时可用（不要求有任务）；`task.close` 失败过必须带 `resolvedBy`（否则 `E_NEED_RESOLUTION`），内核自动记一条 pitfall。
-- **不是所有问题都配进库**：内容太短、没有可观测信号、解法是一次性手滑（拼写/漏文件/改名）、写死本项目私有路径 → 进**隔离区**（`candidate`），不建索引、不召回；`devcontrol memory promote M-xxx` 才晋升。标题相同自动去重。
-- 读：`bootstrap.memories` 注入当前任务命中的 top 3；`memory.search` 显式查。
-- 不合格不是丢掉：命中隔离区时返回 `E_MEMORY_CANDIDATE` + 模板「当出现 X 时，用 Y（原因：Z）」，按模板用 `kind=howto` 重写一次即入库。
-- 去重：标题相同直接合并；向量可用时按相似度（默认 ≥0.9）合并，不新增条目。
-- 控制台收件箱会列出「待提炼的记忆」，改一句话点「收进记忆」即晋升并建索引。
-- 降级：向量栈不可用 → 关键词检索（中文 bigram + LIKE），收口照常通过，`doctor` 报 `MEMORY_INDEX_FAILED`。
+- Source of truth is this repo's `.devcontrol/memory.db` (one `pitfalls` table, not in git). Qdrant is only a **rebuildable vector index** — if it dies, no data is lost.
+- Write: `memory.write` anytime (no task required). A `task.close` that failed at least once must carry `resolvedBy` (otherwise `E_NEED_RESOLUTION`), and the kernel records a pitfall automatically.
+- **Not everything deserves to be stored**: too short, no observable signal, a one-off slip (typo / forgotten file / rename), or hard-coded private paths → goes to a **quarantine area** (`candidate`), not indexed, not recalled. `devcontrol memory promote M-xxx` promotes it. Same title dedupes automatically.
+- Read: `bootstrap.memories` injects the top 3 matching the current task; `memory.search` queries explicitly.
+- Rejection isn't deletion: hitting quarantine returns `E_MEMORY_CANDIDATE` plus a template — "when X happens, do Y (because Z)". Rewrite with `kind=howto` and it's stored.
+- Dedupe: identical titles merge outright; with vectors available, similarity ≥ 0.9 merges instead of adding.
+- The console inbox lists "lessons awaiting promotion" — edit one line, click, and it's promoted and indexed.
+- Degradation: vector stack unavailable → keyword search (bigrams + LIKE), closing still works, `doctor` reports `MEMORY_INDEX_FAILED`.
 
 ```bash
-devcontrol memory status                    # 有多少坑、索引状态、连的哪个 embedding/Qdrant
-devcontrol memory search "worktree 提交丢失"  # 在本项目记忆里检索
-devcontrol close --resolved-by "证据是在旧代码上跑的，重跑一次再收口"
-devcontrol memory reindex                   # 向量库重建（数据不丢）
-devcontrol release create "v0.1" --target 2026-12-01   # 发布：plan 挂任务，ship 全部 done 才放行
+devcontrol memory status                     # how many lessons, index state, which embedding/Qdrant
+devcontrol memory search "worktree commits lost"
+devcontrol close --resolved-by "evidence was from old code; re-ran against current HEAD"
+devcontrol memory reindex                    # rebuild the vector store (no data loss)
+devcontrol release create "v0.1" --target 2026-12-01
 devcontrol release plan R-001 T-003 T-004
 devcontrol release list
 ```
 
-| env | 默认 |
+| env | default |
 |---|---|
 | `MEMORY_EMBEDDING_PROVIDER` / `MEMORY_EMBEDDING_URL` / `MEMORY_EMBEDDING_MODEL` | `ollama` / `http://127.0.0.1:11434` / `nomic-embed-text` |
-| `MEMORY_QDRANT_URL` / `MEMORY_QDRANT_COLLECTION` | `http://127.0.0.1:6333` / `devcontrol_memory_<项目路径前8位>` |
-| `DEVCONTROL_MEMORY` / `DEVCONTROL_MEMORY_DB` | `on` / `<项目>/.devcontrol/memory.db` |
+| `MEMORY_QDRANT_URL` / `MEMORY_QDRANT_COLLECTION` | `http://127.0.0.1:6333` / `devcontrol_memory_<first 8 chars of project path>` |
+| `DEVCONTROL_MEMORY` / `DEVCONTROL_MEMORY_DB` | `on` / `<project>/.devcontrol/memory.db` |
 
-## 3.5 谁跑测试：**Agent 跑，内核只核验**
+## 3.5 Who runs the tests: **the agent, not the kernel**
 
-这是这个工具最该守住的一条分工：
+This is the division of labour the whole tool is built to protect:
 
-| | 谁做 | 产物 |
+| | Who | Output |
 |---|---|---|
-| 写代码 | Agent | 提交（带 `Task-Id`） |
-| **跑测试** | **Agent** | `devcontrol run -- <命令>` 记下的一条**证据**（命令、退出码、输出、当时的内容指纹） |
-| 核验证据 | 内核 | R2：命令在白名单里？证据是当前这份代码上跑的吗？退出码满足断言吗？ |
+| Write code | Agent | A commit (with `Task-Id`) |
+| **Run tests** | **Agent** | One **evidence** record from `devcontrol run -- <cmd>` (command, exit code, output, content fingerprint at that moment) |
+| Verify evidence | Kernel | R2: is the command allowlisted? Was the evidence produced against this exact code? Does the exit code satisfy the assertion? |
 
 ```bash
-devcontrol run -- npm test      # Agent 自己跑；有在办任务时自动记为该任务的证据
-devcontrol close                # 内核只核验，不执行
+devcontrol run -- npm test      # the agent runs it; recorded as evidence for the open task
+devcontrol close                # the kernel only verifies, never executes
 ```
 
-为什么内核不自己跑：一旦它开始执行测试，就得负责环境、依赖安装、超时、进程回收、
-干净检出，工具会越来越重，还容易和项目真实的工作方式打架（v5 走岔的就是这条路）。
-现在内核做的事永远只有三件：**这活儿是谁的、改了哪片、证据够不够**。
+Why the kernel refuses to run it: the moment it starts executing tests it owns environments, dependency installs, timeouts, process reaping and clean checkouts. The tool gets heavier and starts fighting how your project actually works — that is exactly where v5 drifted off course. Today the kernel only ever answers three things: **whose work is this, which files changed, is the evidence enough**.
 
-代价说清楚：证据是 Agent 自报的，内核验的是「一致性」而不是「真实性」——
-它能防「跑完又改代码」（内容指纹变了）、能防「没跑就收口」（没有证据）、
-能防「跑的是别的命令」（白名单），但**防不了蓄意伪造**。这是设计取舍：
-工作台管流程，不管人品。
+The cost, stated plainly: evidence is self-reported. The kernel verifies **consistency**, not **truthfulness**. It catches "ran, then edited code" (fingerprint changed), "closed without running" (no evidence) and "ran some other command" (allowlist). It cannot catch deliberate forgery. That's the trade-off: the workbench governs process, not character.
 
-## 3.6 规范：内核下发，但不执行
+## 3.6 Standards: the kernel hands them out, it doesn't enforce them
 
-Jira 只有**验收**（Acceptance，功能做对了没）。代码写得怎么样，靠人 review。
-我们这边是 AI 写代码、没人 review，所以必须有人把「代码该写成什么样」说清楚——这是「比 Jira 强一点」的地方。
+Jira has **acceptance** only (did the feature work). Code quality relies on human review.
+Here an AI writes the code and nobody reviews it, so somebody has to state what good code looks like for this project — that's where this goes slightly beyond Jira.
 
-但**说清楚 ≠ 盯着你**：
+But **stating it ≠ policing it**:
 
-| | 谁做 |
+| | Who |
 |---|---|
-| 下发规范 | 内核：写进契约，Owner 批准时看得见、Agent 领任务时拿到 |
-| 遵守规范 | Agent |
-| 判断有没有遵守 | **Owner**（内核只把事实数出来） |
-| 执行测试 | Agent（跑了才有证据），内核只核验证据 |
+| Hand out standards | Kernel: written into the contract, visible when the Owner approves, delivered when the agent claims |
+| Follow them | Agent |
+| Judge whether they were followed | **Owner** (the kernel only counts facts) |
+| Run tests | Agent (evidence only exists if it ran); the kernel just verifies that evidence |
 
-规范随 Path 契约冻结（`.devcontrol/contracts/P-xxx.json`）：
+Standards are frozen into the Path contract (`.devcontrol/contracts/P-xxx.json`):
 
 ```json
 "standards": {
   "enforced": ["scope"],
   "rules": [
-    { "id": "scope",    "text": "只改任务 scope 内的文件；新增文件也要落在 scope 内", "enforced": true },
-    { "id": "budget",   "text": "单个任务改动不超过 400 行；超了通常是该拆任务" },
-    { "id": "tests",    "text": "不动依赖与既有测试；新增测试文件不受限（TDD 是正常动作）" },
-    { "id": "testconf", "text": "不动测试配置（runner、覆盖率阈值之类）" },
-    { "id": "todo",     "text": "不留 TODO / FIXME / HACK 标记；要记就记进任务标题或 issue" }
+    { "id": "scope",    "text": "Only touch files in the task scope; new files must land in scope too", "enforced": true },
+    { "id": "budget",   "text": "One task changes at most 400 lines; more usually means split it" },
+    { "id": "tests",    "text": "Don't touch dependencies or existing tests; new test files are fine (TDD is normal)" },
+    { "id": "testconf", "text": "Don't touch test config (runner, coverage thresholds)" },
+    { "id": "todo",     "text": "No TODO / FIXME / HACK markers; file it in the task title or an issue instead" }
   ]
 }
 ```
 
-- **`enforced: ["scope"]`** —— 内核真的会拦的只有 scope。那不是「代码质量」，是「这行代码属于哪个任务」的事实问题；内核不判它，归属链就断了。
-- **其余四条只观测**：收口时内核数出来，写在结果里（`observations`），CLI 打到 stderr，控制台能看到。**它不阻断交付，判不判是 Owner 的事。**
+- **`enforced: ["scope"]`** — scope is the only thing the kernel actually blocks. That isn't "code quality", it's the factual question of which task a line belongs to; without it the attribution chain breaks.
+- **The other four are observations only**: at close the kernel counts them into `observations`, prints them to stderr, and shows them in the console. **They never block delivery. Judging is the Owner's job.**
 
 ```
-规范对照（内核只报事实，判断在你）：
-  · 本任务改了 312 行 > 预算 400
-  · 动了依赖/既有测试：package.json
+Standards check (the kernel reports facts; you judge):
+  · this task changed 312 lines > budget 400
+  · touched dependencies / existing tests: package.json
 ```
 
-三个地方看得到同一份规范：Owner 批准时（控制台 Path 列）、Agent 开工时（`task.claim` 返回值 / CLI 输出）、收口时（规范对照）。
+The same standards surface in three places: when the Owner approves (console Path column), when the agent starts (`task.claim` return value / CLI output), and at close (the standards check).
 
-## 4. 拦截点（这就是"法"）
+## 4. The gates (this is the "law")
 
-`task.close` 按顺序判定，任一失败即返回错误码并写事件：
+`task.close` evaluates in order; the first failure returns its code and writes an event:
 
-| 阶段 | 检查 |
+| Stage | Check |
 |---|---|
-| R0 | 区间内有没有交付提交；有没有**无主提交**（既没有本任务 trailer、也不是他人带 trailer 的正常提交） |
-| R1 | **只拦 scope**：越界文件、未登记新增文件。预算 / 标记残留 / 测试配置 / 依赖与既有测试 只**观测**，不拦 |
-| R2 | **核验 Agent 留下的测试证据**：命令在契约白名单里、证据是在当前这份代码上跑的（内容指纹一致）、退出码满足断言。内核**不执行**测试 |
-| R3 | （已并入 R2：证据与当前代码不一致就是 `E_EVIDENCE_STALE`） |
-| R4 | 归属提交不在 HEAD 祖先链上 → `E_UNMERGED_WORK` |
-| 收口 | 状态 CAS 写入 `done`；消费一次性 waive；写 `close` 事件 |
+| R0 | Are there delivery commits in the range? Are there **unowned commits** (neither this task's trailer, nor someone else's normal trailer-bearing commit)? |
+| R1 | **Scope only**: out-of-scope files, unregistered new files. Budget / leftover markers / test config / dependencies-and-existing-tests are **observed**, not blocked |
+| R2 | **Verify the evidence the agent left**: command in the contract allowlist, evidence produced against the current code (matching content fingerprint), exit code satisfying the assertion. The kernel **never executes** tests |
+| R3 | (Folded into R2: evidence not matching current code is `E_EVIDENCE_STALE`) |
+| R4 | Attributed commit not on HEAD's ancestry → `E_UNMERGED_WORK` |
+| Close | CAS the status to `done`; consume one-shot waivers; write the `close` event |
 
-失败计数规则：补一步就能好的（`E_DIRTY_SCOPE` / `E_BUSY` / `E_TIMEOUT` / `E_NO_EVIDENCE` / `E_EVIDENCE_STALE`）**不计** `review_round`；其余失败累计，3 次自动 `parked`，等 Owner `reopen`。
+Failure counting: anything fixable in one step (`E_DIRTY_SCOPE` / `E_BUSY` / `E_TIMEOUT` / `E_NO_EVIDENCE` / `E_EVIDENCE_STALE`) does **not** increment `review_round`. Everything else accumulates; three failures auto-`park` the task, waiting for the Owner to `reopen`.
 
-### 失败长什么样（Agent 靠这个分支处理）
+### What failure looks like (the agent branches on this)
 
-**成功和失败都是 stdout 上的 JSON，`ok` 字段必在**。失败时一定带 `code` 和 `hint`：
+**Success and failure are both JSON on stdout, and `ok` is always present.** Failures always carry `code` and `hint`:
 
 ```json
-{ "ok": false, "code": "E_DEP_OPEN", "message": "前置 T-001 未完成",
+{ "ok": false, "code": "E_DEP_OPEN", "message": "Dependency T-001 is not finished",
   "data": { "dep": "T-001", "status": "doing" },
-  "hint": "前置任务还没收口。先把它做完（devcontrol close），或者换一个不依赖它的任务。" }
+  "hint": "The dependency hasn't closed yet. Finish it (devcontrol close), or pick a task that doesn't depend on it." }
 ```
 
-- `message` 说**哪里**错了，`data` 放机读细节（越界的文件名、允许的命令列表…），`hint` 说**下一步做什么**。
-- stderr 只放人读的两行（`code: message` + `→ hint`），可以整段丢掉不影响程序。
-- 退出码：`0` 成功 / `1` 动作被拒 / `2` 用法写错。**不是用法错误就别给 2**，否则脚本分不清「你敲错了」和「内核不让」。
-- 每条会返回给 Agent 的错误码都必须有 hint；`test/failure-contract.test.js` 会从源码里扫出所有错误码逐条核对，漏一个就红。
+- `message` says **what** went wrong, `data` holds machine-readable detail (offending filenames, allowed commands…), `hint` says **what to do next**.
+- stderr carries two human lines (`code: message` + `→ hint`) and can be discarded entirely without breaking a program.
+- Exit codes: `0` success / `1` action refused / `2` usage error. **Never return 2 for a non-usage failure**, otherwise scripts can't tell "you typed it wrong" from "the kernel said no".
+- Every error code reachable by an agent must have a hint; `test/failure-contract.test.js` scans the source and checks each one, failing on any missing.
 
-### 错误码
+### Error codes
 
-| 码 | 含义 |
+| Code | Meaning |
 |---|---|
-| `E_NOT_REPO` / `E_SCHEMA_NEWER` / `E_ID_EXHAUSTED` | 环境与版本 |
-| `E_NEED_APPROVED` / `E_NO_CONTRACT` / `E_CONTRACT` / `E_HASH_MISMATCH` | 契约没批、契约缺失、契约被改、哈希不符 |
-| `E_ILLEGAL_TRANSITION` / `E_CLAIM_STALE` / `E_CLAIMED_BY_OTHER` / `E_WIP_LIMIT` / `E_SCOPE_OVERLAP` / `E_DEP_OPEN` | 状态与并发 |
-| `E_SCOPE_TOO_BROAD` / `E_FILE_TOO_LARGE` | 任务切分过大 |
-| `E_UNOWNED_COMMIT` / `E_NO_DELIVERY` | 提交归属 |
+| `E_NOT_REPO` / `E_SCHEMA_NEWER` / `E_ID_EXHAUSTED` | Environment and version |
+| `E_NEED_APPROVED` / `E_NO_CONTRACT` / `E_CONTRACT` / `E_HASH_MISMATCH` | Not approved, missing contract, contract edited, hash mismatch |
+| `E_ILLEGAL_TRANSITION` / `E_CLAIM_STALE` / `E_CLAIMED_BY_OTHER` / `E_WIP_LIMIT` / `E_SCOPE_OVERLAP` / `E_DEP_OPEN` | State and concurrency |
+| `E_SCOPE_TOO_BROAD` / `E_FILE_TOO_LARGE` | Task split too coarse |
+| `E_UNOWNED_COMMIT` / `E_NO_DELIVERY` | Commit attribution |
 | `E_SCOPE_VIOLATION` / `E_UNREGISTERED_FILES` / `E_DIFF_BUDGET` / `E_LINT_TODO` / `E_TEST_CONFIG_TOUCH` / `E_DEP_OR_TEST_TOUCH` | R1 |
-| `E_NO_EVIDENCE` / `E_EVIDENCE_STALE` / `E_ASSERTION_FAILED` / `E_UNMERGED_WORK` | R2–R4（证据类） |
-| `E_DIRTY_SCOPE` / `E_BUSY` | 环境类，不计轮次 |
-| `E_USAGE` / `INVALID_ARGUMENT` | 命令或参数写错（`E_USAGE` 退出码 2） |
-| `E_NO_TASK` / `E_WEAK_NO_GIT` / `NOT_FOUND` | 手上没任务、弱模式不能提交、找不到那个编号 |
-| `E_INTERNAL` | 兜底 |
+| `E_NO_EVIDENCE` / `E_EVIDENCE_STALE` / `E_ASSERTION_FAILED` / `E_UNMERGED_WORK` | R2–R4 (evidence) |
+| `E_DIRTY_SCOPE` / `E_BUSY` | Environment; don't count as rounds |
+| `E_USAGE` / `INVALID_ARGUMENT` | Bad command or argument (`E_USAGE` exits 2) |
+| `E_NO_TASK` / `E_WEAK_NO_GIT` / `NOT_FOUND` | Nothing claimed, weak mode can't commit, no such id |
+| `E_INTERNAL` | Fallback |
 
-## 4b. 多语言
+## 4b. Language agnosticism
 
-内核不假设你是 npm 项目。验收命令从项目现状采（见 `src/testcmd.js`）：
+The kernel does not assume you're an npm project. Acceptance commands are detected from what's actually there (see `src/testcmd.js`):
 
-| 项目里有 | 采到的命令 |
+| Project contains | Detected command |
 |---|---|
-| `package.json` 的 `scripts.test` | `npm test`（有 pnpm/yarn/bun 锁文件就跟着换） |
+| `scripts.test` in `package.json` | `npm test` (switches to pnpm/yarn/bun when their lockfile is present) |
 | `Cargo.toml` | `cargo test` |
 | `go.mod` | `go test ./...` |
 | `pytest.ini` / `pyproject.toml` / `tox.ini` | `pytest -q` |
-| `Makefile` 里的 `test:` | `make test` |
+| a `test:` target in `Makefile` | `make test` |
 
-两条约定：
+Two conventions:
 
-- **依赖与构建产物**：`node_modules/`、`dist/`、`build/`、`out/`、`target/`、`coverage/`、`__pycache__/` 之类在任何项目里都算产物（未跟踪时）；**`bin/` 只在 Go 项目里算**——npm 包的 `bin/` 是源码（`package.json` 的 bin 入口）。判据在 `src/vendor.js`，只对未跟踪文件生效，已被 git 跟踪的不翻案。
-- **建任务的默认验收**：不给 `--accept` 时用契约里的第一条命令，不是写死的 `npm test`。
+- **Dependencies and build output**: `node_modules/`, `dist/`, `build/`, `out/`, `target/`, `coverage/`, `__pycache__/` and friends count as artifacts in any project (while untracked); **`bin/` only counts in Go projects** — in an npm package `bin/` is source (the `package.json` bin entry). The rules live in `src/vendor.js`, apply only to untracked files, and never overrule what git already tracks.
+- **Default acceptance when creating a task**: without `--accept`, use the contract's first command — not a hard-coded `npm test`.
 
-## 5. 数据模型（9 表 + meta）
+## 5. Data model (9 tables + meta)
 
-`requirements` `paths` `tasks` `bugs` `docs` `questions` `events` `runs` `patch_ids`，外加 `meta`（schema 版本、单调 ID 计数器、一次性 waive 标记）。
+`requirements` `paths` `tasks` `bugs` `docs` `questions` `events` `runs` `patch_ids`, plus `meta` (schema version, monotonic ID counters, one-shot waivers).
 
-- ID 单调递增不复用：`FR-xxx` / `P-xxx` / `T-xxx` / `B-xxx` / `Q-xxx` / `D-xxx`。
-- `runs` 存 Agent 跑过的验收命令、退出码、HEAD、指纹、输出（截断 20k）、耗时——可复核。
-- 唯一可写入口是内核函数；库里出现 `done` 却没有 `close` 事件，`devcontrol doctor` 会报 `GHOST_DONE`。
+- IDs are monotonic and never reused: `FR-xxx` / `P-xxx` / `T-xxx` / `B-xxx` / `Q-xxx` / `D-xxx`.
+- `runs` stores every acceptance command an agent ran, its exit code, HEAD, fingerprint, output (truncated at 20k) and duration — all re-checkable.
+- The only write path is through kernel functions; a `done` row with no `close` event in the log is reported by `devcontrol doctor` as `GHOST_DONE`.
 
-## 6. 自检
+## 6. Self-checks
 
 ```bash
-npm test            # 569 条测试，真的建临时仓库、真的跑 close、真的起 MCP 与控制台，不 mock
-npm run packcheck   # 发布前必跑：打包装到空目录里验证交付物，27 项
-devcontrol doctor   # 出问题才说话；有 ERROR 时退出码 1
-devcontrol export   # markdown 快照（只读，别拿去改状态）
+npm test            # full suite: real temp repos, real close calls, real MCP and console, no mocks
+npm run packcheck   # before publishing: pack it, install into an empty dir, verify the deliverable
+devcontrol doctor   # silent unless something's wrong; exits 1 on ERROR
+devcontrol export   # markdown snapshot (read-only, don't edit state with it)
 ```
 
-`npm test` 测的是**源码**；`npm run packcheck` 测的是**打得出去的包**。两件事不一样：
-文件漏进 `files` 字段、`bin` 路径写错、下发文件里两个文件说相反的话——单测全绿也可能发生。
-它做三件事：真的 `npm pack` 再装进空目录、用官方 SDK 握手一次、检查 SKILL/AGENTS/CLAUDE/cursor
-四个下发文件版本号一致且顺序不打架。
+`npm test` tests **the source**; `npm run packcheck` tests **the package you'd publish**. Those are different things: a file missing from `files`, a wrong `bin` path, or two shipped instruction files contradicting each other all survive a fully green unit run. It does three things: actually `npm pack` and install into an empty directory, do a handshake with the official SDK, and check that the four instruction files (SKILL/AGENTS/CLAUDE/cursor) agree on the version and don't disagree on the order of steps.
 
-`doctor` 分两组，职责不同：
+`doctor` runs two groups with different jobs:
 
-**「Agent 做了什么」**（对账仓库与库）
+**"What did the agent do"** (reconciles repo against database)
 
-| 码 | 含义 |
+| Code | Meaning |
 |---|---|
-| `GHOST_DONE` | 库里 done 但没有收口事件（疑似直接改库） |
-| `STALE_CLAIM` / `STALE_CLOSING` | 租约过期 / 收口卡住 |
-| `PARKED_TASK` | 有任务连续失败被 park，等你 reopen 或作废 |
-| `STALE_PATH` / `TEST_CMD_DRIFT` | Path 指向的目录没了 / 冻结的验收命令已过期 |
-| `DOC_DRIFT` / `SKILL_OUTDATED` / `DIRTY_TREE` | 文档变了没登记 / Agent 说明过期 / 工作树脏 |
-| `OVERRIDDEN` / `WEAK_MODE` | Owner 放行过的收口 / 弱模式没有提交链 |
+| `GHOST_DONE` | `done` in the DB but no close event (someone edited the database directly, probably) |
+| `STALE_CLAIM` / `STALE_CLOSING` | Lease expired / closing stuck |
+| `PARKED_TASK` | A task failed repeatedly and got parked; waiting for you to reopen or abandon |
+| `STALE_PATH` / `TEST_CMD_DRIFT` | The Path's directory is gone / the frozen acceptance command no longer matches |
+| `DOC_DRIFT` / `SKILL_OUTDATED` / `DIRTY_TREE` | Registered doc changed / agent instructions outdated / working tree dirty |
+| `OVERRIDDEN` / `WEAK_MODE` | Closes the Owner waived / weak mode with no commit chain |
 
-**「内核自己有没有前后矛盾」**（只看库，不看仓库）
+**"Is the kernel self-contradictory"** (database only, ignores the repo)
 
-| 码 | 含义 |
+| Code | Meaning |
 |---|---|
-| `NO_APPROVED_PATH` | 有已批准的需求，但一条已批准的 Path 都没有 |
-| `ACCEPTANCE_NOT_IN_CONTRACT` | 需求批准过的验收命令，没有任何已批准 Path 冻结它 |
-| `TASK_ASSERTION_DRIFT` | 任务的断言命令不在它 Path 的契约里 → 这条任务收不了口 |
-| `TASK_SCOPE_OUTSIDE_PATH` | 任务 scope 超出 Path 允许的区域 |
-| `TASK_REQ_UNKNOWN` / `TASK_REQ_NOT_APPROVED` | 任务挂的需求不存在 / 没批准 |
-| `TASK_DEP_UNKNOWN` / `TASK_DEP_CYCLE` | 依赖指向不存在的任务 / 依赖成环 |
-| `TASK_PATH_UNKNOWN` / `TASK_CONTRACT_STALE` | 挂的 Path 没了 / 记的是旧契约（领取时会自动对齐） |
+| `NO_APPROVED_PATH` | An approved requirement, but not one approved Path |
+| `ACCEPTANCE_NOT_IN_CONTRACT` | The requirement's acceptance command isn't frozen by any approved Path |
+| `TASK_ASSERTION_DRIFT` | A task's assertion isn't in its Path's contract → that task can never close |
+| `TASK_SCOPE_OUTSIDE_PATH` | Task scope exceeds what its Path allows |
+| `TASK_REQ_UNKNOWN` / `TASK_REQ_NOT_APPROVED` | Task references a requirement that doesn't exist / isn't approved |
+| `TASK_DEP_UNKNOWN` / `TASK_DEP_CYCLE` | Dependency points at a missing task / dependencies form a cycle |
+| `TASK_PATH_UNKNOWN` / `TASK_CONTRACT_STALE` | Path is gone / task recorded an older contract (realigned on claim) |
 
-第二组是为了抓住「两边都以为自己没错」的故障：Owner 在页面上看到已批准、Agent 看到未批准；
-或者需求白纸黑字写了「构建也要过」，契约里却只冻结了测试命令。这类状态**没有任何异常**，
-只能靠把两边摊在一起比对才看得见。
+The second group exists to catch "both sides think they're right": the Owner sees approved in the UI while the agent sees unapproved; or the requirement plainly says "the build must pass too" while the contract only froze a test command. Those states produce **no exception anywhere** — the only way to see them is to lay both sides next to each other.
 
-## 7. 与设计文档的对应
+## 7. Mapping to the design docs
 
-| 文档（docs/03 v8.8） | 代码 |
+| Doc (`docs/03` v8.8) | Code |
 |---|---|
-| §4 数据模型、ID 单调、事件日志 | `src/db.js` |
-| §5 Path 契约（批准即提交、只从 git 读） | `src/contract.js`、`src/store.js::reqApprove` |
-| §6 R0–R5 判定 | `src/gates.js::taskClose` |
-| §7 归属判定（trailer / patch-id / 时间窗 / scope） | `src/gates.js::decorate/validOwner`、`src/git.js::trailers/patchId` |
-| §8 失败计数与 parked | `src/gates.js::taskClose` finally 块 |
-| §9 Owner 面（九动作） | `src/store.js` + `src/console.js` + `public/index.html` |
-| 控制台随 MCP 自启（对齐 v5） | `src/console-boot.js`、`src/mcp.js::runMcp` |
-| §10 Agent 面（单工具六动作） | `src/mcp.js` |
-| §11 对账与导出 | `src/report.js` |
+| §4 data model, monotonic IDs, event log | `src/db.js` |
+| §5 Path contract (committed on approval, read only from git) | `src/contract.js`, `src/store.js::reqApprove` |
+| §6 R0–R5 evaluation | `src/gates.js::taskClose` |
+| §7 attribution (trailer / patch-id / time window / scope) | `src/gates.js::decorate/validOwner`, `src/git.js::trailers/patchId` |
+| §8 failure counting and parking | `src/gates.js::taskClose` finally block |
+| §9 Owner surface | `src/store.js` + `src/console.js` + `public/index.html` |
+| Console lifecycle tied to MCP (aligned with v5) | `src/console-boot.js`, `src/mcp.js::runMcp` |
+| §10 Agent surface | `src/mcp.js` |
+| §11 Reconciliation and export | `src/report.js` |
 
-## 8. M0-lite 明确没做（不是漏，是这一版不做）
+## 8. Deliberately out of scope (not forgotten — not in this version)
 
-- patch-id 兜底只用于「本任务历史提交被 rebase」的识别，不做跨分支 cherry-pick 的完整归并证明。
-- 新增文件必须在 `task.scope` 里**显式列出**，或由 Path 的 `allow_new_files` 放行；`allow_new_files` 目前只能在建 Path 时设定（控制台没给开关）。
-- 不用 worktree 隔离：内核从不执行你的测试，所以不需要干净副本。
-- 没有审批链、没有租约恢复、没有多 Owner。Owner 是单人。
-- 不做账号体系：控制台没有用户名/密码/多角色。跨机器访问靠「一次性令牌」，不是靠登录；多 Owner 不支持。
-- `amend` 把 Path 打回 `draft` 时，控制台只提示、不提供一键重批按钮（用 `approve` 重建）。
+- patch-id fallback only identifies "this task's own history was rebased"; it is not a full merge proof across branches or cherry-picks.
+- New files must be **explicitly listed** in `task.scope`, or allowed by the Path's `allow_new_files`; `allow_new_files` can only be set when the Path is created (no console toggle).
+- No worktree isolation: the kernel never executes your tests, so it doesn't need a clean copy.
+- No approval chains, no lease recovery, no multiple Owners. One Owner.
+- No account system: no usernames, passwords or roles in the console. Cross-machine access uses a one-shot token, not a login.
+- When `amend` pushes a Path back to `draft`, the console only informs you; there's no one-click re-approve (use `approve`).

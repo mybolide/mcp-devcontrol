@@ -51,7 +51,7 @@ test("hints 里同一个错误码不许写两遍（后一条会静默盖掉前�
 });
 
 test("README 和页面也不许再许下不存在的承诺", () => {
-  for (const rel of ["README.md", "public/index.html"]) {
+  for (const rel of ["README.md", "README.zh-CN.md", "public/index.html"]) {
     const body = read(path.join(ROOT, rel));
     assert.doesNotMatch(body, /r2-wt/, `${rel} 还引用 r2-wt`);
     assert.doesNotMatch(body, /重跑验收|干净检出重跑/, `${rel} 还在说内核重跑`);
@@ -83,6 +83,7 @@ test("没人再说「Owner 的动作只在控制台」——加了 CLI 入口之
     path.join(SRC, "hints.js"),
     path.join(ROOT, "docs/03-discipline-core.md"),
     path.join(ROOT, "README.md"),
+    path.join(ROOT, "README.zh-CN.md"),
     path.join(ROOT, "AGENTS.md"),
   ].filter((f) => fs.existsSync(f));
   for (const f of files) {

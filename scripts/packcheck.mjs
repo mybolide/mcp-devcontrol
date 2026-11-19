@@ -69,6 +69,17 @@ try {
     check(`src/${f} 在包里`, fs.existsSync(path.join(srcDir, f)));
   }
 
+  // README 有两个语言版本，都得进包：只带英文，中文用户装完看不到母语说明；
+  // 只带中文，npm 首页（默认渲染 README.md）上就是一整页中文。
+  const pkgRoot = path.join(app, "node_modules", "mcp-devcontrol");
+  for (const f of ["README.md", "README.zh-CN.md"]) {
+    check(`${f} 在包里`, fs.existsSync(path.join(pkgRoot, f)));
+  }
+  const readmeEn = fs.readFileSync(path.join(pkgRoot, "README.md"), "utf8");
+  const readmeZh = fs.readFileSync(path.join(pkgRoot, "README.zh-CN.md"), "utf8");
+  check("英文版是主（顶部指向中文版）", readmeEn.slice(0, 200).includes("README.zh-CN.md"), readmeEn.slice(0, 120));
+  check("中文版顶部指回英文版", readmeZh.slice(0, 200).includes("README.md"), readmeZh.slice(0, 120));
+
   // ── ② 真实 MCP 握手 ─────────────────────────────────────────────────────
   console.log("\n[2/3] 真实 MCP 客户端");
   const proj = path.join(work, "proj");
