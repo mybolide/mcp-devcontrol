@@ -1064,7 +1064,11 @@ export async function main(argv) {
   try {
     // 没有项目库就别往下走：openDb 会凭空建一个空库，用户看到「0 个任务」
     // 还以为自己初始化过了。init / help / 版本号天然不需要库（T-098）。
-    const NEEDS_DB = new Set(["run", "commit", "renew", "next", "task", "intake", "approve", "ask", "bug", "flow", "close", "status", "bootstrap", "stats", "report", "memory", "doctor", "evidence", "doc", "release", "export", "serve", "mcp"]);
+    //
+    // **`mcp` 不在这个名单里**：它自己会初始化（T-139）。把它放进来，
+    // MCP 客户端连未初始化的项目时会先被这里拒掉，自动初始化永远跑不到——
+    // 而 runMcp 里的自动初始化、bootstrap 的 autoInit 全都是为了这条路。
+    const NEEDS_DB = new Set(["run", "commit", "renew", "next", "task", "intake", "approve", "ask", "bug", "flow", "close", "status", "bootstrap", "stats", "report", "memory", "doctor", "evidence", "doc", "release", "export", "serve"]);
     if (NEEDS_DB.has(cmd)) {
       const root = resolveRoot();
       if (!fs.existsSync(dbPath(root))) {

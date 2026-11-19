@@ -113,10 +113,15 @@ export async function dispatch(db, root, args, ctx = {}) {
       // ctx.autoInit：MCP 连上时替它做过的初始化。必须让 Agent 看到——
       // 否则它不知道自己是「接手一个已配置的项目」还是「刚被建出来的空项目」，
       // 而这两种情况它该做的事完全不同（前者写码，后者先让 Owner 批准 Path）。
+      //
+      // 只报一次：第二次 bootstrap 时项目早就初始化好了，再喊一遍是在骗人
+      // （Agent 会以为它每次连上都把项目重建了一遍）。
+      const autoInitOnce = ctx.autoInit ?? null;
+      if (ctx.autoInit) ctx.autoInit = null;
       return bootstrap(db, root, {
         console: ctx.consoleUrl ? await ctx.consoleUrl() : null,
         memories: memory.memories,
-        autoInit: ctx.autoInit ?? null,
+        autoInit: autoInitOnce,
       });
     }
     case "wait":
@@ -226,7 +231,7 @@ export function createServer({ db, root, consoleUrl, autoInit = null }) {
     },
     async (args, extra) => {
       try {
-        const result = await dispatch(db, root, args, { consoleUrl, signal: extra?.signal });
+        const result = await dispatch(db, root, args, { consoleUrl, autoInit, signal: extra?.signal });
         return { content: [{ type: "text", text: compact(result) }] };
       } catch (error) {
         // 记一笔拒绝：stats 的「被拦」靠它。CLI 那边走 failCli，这边是唯一入口。

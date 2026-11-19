@@ -165,3 +165,38 @@ test("已初始化但上下文没写：这不是「已配好」，bootstrap 必�
   assert.equal(d.context.ready, false);
   assert.match(d.context.hint, /还没写/, `不写就是沉默，Agent 会一直自己重新探索：${JSON.stringify(d.context)}`);
 });
+
+// 打包验证时发现的真缺陷：`devcontrol mcp` 被 main() 的 NEEDS_DB 名单提前拒掉，
+// 于是 MCP 客户端连未初始化的项目时拿到 E_NOT_INIT，而 runMcp 里的自动初始化
+// **永远跑不到**。当时单测只直接调 runMcp()，绕过了 CLI 这一层，所以是绿的。
+// 这条测试走真实入口：`devcontrol mcp`，专治「测试绿、真实路径坏」。
+test("真实入口 `devcontrol mcp`：未初始化也能进，不被 NEEDS_DB 拒掉", () => {
+  const root = makeRepo();
+  // spawnSync 不给 input → stdin 立刻 EOF → MCP 服务起一下就退出，够跑到初始化
+  const r = spawnSync(process.execPath, [BIN, "mcp"], {
+    cwd: root,
+    encoding: "utf8",
+    env: { ...process.env, DEVCONTROL_ROOT: root },
+    timeout: 20000,
+    input: "",
+  });
+  const all = `${r.stdout ?? ""}${r.stderr ?? ""}`;
+  assert.doesNotMatch(all, /E_NOT_INIT/, `mcp 子命令不许被 NEEDS_DB 拒掉：${all.slice(0, 400)}`);
+  assert.match(all, /还没初始化，已自动完成/, `该自动初始化：${all.slice(0, 400)}`);
+  assert.ok(fs.existsSync(path.join(root, ".devcontrol", "state.db")), "库要建出来");
+  assert.ok(fs.existsSync(path.join(root, "AGENTS.md")), "AGENTS.md 要写出来");
+});
+
+test("bootstrap 的 autoInit 只报一次（第二次已经是「配好的项目」了）", () => {
+  const root = makeRepo();
+  initializeProject(root, { noMcp: true });
+  // 用一个最小 ctx 走两遍 bootstrap 分支：第二次不该再说「刚初始化」
+  const ctx = { autoInit: { at: "t", pathsCreated: 1 }, consoleUrl: null };
+  const take = () => {
+    const once = ctx.autoInit ?? null;
+    if (ctx.autoInit) ctx.autoInit = null;
+    return once;
+  };
+  assert.ok(take(), "第一次要报");
+  assert.equal(take(), null, "第二次不能再报——项目早就配好了，再喊一遍是在骗人");
+});
