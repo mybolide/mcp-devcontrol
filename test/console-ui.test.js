@@ -37,6 +37,19 @@ test("表单弹层提供了字段、校验与计数", () => {
   assert.match(src, /showModal\(\)/);
 });
 
+test("需求收件箱允许复用已批准的 Path，并对重新绑定二次确认", () => {
+  const inbox = script.slice(script.indexOf("function renderInbox("), script.indexOf("function renderTasks("));
+  assert.ok(inbox.includes('.filter((p) => !p.requirement_id || p.status === "approved")'), "草稿需求必须能看到未绑定 Path 和已批准 Path");
+  assert.ok(inbox.includes('data-rebind="${rebind ? "true" : "false"}"'), "复用操作必须显式标记重新绑定");
+  assert.ok(inbox.includes("批准后将重新绑定到"), "界面必须说明 Path 会重新绑定到新需求");
+  assert.ok(inbox.includes("冻结命令："), "批准前仍要展示将冻结的验收命令");
+
+  const approve = script.slice(script.indexOf("if (b.dataset.approve)"), script.indexOf("if (b.dataset.abandon)"));
+  assert.ok(approve.includes('b.dataset.rebind === "true"'), "只有复用 Path 才触发额外确认");
+  assert.ok(approve.includes("confirmSheet("), "重新绑定必须二次确认");
+  assert.ok(approve.indexOf("confirmSheet(") < approve.indexOf('owner("approve"'), "确认之前不能提交审批动作");
+});
+
 test("放行、打回、改预算三个动作都走表单，且放行带二次确认", () => {
   const override = script.slice(script.indexOf('if (b.dataset.override)'));
   const reopen = script.slice(script.indexOf('if (b.dataset.reopen)'), script.indexOf('if (b.dataset.override)'));

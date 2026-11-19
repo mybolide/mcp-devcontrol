@@ -653,18 +653,25 @@
       function renderInbox(s) {
         const cards = [];
         for (const r of s.requirements.filter((x) => x.status === "draft")) {
-          // 批准前必须看到会冻结哪些验收命令：否则等于盲签（仓库里的 test 脚本会被当命令执行）
+          // Path 是文件范围 + 冻结命令，可以跨需求复用。已绑定的 Path 也要展示，
+          // 但必须明确告诉 Owner 这次批准会把它重新绑定到当前需求。
           const paths = s.paths
-            .filter((p) => !p.requirement_id)
+            .filter((p) => !p.requirement_id || p.status === "approved")
             .map((p) => {
               const cmds = (p.testCmds || []).map((c) => `<code>${esc(c)}</code>`).join(" ");
-              return `<div style="margin-bottom:6px"><button class="btn primary" data-approve="${r.id}" data-path="${p.id}">批准 + ${esc(p.id)}</button>
-                <div class="mu" style="margin-top:4px">冻结命令：${cmds || `<span style="color:var(--warn)">（空，close 会无命令可跑）</span>`}</div></div>`;
+              const rebind = Boolean(p.requirement_id && p.requirement_id !== r.id);
+              const label = rebind ? `复用 ${p.id} 并批准` : `批准 + ${p.id}`;
+              const boundReq = rebind ? s.requirements.find((x) => x.id === p.requirement_id) : null;
+              const binding = rebind
+                ? `<div class="mu" style="margin-top:4px;color:var(--warn)">当前关联：${esc(p.requirement_id)}${boundReq ? ` · ${esc(boundReq.title)}` : ""}。批准后将重新绑定到 ${esc(r.id)}。</div>`
+                : "";
+              return `<div style="margin-bottom:6px"><button class="btn primary" data-approve="${r.id}" data-path="${p.id}" data-rebind="${rebind ? "true" : "false"}">${label}</button>
+                <div class="mu" style="margin-top:4px">冻结命令：${cmds || `<span style="color:var(--warn)">（空，close 会无命令可跑）</span>`}</div>${binding}</div>`;
             })
             .join("");
           cards.push(`<div class="card req"><strong>${esc(r.id)} ${esc(r.title)}</strong>
             <div class="mu">待批准需求 · ${r.acceptance.length} 条验收</div>
-            <div class="row wrap">${paths || `<span class="mu">没有可绑定的 Path 草稿</span>`}</div></div>`);
+            <div class="row wrap">${paths || `<span class="mu">没有可用的 Path</span>`}</div></div>`);
         }
         for (const q of s.questions.filter((x) => x.status === "open")) {
           cards.push(`<div class="card q"><strong>${esc(q.id)} ${esc(q.question)}</strong>
@@ -993,7 +1000,17 @@
               : { type: "requirement", title: $("title").value, goal: $("detail").value, acceptance: [$("assertion").value || "npm test :: exit==0"] };
           return owner("intake", payload);
         }
-        if (b.dataset.approve) return owner("approve", { requirementId: b.dataset.approve, pathId: b.dataset.path });
+        if (b.dataset.approve) {
+          if (b.dataset.rebind === "true") {
+            const pathId = b.dataset.path;
+            const requirementId = b.dataset.approve;
+            const pth = lastState?.paths?.find((p) => p.id === pathId);
+            const currentReq = lastState?.requirements?.find((r) => r.id === pth?.requirement_id);
+            const desc = `这条 Path 当前关联 ${pth?.requirement_id ?? "其他需求"}${currentReq ? `（${currentReq.title}）` : ""}。批准后会把 Path 重新绑定到 ${requirementId}；原需求的批准状态不变，文件范围、预算和验收命令沿用。`;
+            if (!(await confirmSheet(`确认复用 ${pathId}？`, desc, "复用并批准"))) return;
+          }
+          return owner("approve", { requirementId: b.dataset.approve, pathId: b.dataset.path });
+        }
         if (b.dataset.abandon) {
           // 作废会连带放弃任务，属于不可逆动作：走表单 + 二次确认，理由至少 12 字（和内核一致）
           const r = await openSheet({
