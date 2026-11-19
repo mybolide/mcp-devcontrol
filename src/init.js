@@ -160,6 +160,10 @@ export function initializeProject(root, opts = {}) {
     ".devcontrol/runs/",
     ".devcontrol/console.lock",
     ".devcontrol/console.json",
+    // 填写计划是 init 生成的中间产物（Agent 写完就删），不该进仓库。
+    // 不进 ignore 的话 `git status` 会一直挂着一条 ?? —— 人每天看到它，
+    // 迟早会手滑提交进去。
+    ".devcontrol/context-plan.md",
   ]);
   appendLines(root, ".gitattributes", ["* text=auto eol=lf"]);
 

@@ -357,3 +357,35 @@ test("E_CONTEXT_UNREVIEWED 不记返工轮次，补一句话就能过", async ()
   const res = await taskClose(db, root, { id, contextNote: "src/billing 是新模块，已补进 architecture.md" });
   assert.equal(res.closedBy, "evidence", `带一句话就该过：${JSON.stringify(res).slice(0, 200)}`);
 });
+
+// 打包验证时抓到的真缺陷：模板自己编造项目事实。
+// 早先 how-to-add-endpoint 骨架里写着「新错误码不加映射会静默变 500」——
+// 但真项目里未登记的码是变 400，根本没有 500 分支。**模板教人不要编造，自己却在编造**，
+// 而 Agent 会照抄，写出一份带假事实的规范（比没有规范更糟：它有权威的样子）。
+test("模板不许替项目下结论：断言性句子要么带占位符，要么明说是例子", async () => {
+  const { skeletonFor } = await import("../src/context-templates.js");
+  const files = [
+    ["how-to-add-endpoint.md", "backend-api"],
+    ["architecture.md", "library"],
+    ["data-model.md", "library"],
+    ["error-handling.md", "library"],
+    ["how-to-test.md", "library"],
+    ["how-to-add-function.md", "library"],
+  ];
+  // 具体的状态码断言是最典型的「替项目下结论」——项目到底怎么映射，只有代码知道
+  const forbidden = [/\b500\b/, /\b502\b/, /\b409\b/];
+  for (const [file, shape] of files) {
+    const sk = skeletonFor(file, shape);
+    assert.ok(sk, `${file} 该有骨架`);
+    for (const re of forbidden) {
+      assert.doesNotMatch(sk, re, `${file} 里不许写死状态码（${re}）——那是项目事实，只有代码能定`);
+    }
+  }
+});
+
+test("模板的硬要求「不许编造」和模板自身行为一致", async () => {
+  const { skeletonFor } = await import("../src/context-templates.js");
+  const sk = skeletonFor("how-to-add-endpoint.md", "backend-api");
+  // 该提醒「容易漏」，但不该替它说漏了会怎样
+  assert.match(sk, /自己读出来/, "要要求它去读代码，而不是给结论");
+});
