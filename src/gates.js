@@ -18,7 +18,7 @@ import {
 } from "./store.js";
 import { contractCommands, parseAssertion, readContract } from "./contract.js";
 import { fingerprint, inScope, sha256 } from "./fingerprint.js";
-import { assertScopeInsideRepo } from "./scope.js";
+import { assertScopeInsideRepo, assertScopeIsSpecific, suggestScope } from "./scope.js";
 import { addedFiles, git, head, isAncestor, logCommits, numstat, patchId, statusPorcelain, trailers } from "./git.js";
 import { evaluate } from "./exec.js";
 import { generalizeHint, memoryConfig, rememberTaskPitfall } from "./memory.js";
@@ -125,8 +125,18 @@ export function taskCreate(db, root, input, actor = "agent") {
     const p = getPath(db, input.pathId);
     if (!p || p.status !== "approved") fail("E_NEED_APPROVED", `Path ${input.pathId} 未批准`);
     const body = contractOf(db, root, p);
-    const scope = Array.isArray(input.scope) && input.scope.length ? input.scope : p.allowedPaths;
+    // 没给 scope 就按 Path 折一个具体的（Path 授权整个仓库时折成顶层目录）。
+    // 绝不把 Path 的上限直接当成任务的 scope——那正是「另起一套也拦不住」的根源（T-130）。
+    const scope = Array.isArray(input.scope) && input.scope.length ? input.scope : suggestScope(root, p.allowedPaths);
+    if (!scope.length) {
+      fail("E_CONTRACT", "没法给任务定 scope：仓库里没有可指定的目录", {
+        hint: "用 --scope 明确列出这次要动的文件或目录，比如 --scope src/index.js",
+      });
+    }
     assertScopeInsideRepo(scope);
+    // scope 是整个仓库 = 没有 scope。这一步必须在 within() 之前：否则 Agent 会先被
+    // 「超出 Path 允许范围」教育一遍，再回来把 scope 写成 `.` 绕过去（T-130）。
+    assertScopeIsSpecific(scope);
     within(scope, body.allowedPaths);
     const acceptance = (input.acceptance ?? []).map((a) =>
       typeof a === "string" ? { deriveFrom: 0, assertion: a } : { deriveFrom: a.deriveFrom ?? 0, assertion: a.assertion },

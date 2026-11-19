@@ -80,11 +80,14 @@ test("init 生成的 .gitignore 含依赖与构建产物（新项目不用自己
   }
 });
 
-test("scope 写成 \".\"：装完依赖再 commit，node_modules 不会被提交进仓库", () => {
+// T-130 之后 `.` 不再是合法 scope（等于没有 scope），但「依赖与构建产物不进仓库」
+// 这条底线必须继续成立。这里改成具体目录，语义上仍是「整仓」：这个用例要验的是
+// vendor 防护，不是 scope 边界。
+test("scope 覆盖全部顶层目录：装完依赖再 commit，node_modules 不会被提交进仓库", () => {
   const root = makeRepo();
   dc(root, "init", "--no-mcp");
   dropVendorIgnores(root); // 模拟项目没写 .gitignore：只能靠内核自己拦
-  const { db, task: t } = flow(root, { scope: ["."] });
+  const { db, task: t } = flow(root, { scope: ["src", "test"] });
   db.close();
   dc(root, "task", "claim", t.id);
 

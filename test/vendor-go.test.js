@@ -53,7 +53,8 @@ test("init 给 Go 项目写 bin/ 到 .gitignore；npm 项目不写", () => {
 test("Go 项目建任务不给 --accept 时，默认用契约里的第一条命令", async () => {
   const root = makeGoRepo();
   const { db } = initFlow(root, { testCmd: "go test ./...", allowed: ["."] });
-  const r = cli(root, "task", "create", "--req", "FR-001", "--path", "P-001", "--title", "不给验收", "--scope", ".");
+  // 不带 --scope：顺便验证默认 scope 会折成具体目录（T-130），不会再是 `.`
+  const r = cli(root, "task", "create", "--req", "FR-001", "--path", "P-001", "--title", "不给验收");
   assert.equal(r.status, 0, `建任务失败：${r.stdout}${r.stderr}`);
   const row = db.prepare("SELECT acceptance_json FROM tasks WHERE title=?").get("不给验收");
   const [a] = JSON.parse(row.acceptance_json);
@@ -69,10 +70,12 @@ test("npm 项目不给 --accept 时，默认仍是 npm test（没被改坏）", 
   assert.equal(JSON.parse(row.acceptance_json)[0].assertion, "npm test :: exit==0");
 });
 
-test("Go 项目 scope=. 时，commit 不会把 bin/ 里的二进制带进仓库", () => {
+// T-130 之后 `.` 不再是合法 scope。这里改成顶层目录，语义上仍是全仓——
+// 本用例要验的是「构建产物不进仓库」，不是 scope 边界。
+test("Go 项目 scope 覆盖顶层目录时，commit 不会把 bin/ 里的二进制带进仓库", () => {
   const root = makeGoRepo();
   const { db } = initFlow(root, { testCmd: "go test ./...", allowed: ["."] });
-  const t = newTask(db, root, "FR-001", { title: "改 main", scope: ["."], acceptance: [{ deriveFrom: 0, assertion: "go test ./... :: exit==0" }] });
+  const t = newTask(db, root, "FR-001", { title: "改 main", scope: ["cmd"], acceptance: [{ deriveFrom: 0, assertion: "go test ./... :: exit==0" }] });
   taskClaim(db, root, { id: t.id }, "go-agent");
 
   // 构建产物 + 一处真源码改动

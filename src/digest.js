@@ -4,6 +4,7 @@ import { git, head } from "./git.js";
 import { metaGet } from "./db.js";
 import { releaseSummary } from "./release.js";
 import { cliCommand } from "./nextcmd.js";
+import { suggestScope } from "./scope.js";
 
 /**
  * 需求覆盖度：每条需求验收有没有任务在管。
@@ -190,7 +191,9 @@ export function bootstrap(db, root, extra = {}) {
           pathId: pth.id,
           kind: "feature",
           title: `覆盖验收：${gap.missing[0].text}`,
-          scope: pth.allowedPaths,
+          // 不能直接把 Path 的 allowedPaths 塞进 next.args：Path 授权整个仓库时它是 `.`，
+          // 照抄就会把 scope 写成整个仓库——而内核现在会拒（T-130）。
+          scope: suggestScope(root, pth.allowedPaths),
           acceptance: [{ deriveFrom: gap.missing[0].idx, assertion: gap.missing[0].text }],
         },
         why: `需求 ${gap.id} 还有 ${gap.missing.length} 条验收没有任务覆盖：${gap.missing[0].text}`,
