@@ -90,3 +90,21 @@ test("没有待批需求时，approve 说清下一步该做什么", () => {
   assert.match(out.stderr, /devcontrol intake/, "空手时该告诉人先收一条");
   assert.doesNotMatch(out.stderr, /照抄这条/, "没有可用需求时别硬编一条命令");
 });
+
+// 下面两条是 dogfood 里真撞出来的：hint 说清了「哪里错了」，没说「怎么救」。
+// 前者会让人去 git reset 重做（把已验证的代码扔掉），后者必然多跑一轮测试。
+test("E_UNOWNED_COMMIT 的提示给出补救命令，不只是「下次别这样」", async () => {
+  const { hintFor } = await import("../src/hints.js");
+  const hint = hintFor({ code: "E_UNOWNED_COMMIT" });
+  assert.match(hint, /--amend/, `没给补救办法，人只能 reset 重做：${hint}`);
+  assert.match(hint, /Task-Id:/, "补救命令缺了要补的那一行");
+  assert.match(hint, /DevControl-Base:/, "补救命令缺了 base_head 那一行");
+  assert.doesNotMatch(hint, /reset --hard/, "别把人往丢弃改动的路上带");
+});
+
+test("E_CONTEXT_UNREVIEWED 的提示说清「补完上下文要重跑」，否则必然多撞一次证据过期", async () => {
+  const { hintFor } = await import("../src/hints.js");
+  const hint = hintFor({ code: "E_CONTEXT_UNREVIEWED" });
+  assert.match(hint, /devcontrol run/, `没说补完要重跑，人补完文档会撞 E_EVIDENCE_STALE：${hint}`);
+  assert.match(hint, /contextNote/, "没说要带 contextNote");
+});
