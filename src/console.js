@@ -1,5 +1,6 @@
 // devcontrol — Owner 控制台（本地 web，127.0.0.1，Owner 动作只在这里）
 import http from "node:http";
+import { createHmac, timingSafeEqual } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -40,6 +41,7 @@ import { resolveRoot } from "./cli.js";
 import { sha256 } from "./fingerprint.js";
 import { weekly, verdict } from "./weekly.js";
 import { listReleases, shipRelease } from "./release.js";
+import { resolveOwnerChat } from "./owner-chat.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(HERE, "..", "public");
@@ -200,6 +202,38 @@ export async function startConsole(args) {
    * （仍然保留的是 Host 白名单：它零成本，且挡的是 DNS rebinding 这类不需要你配合的攻击。）
    */
   const token = process.env.DEVCONTROL_OWNER_TOKEN ?? null;
+  // 供不同聊天 Host 使用的独立密钥。只能交给可信的「真人消息入口」，
+  // 绝不下发给模型、Agent 工具或浏览器。未配置时远程对话审批彻底关闭。
+  const chatSecret = String(process.env.DEVCONTROL_CHAT_APPROVAL_SECRET ?? "");
+  const chatBridgeEnabled = chatSecret.length >= 32;
+  const seenChatMessages = new Map();
+  async function readSmallJson(req, maxBytes = 8192) {
+    let chunks = [];
+    let length = 0;
+    let tooLarge = false;
+    for await (const chunk of req) {
+      if (tooLarge) continue;
+      length += chunk.length;
+      if (length > maxBytes) { tooLarge = true; chunks = []; continue; }
+      chunks.push(chunk);
+    }
+    if (tooLarge) return { error: { status: 413, code: "E_FORBIDDEN", message: "请求体过大" } };
+    const raw = Buffer.concat(chunks).toString("utf8");
+    try {
+      const value = JSON.parse(raw);
+      if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("需要 JSON 对象");
+      return { raw, value };
+    } catch {
+      return { error: { status: 400, code: "INVALID_ARGUMENT", message: "body 必须是 JSON 对象" } };
+    }
+  }
+  function verifySignedChat(req, raw) {
+    const stamp = String(req.headers["x-devcontrol-chat-time"] ?? "");
+    const sig = String(req.headers["x-devcontrol-chat-signature"] ?? "").replace(/^sha256=/, "");
+    if (!chatBridgeEnabled || !/^\d{13}$/.test(stamp) || Math.abs(Date.now() - Number(stamp)) > 120_000 || !/^[a-f0-9]{64}$/i.test(sig)) return false;
+    const expected = createHmac("sha256", chatSecret).update(`${stamp}.${raw}`).digest();
+    return timingSafeEqual(expected, Buffer.from(sig, "hex"));
+  }
   // 允许的 Host：回环永远允许；绑了局域网就把本机各网卡 IP 一起放进来（挡 DNS rebinding 用）
   const allowedHosts = new Set();
   {
@@ -334,6 +368,62 @@ export async function startConsole(args) {
         releases: listReleases(adb),
         weekly: { ...w, verdict: verdict(w) },
       });
+    }
+    // 无执行能力的意图预览。控制台可说「批准」，但必须向 Owner 展示待冻的
+    // 需求/Path/验收，再使用现有 /api/owner 完成动作。
+    if (req.method === "POST" && url.pathname === "/api/chat/preview") {
+      const denied = guard(req);
+      if (denied) return json(denied.code, denied.body);
+      const body = await readSmallJson(req);
+      if (body.error) return json(body.error.status, { ok: false, code: body.error.code, message: body.error.message });
+      const active = pickProject(body.value.project);
+      if (!active) return json(400, { ok: false, code: "INVALID_ARGUMENT", message: "未知 project" });
+      const adb = freshDb(active);
+      return json(200, { ok: true, ...resolveOwnerChat(body.value.message, { requirements: listReqs(adb), paths: listPaths(adb) }) });
+    }
+    // 与模型厂商无关的可信聊天桥：只有拿到独立 HMAC 密钥的 Host 后台，
+    // 才能提交它验证过的真人消息。模型/Agent 本身不能调用 Owner 动作。
+    // 「批准」若未指明目标，必须带签名的会话上下文（明确需求和 Path）。
+    if (req.method === "POST" && url.pathname === "/api/chat/owner-message") {
+      const peer = String(req.socket.remoteAddress ?? "");
+      if (!/^(127\.\d+\.\d+\.\d+|::1|::ffff:127\.\d+\.\d+\.\d+)$/i.test(peer) ||
+          !hostAllowed(req.headers.host) || req.headers.origin ||
+          !String(req.headers["content-type"] ?? "").includes("application/json")) {
+        return json(403, { ok: false, code: "E_FORBIDDEN", message: "聊天桥只接受本机可信 Host 的 JSON 请求" });
+      }
+      const body = await readSmallJson(req);
+      if (body.error) return json(body.error.status, { ok: false, code: body.error.code, message: body.error.message });
+      if (!verifySignedChat(req, body.raw)) return json(403, { ok: false, code: "E_FORBIDDEN", message: "聊天桥未启用或消息签名无效/已过期" });
+      const p = body.value;
+      if (p.authorRole !== "owner" || typeof p.eventId !== "string" || !/^[a-zA-Z0-9_:\-]{8,128}$/.test(p.eventId) ||
+          typeof p.connector !== "string" || !/^[a-z0-9_-]{2,32}$/i.test(p.connector) ||
+          typeof p.project !== "string" || !p.project) {
+        return json(400, { ok: false, code: "INVALID_ARGUMENT", message: "只接受可信 Host 验证的真人 Owner 消息；必须提供 eventId、connector 和 project" });
+      }
+      // 绑定 eventId 与具体审批目标；重复投递不触发第二次重绑。
+      if (seenChatMessages.has(p.eventId)) return json(409, { ok: false, code: "E_REPLAY", message: "这条真人消息已处理，不可重放" });
+      const active = pickProject(p.project);
+      if (!active) return json(400, { ok: false, code: "INVALID_ARGUMENT", message: "未知 project" });
+      const adb = freshDb(active);
+      const intent = resolveOwnerChat(p.message, {
+        requirements: listReqs(adb),
+        paths: listPaths(adb),
+        context: p.context && typeof p.context === "object" && !Array.isArray(p.context) ? p.context : {},
+        trustedContext: true,
+      });
+      if (intent.kind !== "approve") return json(200, { ok: false, kind: intent.kind, message: intent.text });
+      // 记录在请求执行前，杜绝同一消息并发重入；状态失败时仍需新的人类消息才能重试。
+      seenChatMessages.set(p.eventId, Date.now());
+      for (const [key, at] of seenChatMessages) if (Date.now() - at > 600_000) seenChatMessages.delete(key);
+      try {
+        const result = await OWNER_ACTIONS.approve(adb, active.root, {
+          requirementId: intent.requirementId, pathId: intent.pathId,
+          channel: `chat:${p.connector.toLowerCase()}`,
+        });
+        return json(200, { ok: true, kind: "approved", result });
+      } catch (error) {
+        return json(200, { ok: false, code: error.code ?? "E_INTERNAL", message: error.message, data: error.data ?? null });
+      }
     }
     if (req.method === "POST" && url.pathname === "/api/owner") {
       const denied = guard(req);

@@ -24,6 +24,18 @@ test("控制台不再用 prompt()/alert()/confirm()：这些都没有校验和�
   );
 });
 
+test("Owner 对话框使用预览 + 人工确认 + 既有 Owner action，不直接让 Agent 审批", () => {
+  assert.match(src, /id="owner-chat-text"/);
+  assert.match(src, /id="owner-chat-send"/);
+  assert.match(src, /id="owner-chat-log"/);
+  const chat = script.slice(script.indexOf("async function ownerChatSend("), script.indexOf("function openSheet("));
+  assert.ok(chat.includes('api("/api/chat/preview"'), "只能先预览");
+  assert.ok(chat.includes("confirmSheet("), "提交前必须进行明确确认");
+  assert.ok(chat.includes('owner("approve"'), "调用原审批动作，不复制门禁内核");
+  assert.ok(chat.indexOf("confirmSheet(") < chat.indexOf('owner("approve"'), "先确认再审批");
+  assert.ok(chat.includes('channel: "console-chat"'), "审批留痕必须区分控制台聊天");
+});
+
 test("表单弹层提供了字段、校验与计数", () => {
   for (const fn of ["function openSheet(", "function confirmSheet("]) {
     assert.ok(script.includes(fn), `缺少 ${fn}`);
