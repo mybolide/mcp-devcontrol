@@ -1,12 +1,14 @@
 {
   "pathId": "P-001",
-  "requirementId": "FR-058",
+  "requirementId": "FR-001",
   "allowedPaths": [
-    "bin"
+    "."
   ],
   "allowNewFiles": false,
   "testCmds": [
-    "npm test"
+    "npm test",
+    "npm run build",
+    "npm run packcheck"
   ],
   "budgetLines": 1200,
   "standards": {
