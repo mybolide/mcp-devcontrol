@@ -6,6 +6,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import { fileURLToPath } from "node:url";
 
 const read = (rel) => fs.readFileSync(new URL(rel, import.meta.url), "utf8");
 
@@ -75,7 +76,9 @@ test("没有地方再写死动作的个数（全仓扫描，不只 README）", a
   // 注意：别误伤「第一个动作必须是 bootstrap」这种正常的序数用法。
   const fsx = await import("node:fs");
   const path = await import("node:path");
-  const rootDir = new URL("..", import.meta.url).pathname;
+  // URL.pathname 在 Windows 会保留 /E:/ 前导斜杠，path.join 会把它再拼成 E:\\E:\\...
+  // 用 fileURLToPath 还原原生盘符路径，确保 Windows 与 POSIX 都扫描同一目录。
+  const rootDir = fileURLToPath(new URL("..", import.meta.url));
   const bad = /\b\d+\s*个动作|十[一二三四五六七八九]?个动作|二十个动作/;
   const hits = [];
 

@@ -82,6 +82,7 @@ devcontrol close                → 核对证据并收口。它不跑测试
 | `bootstrap` | 从这里开始。返回 `next`（内核排好的下一件事）、待回答的问题、控制台地址 |
 | `wait` | 内核说等，只看当前状态 |
 | `task.work` | 该你干活了，返回四步顺序 |
+| `path.create` | 创建待 Owner 审批的 Path 草案（不授予写权限） |
 | `task.create` | 拆任务（范围、验收、依赖） |
 | `task.claim` | 领任务（45 分钟租约，一次一个） |
 | `task.renew` | 长任务续租 |
@@ -99,6 +100,7 @@ devcontrol close                → 核对证据并收口。它不跑测试
 
 ```bash
 devcontrol status                 # = bootstrap
+devcontrol path create --req FR-003 --allow docs/a.js --allow-new-files --budget 600 --test "node --test test/a.test.js"  # 只建草案，Owner 审批后才生效
 devcontrol run -- npm test        # 跑一次并留证据
 devcontrol commit -m "feat: ..."  # 提交范围内的文件
 devcontrol close                  # 核对并收口

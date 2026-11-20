@@ -83,17 +83,21 @@ test("打不上 tag 就不算发布：E_RELEASE_TAG，状态仍留在 building",
   const r = createRelease(db, { title: "v3" });
   planRelease(db, { id: r.id, tasks: [t1.id] });
   await finish(db, root, t1);
-  // 让 git 写不进 tag：.git/refs/tags 设成只读
+  // 用一个普通文件占住 refs/tags 目录名，保证 Windows / POSIX 都无法创建 tag。
+  // chmod(0500) 在 Windows 上不阻止写入，旧测试会误以为 tag 失败路径已覆盖。
   const tagsDir = path.join(root, ".git", "refs", "tags");
-  fs.mkdirSync(tagsDir, { recursive: true });
-  fs.chmodSync(tagsDir, 0o500);
+  const backup = `${tagsDir}.blocked-backup`;
+  fs.mkdirSync(path.dirname(tagsDir), { recursive: true });
+  if (fs.existsSync(tagsDir)) fs.renameSync(tagsDir, backup);
+  fs.writeFileSync(tagsDir, "blocked");
   try {
     assert.throws(
       () => shipRelease(db, { id: r.id, root }),
       (e) => e.code === "E_RELEASE_TAG",
     );
   } finally {
-    fs.chmodSync(tagsDir, 0o700);
+    fs.rmSync(tagsDir, { force: true });
+    if (fs.existsSync(backup)) fs.renameSync(backup, tagsDir);
   }
   assert.equal(getRelease(db, r.id).status, "building", "没打上 tag 就不能标记已发布");
 });

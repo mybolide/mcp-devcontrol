@@ -11,6 +11,14 @@
 
 export const CAPABILITIES = [
   {
+    name: "创建 Path 草案",
+    // Agent 可以准备范围提案，但不能批准它或因此获得文件写权限。
+    action: "path.create",
+    mcp: ["requirementId", "allowedPaths", "allowNewFiles", "budgetLines", "testCmds"],
+    cli: { sub: "path create", flags: ["req", "allow", "allow-new-files", "budget", "test"] },
+    console: null,
+  },
+  {
     name: "建任务",
     action: "task.create",
     // MCP 参数名（zod schema 的字段）

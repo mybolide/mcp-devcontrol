@@ -39,6 +39,14 @@ const bad = (name, detail) => {
 const check = (name, cond, detail) => (cond ? ok(name) : bad(name, detail));
 const sh = (cwd, cmd, args, opts = {}) =>
   spawnSync(cmd, args, { cwd, encoding: "utf8", timeout: 180000, ...opts });
+// npm lifecycle exposes the exact CLI entrypoint. Calling `npm` as a binary
+// works on POSIX, but Windows resolves npm.cmd (not an executable) and
+// spawnSync(..., shell:false) returns ENOENT with no stdout/stderr. Re-enter
+// npm through the current Node process so packcheck behaves the same on both.
+const npmCli = process.env.npm_execpath;
+const npmRun = (cwd, args) => npmCli
+  ? sh(cwd, process.execPath, [npmCli, ...args])
+  : sh(cwd, process.platform === "win32" ? "npm.cmd" : "npm", args, process.platform === "win32" ? { shell: true } : {});
 
 const work = fs.mkdtempSync(path.join(os.tmpdir(), "dc-packcheck-"));
 console.log(`打包自检 · 版本 ${VERSION}`);
@@ -47,7 +55,7 @@ console.log(`临时目录 ${work}\n`);
 try {
   // ── ① 打包 ──────────────────────────────────────────────────────────────
   console.log("[1/3] 分发件");
-  const packed = sh(REPO, "npm", ["pack", "--pack-destination", work]);
+  const packed = npmRun(REPO, ["pack", "--pack-destination", work]);
   if (packed.status !== 0) throw new Error(`npm pack 失败：${packed.stderr || packed.stdout}`);
   const tgz = fs.readdirSync(work).find((f) => f.endsWith(".tgz"));
   check("npm pack 产出 tgz", Boolean(tgz), "找不到 .tgz");
@@ -55,7 +63,7 @@ try {
   const app = path.join(work, "app");
   fs.mkdirSync(app, { recursive: true });
   fs.writeFileSync(path.join(app, "package.json"), JSON.stringify({ name: "packcheck-app", version: "1.0.0", private: true }));
-  const installed = sh(app, "npm", ["install", path.join(work, tgz), "--no-audit", "--no-fund"]);
+  const installed = npmRun(app, ["install", path.join(work, tgz), "--no-audit", "--no-fund"]);
   check("装进空目录", installed.status === 0, installed.stderr);
 
   const cli = path.join(app, "node_modules", "mcp-devcontrol", "bin", "devcontrol.js");
@@ -121,6 +129,14 @@ await c.close();
   } catch {
     out = null;
   }
+  // MCP bootstrap owns a detached per-project console. Stop that exact
+  // instance before deleting the temporary project; otherwise Windows keeps
+  // its SQLite handle open and rmSync reports EBUSY.
+  if (out?.boot1?.console) {
+    const consolePort = new URL(out.boot1.console).port || "7373";
+    const stopped = sh(proj, process.execPath, [cli, "serve", "--port", consolePort, "--stop"]);
+    check("MCP 自动启动的控制台可正常停止", stopped.status === 0, stopped.stderr || stopped.stdout);
+  }
   check("MCP 握手成功并返回 JSON", Boolean(out), `stdout: ${client.stdout.slice(0, 300)}\nstderr: ${client.stderr.slice(0, 500)}`);
   if (out) {
     check("工具列表是 devcontrol", out.tools?.includes("devcontrol"), JSON.stringify(out.tools));
@@ -165,7 +181,7 @@ await c.close();
   bad("自检过程中抛错", error?.stack ?? String(error));
 } finally {
   if (KEEP) console.log(`\n（保留临时目录：${work}）`);
-  else fs.rmSync(work, { recursive: true, force: true });
+  else fs.rmSync(work, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 }
 
 console.log(`\n${failures.length ? "✖" : "✔"} 打包自检：${pass} 项通过，${failures.length} 项失败`);

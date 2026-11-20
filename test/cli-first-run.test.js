@@ -12,6 +12,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { openDb } from "../src/db.js";
 import { makeRepo, BIN } from "./helpers.js";
 
 function cli(root, ...args) {
@@ -127,13 +128,11 @@ test("谁批准的要查得到：终端批准记 channel=cli，不是冒充控�
   const root = soloProject();
   cli(root, "intake", "标题", "--accept", "npm test :: exit==0");
   cli(root, "approve", "FR-001", "--path", "P-001");
-  const rows = execFileSync(
-    "sqlite3",
-    [path.join(root, ".devcontrol/state.db"), "select channel||'|'||action from events where action like 'req.%' order by id"],
-    { encoding: "utf8" },
-  )
-    .trim()
-    .split("\n");
+  // 不依赖机器是否额外安装 sqlite3 CLI；项目运行时本来就通过 node:sqlite 读写这份库。
+  const db = openDb(root);
+  const rows = db.prepare("select channel||'|'||action as event from events where action like 'req.%' order by id")
+    .all().map((row) => row.event);
+  db.close();
   assert.deepEqual(rows, ["cli|req.intake", "cli|req.approve"], `事件要记来自终端：${JSON.stringify(rows)}`);
 });
 

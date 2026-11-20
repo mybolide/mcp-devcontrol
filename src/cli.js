@@ -11,7 +11,7 @@ import { cliCommand } from "./nextcmd.js";
 import { doctor, exportMarkdown } from "./report.js";
 import { createRelease, getRelease, listReleases, planRelease, shipRelease } from "./release.js";
 import { FLOWS_REL, flowFromRequirement, flowToRequirement, listFlows, readFlow } from "./flow.js";
-import { getReq, getTask, mapTask, listTasks, listReqs, listPaths, listDocs, reqIntake, reqApprove, taskAbandon, disciplineStats, logRejection } from "./store.js";
+import { getReq, getTask, mapTask, listTasks, listReqs, listPaths, listDocs, reqIntake, reqApprove, pathIntake, taskAbandon, disciplineStats, logRejection } from "./store.js";
 import { hintFor } from "./hints.js";
 import { assertionCommand, detectTestCmds } from "./testcmd.js";
 import { isVendorPath, vendorIgnores } from "./vendor.js";
@@ -538,6 +538,59 @@ export function cmdNext() {
     console.log(JSON.stringify(digest.next.args, null, 2));
   }
   return 0;
+}
+
+/** Agent/CLI：创建 Path 草案；此命令绝不批准 Path。 */
+export function cmdPath(args) {
+  const root = resolveRoot();
+  const db = openDb(root);
+  const sub = args[0];
+  const flag = (name) => {
+    const i = args.indexOf(`--${name}`);
+    return i >= 0 ? args[i + 1] : undefined;
+  };
+  const many = (name) => args.flatMap((value, index) =>
+    value === `--${name}` && args[index + 1] && !String(args[index + 1]).startsWith("--")
+      ? [args[index + 1]]
+      : [],
+  );
+  if (sub === "create") {
+    const requirementId = flag("req") ?? flag("requirement");
+    const allowedPaths = many("allow").flatMap((value) => String(value).split(/[;,]/)).map((value) => value.trim()).filter(Boolean);
+    const testCmds = many("test");
+    if (!requirementId || !allowedPaths.length || !testCmds.length) {
+      return failCli(
+        '用法：devcontrol path create --req FR-003 --allow docs/a.js --allow docs/a.test.js --allow-new-files --budget 600 --test "node --test docs/a.test.js" [--test "git diff --check"]',
+        "E_USAGE",
+      );
+    }
+    try {
+      const result = pathIntake(db, root, {
+        requirementId,
+        allowedPaths,
+        allowNewFiles: args.includes("--allow-new-files") || args.includes("--new-files"),
+        budgetLines: flag("budget") === undefined ? 1200 : Number(flag("budget")),
+        testCmds,
+        channel: "cli",
+      }, process.env.DEVCONTROL_ACTOR || "agent");
+      console.log(`${result.id}  已创建 Path 草案（尚未批准，不授予任何写权限）`);
+      console.log(`需求：${result.requirementId}`);
+      console.log(`范围：${result.allowedPaths.join(", ")}`);
+      console.log(`新增文件：${result.allowNewFiles ? "允许（待 Owner 批准）" : "不允许"}；预算：${result.budgetLines} 行`);
+      console.log(`验收命令：\n${result.testCmds.map((command) => `  · ${command}`).join("\n")}`);
+      console.log(`\n下一步由 Owner 审查并批准：devcontrol approve ${result.requirementId} --path ${result.id}`);
+      return 0;
+    } catch (error) {
+      return failCli(error.message, error.code ?? "E_ERROR", error.data ?? null, 1);
+    }
+  }
+  if (sub === "list") {
+    for (const p of listPaths(db)) {
+      console.log(`${p.id}  ${p.status.padEnd(9)}budget=${p.budget_lines}  newFiles=${Boolean(p.allow_new_files)}  ${p.allowedPaths.join(", ")}`);
+    }
+    return 0;
+  }
+  return failCli('用法：devcontrol path <create|list>；create: --req FR-003 --allow docs/a.js --allow-new-files --budget 600 --test "node --test test/a.test.js"', "E_USAGE");
 }
 
 export function cmdRenew(args) {
@@ -1093,7 +1146,7 @@ export async function main(argv) {
     // **`mcp` 不在这个名单里**：它自己会初始化（T-139）。把它放进来，
     // MCP 客户端连未初始化的项目时会先被这里拒掉，自动初始化永远跑不到——
     // 而 runMcp 里的自动初始化、bootstrap 的 autoInit 全都是为了这条路。
-    const NEEDS_DB = new Set(["run", "commit", "renew", "next", "task", "intake", "approve", "ask", "bug", "flow", "close", "status", "bootstrap", "stats", "report", "memory", "doctor", "evidence", "doc", "release", "export", "serve"]);
+    const NEEDS_DB = new Set(["run", "commit", "renew", "next", "task", "path", "intake", "approve", "ask", "bug", "flow", "close", "status", "bootstrap", "stats", "report", "memory", "doctor", "evidence", "doc", "release", "export", "serve"]);
     if (NEEDS_DB.has(cmd)) {
       const root = resolveRoot();
       if (!fs.existsSync(dbPath(root))) {
@@ -1113,6 +1166,8 @@ export async function main(argv) {
         return cmdNext();
       case "task":
         return cmdTask(args);
+      case "path":
+        return cmdPath(args);
       case "intake":
         return cmdIntake(args);
       case "approve":
@@ -1169,6 +1224,8 @@ export async function main(argv) {
   devcontrol task abandon T-00x --reason "为什么不做"   作废一条没做完的任务（建错了/不需要了；它会挡着 WIP 和发布）
   devcontrol task claim T-00x       领取任务（纯 CLI，租约 45 分钟）
   devcontrol task list              任务清单
+  devcontrol path create --req FR-003 --allow docs/a.js --allow-new-files --budget 600 --test "node --test docs/a.test.js"  创建 Path 草案（待 Owner 批准）
+  devcontrol path list               Path 清单
   devcontrol next                   内核认为你现在该做的那一件事（参数可直接照抄）
   devcontrol stats                  纪律三数：被拦 / 返工 / 绕过（内核到底有没有在起作用）
   devcontrol report [--days 7] [--json]  周报：这一周收口几条、拦在哪、净改动多少（默认 markdown）

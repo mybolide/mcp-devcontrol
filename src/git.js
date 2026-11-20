@@ -157,7 +157,10 @@ export function worktreeRemove(root, dir) {
 
 /** 只提交指定文件（受控提交），并写入 trailer */
 export function commitFiles(root, files, message, { author = "devcontrol@localhost" } = {}) {
-  git(root, ["add", "--", ...files]);
+  // Stage additions, edits AND tracked deletions. Plain `git add -- <path>`
+  // rejects a missing path after `git mv` has already moved it, leaving the
+  // Owner-approved scoped task artificially dirty at close.
+  git(root, ["add", "-A", "--", ...files]);
   const args = ["-c", `user.email=${author}`, "-c", `user.name=devcontrol`, "commit", "-m", message, "--", ...files];
   git(root, args);
   return git(root, ["rev-parse", "HEAD"]).trim();
