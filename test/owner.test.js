@@ -2,6 +2,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
@@ -71,7 +72,18 @@ function startMcp(root, extraEnv = {}) {
   };
 }
 
-function startConsole(root, port = 20000 + Math.floor(Math.random() * 20000), extraEnv = {}, extraArgs = []) {
+async function startConsole(root, port = null, extraEnv = {}, extraArgs = []) {
+  // Ask the OS for an available loopback port instead of guessing one from a
+  // broad range: Windows sandboxes may reserve otherwise-valid ports (EACCES).
+  if (port === null) {
+    const probe = net.createServer();
+    await new Promise((resolve, reject) => {
+      probe.once("error", reject);
+      probe.listen(0, "127.0.0.1", resolve);
+    });
+    port = probe.address().port;
+    await new Promise((resolve, reject) => probe.close((error) => error ? reject(error) : resolve()));
+  }
   const child = spawn(process.execPath, [BIN, "serve", "--port", String(port), ...extraArgs], {
     env: { ...process.env, DEVCONTROL_ROOT: root, ...extraEnv },
     stdio: ["ignore", "pipe", "pipe"],

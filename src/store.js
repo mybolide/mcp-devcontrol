@@ -382,6 +382,79 @@ export function reqIntake(db, root, input) {
   });
 }
 
+/**
+ * Agent：创建一条 Path 草案。
+ *
+ * Path 只描述「允许改哪些文件、允许新增文件吗、验收命令是什么、预算多少」；
+ * 创建草案不写 Git 契约、不绑定已批准需求，也不会授予任何写权限。
+ * 真正生效仍必须由 Owner 走 reqApprove 冻结契约。这样 Agent 可以把工作范围
+ * 准备好交给人审，而不能靠创建 Path 给自己开权限。
+ */
+export function pathIntake(db, root, input, actor = "agent") {
+  return tx(db, () => {
+    const requirementId = String(input.requirementId ?? "").trim();
+    const req = getReq(db, requirementId);
+    if (!req || !["draft", "approved", "building"].includes(req.status)) {
+      fail("E_NEED_APPROVED", `需求不存在或已归档，不能为它创建 Path：${requirementId || "（未提供）"}`);
+    }
+
+    const allowedPaths = [...new Set((Array.isArray(input.allowedPaths) ? input.allowedPaths : [])
+      .map((value) => String(value).trim().replace(/\\/g, "/"))
+      .filter(Boolean))];
+    if (!allowedPaths.length) fail("E_CONTRACT", "Path 至少需要一个允许范围（allowedPaths）");
+    if (allowedPaths.some((value) => /[\0\r\n]/.test(value))) fail("E_CONTRACT", "Path 范围不能包含控制字符");
+    assertScopeInsideRepo(allowedPaths);
+
+    const testCmds = [...new Set((Array.isArray(input.testCmds) ? input.testCmds : [])
+      .map((value) => String(value).trim())
+      .filter(Boolean))];
+    if (!testCmds.length) fail("E_NO_TEST_CMD", "Path 至少需要一条验收命令（testCmds）");
+    if (testCmds.length > 20 || testCmds.some((command) => command.length > 1000 || /[\0\r\n]/.test(command))) {
+      fail("E_CONTRACT", "验收命令最多 20 条，每条不超过 1000 字且不能包含换行");
+    }
+
+    const budgetLines = Number(input.budgetLines ?? 1200);
+    if (!Number.isSafeInteger(budgetLines) || budgetLines < 100 || budgetLines > 100_000) {
+      fail("E_CONTRACT", "Path 预算必须是 100 到 100000 之间的整数");
+    }
+    if (input.allowNewFiles !== undefined && typeof input.allowNewFiles !== "boolean") {
+      fail("E_CONTRACT", "allowNewFiles 必须是布尔值");
+    }
+    const allowNewFiles = Boolean(input.allowNewFiles);
+
+    // 不盲信 counter:P：旧库或手工迁移可能只存在 paths 行而没有计数器。
+    // 取计数器与实际最大编号的较大值，保证不会撞上已经存在的 Path ID。
+    const used = db.prepare("SELECT id FROM paths").all()
+      .map((row) => Number(/^P-(\d+)$/.exec(row.id)?.[1] ?? 0));
+    const current = Number(metaGet(db, "counter:P") ?? 0);
+    const next = Math.max(current, ...used, 0) + 1;
+    if (next > 99_999) fail("E_ID_EXHAUSTED", "Path 编号已用尽");
+    const id = `P-${String(next).padStart(3, "0")}`;
+    metaSet(db, "counter:P", next);
+
+    db.prepare(
+      "INSERT INTO paths(id,requirement_id,allowed_paths_json,allow_new_files,budget_lines,test_cmds_json,status) VALUES(?,NULL,?,?,?,?,?)",
+    ).run(id, JSON.stringify(allowedPaths), allowNewFiles ? 1 : 0, budgetLines, JSON.stringify(testCmds), "draft");
+    logEvent(db, {
+      actor: actor || "agent",
+      channel: input.channel ?? "agent",
+      action: "path.intake",
+      detail: `${id} for ${requirementId}: ${allowedPaths.join(", ")}`,
+    });
+    return {
+      id,
+      pathId: id,
+      requirementId,
+      status: "draft",
+      allowedPaths,
+      allowNewFiles,
+      budgetLines,
+      testCmds,
+      requiresOwnerApproval: true,
+    };
+  });
+}
+
 /** 一键批准：需求 + Path 一起冻结，写契约提交 */
 export function reqApprove(db, root, input) {
   return tx(db, () => {

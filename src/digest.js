@@ -51,6 +51,11 @@ export function availableActions(db) {
   const approvedReq = reqs.some((r) => ["approved", "building"].includes(r.status));
   const approvedPath = paths.some((p) => p.status === "approved");
   const acts = new Set(["bootstrap", "bug.report"]);
+  // Path 草案不授予权限：只要有尚在进行的需求、且当前没有 Agent 在办任务，
+  // 就允许 Agent 提交新的范围提案；真正生效仍由 Owner 批准并冻结契约。
+  if (!doing.length && reqs.some((r) => ["draft", "approved", "building"].includes(r.status))) {
+    acts.add("path.create");
+  }
   if (doing.length) {
     acts.add("task.close");
     acts.add("task.work"); // 还没写码 / 没留证据时，该做的是干活，不是收口

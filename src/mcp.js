@@ -15,7 +15,7 @@ import { resolveRoot } from "./cli.js";
 import { ensureConsole, readConsoleMeta } from "./console-boot.js";
 import { initializeProject, isInitialized } from "./init.js";
 import { writeContextPlan } from "./context.js";
-import { fail, getTask, logRejection, mapTask } from "./store.js";
+import { fail, getTask, logRejection, mapTask, pathIntake } from "./store.js";
 import { generalizeHint, memoryConfig, openMemory, recallMemories, rememberAndIndex, searchMemories } from "./memory.js";
 import { createRelease, planRelease, shipRelease } from "./release.js";
 import { registerChatOwnerApproval } from "./chat-owner-approval-mcp.js";
@@ -30,7 +30,8 @@ export const INSTRUCTIONS = `你是本项目的编码 Agent。工作纪律（由
 5. 遇到歧义用 ask，不要猜。
 6. bootstrap 返回的 console 地址就是 Owner 控制台：MCP 启动时自动拉起、挂掉时 bootstrap 自动重建。把它转告 Owner 即可，人不需要手动启动或重启。
 7. memory 是**这个项目自己的经验库**（存在本仓库 .devcontrol/memory.db，不写远程）：踩到的坑/解法、定下的约定、踩过的 SDK 怪癖，随时可以 memory.write（title + body + kind/tags）；动手前先用 memory.search 查一下。任务失败过（bootstrap.task.reviewRound > 0）时，task.close 必须带 resolvedBy，内核会自动记一条 pitfall。
-8. 如果用户在当前对话中要求批准需求，可使用独立工具 devcontrol_request_owner_approval 请求客户端弹出真人确认。该工具只有客户端支持 MCP form elicitation 且用户亲自确认后才调用既有 Owner 审批内核；它不是 Agent 可代签的批准动作。客户端不支持时不要绕过门禁，也不要把聊天文本当成审批凭据。`;
+8. path.create 只创建 Path 草案，不冻结契约、不授予写权限；创建后必须等待 Owner 审查并批准，不能把草案当成已授权范围。
+9. 如果用户在当前对话中要求批准需求，可使用独立工具 devcontrol_request_owner_approval 请求客户端弹出真人确认。该工具只有客户端支持 MCP form elicitation 且用户亲自确认后才调用既有 Owner 审批内核；它不是 Agent 可代签的批准动作。客户端不支持时不要绕过门禁，也不要把聊天文本当成审批凭据。`;
 
 export const ACTIONS = [
   "bootstrap",
@@ -38,6 +39,7 @@ export const ACTIONS = [
   // 在办、但还没写码/没留证据：这一步没有内核动作可调（活是 Agent 自己干的），
   // 但必须是合法枚举——否则 next 让它做 task.work，它一调就报「非法动作」。
   "task.work",
+  "path.create",
   "task.create",
   "task.claim",
   "task.renew",
@@ -66,6 +68,9 @@ export const SCHEMA = {
   dependsOn: z.array(z.string()).optional(),
   scope: z.array(z.string()).optional(),
   budgetLines: z.number().optional(),
+  allowedPaths: z.array(z.string()).optional().describe("path.create：仓库内允许修改的相对路径，可列目录或具体文件"),
+  allowNewFiles: z.boolean().optional().describe("path.create：是否允许在授权范围内新增文件；仍需 Owner 批准"),
+  testCmds: z.array(z.string()).optional().describe("path.create：冻结前供 Owner 审查的验收命令列表"),
   symptom: z.string().optional(),
   expected: z.string().optional(),
   repro: z.array(z.string()).optional(),
@@ -93,6 +98,7 @@ export async function dispatch(db, root, args, ctx = {}) {
   // 参数缺失在这里就拦下：交给 SQLite 绑定只会抛 ERR_INVALID_ARG_TYPE，把数据库内部细节泄给 Agent
   const REQUIRED = {
     "task.create": ["requirementId", "pathId", "title"],
+    "path.create": ["requirementId"],
     "task.claim": ["id"],
     "evidence.record": ["command"],
     "task.renew": ["id"],
@@ -135,6 +141,8 @@ export async function dispatch(db, root, args, ctx = {}) {
     }
     case "task.create":
       return taskCreate(db, root, args, args.actor ?? process.env.DEVCONTROL_ACTOR ?? "agent");
+    case "path.create":
+      return pathIntake(db, root, args, args.actor ?? process.env.DEVCONTROL_ACTOR ?? "agent");
     case "task.claim":
       return taskClaim(db, root, args, args.actor ?? process.env.DEVCONTROL_ACTOR ?? "agent");
     case "task.renew":
@@ -236,7 +244,7 @@ export function createServer({ db, root, consoleUrl, autoInit = null }) {
     {
       title: "研发纪律内核",
       description:
-        "Project development discipline kernel. action=bootstrap; task.create/claim/close (verifies the evidence you recorded — it never runs your tests); bug.report; ask; memory.write/memory.search (cross-project engineering memory); release.create/plan/ship.",
+        "Project development discipline kernel. path.create only creates a draft Path for Owner review (it cannot approve or grant access); action=bootstrap; task.create/claim/close (verifies the evidence you recorded — it never runs your tests); bug.report; ask; memory.write/memory.search; release.create/plan/ship.",
       inputSchema: SCHEMA,
       annotations: { readOnlyHint: false },
     },
@@ -325,7 +333,9 @@ export async function runMcp() {
   const consoleReady = ensureConsole(root).catch(() => null);
   // bootstrap 时校验一次：控制台被停掉/崩了就地重建，人不该手动重启
   const consoleUrl = async () => {
-    const cached = await Promise.race([consoleReady, new Promise((resolve) => setTimeout(() => resolve(null), 4000))]);
+    // ensureConsole 的单次启动等待上限是 6 秒；4 秒竞速会在慢机器上
+    // 抢先返回 null，随后 Agent 误以为控制台没启动。给启动过程留出余量。
+    const cached = await Promise.race([consoleReady, new Promise((resolve) => setTimeout(() => resolve(null), 8000))]);
     const url = cached?.url ?? null;
     if (url) {
       const port = Number(new URL(url).port);

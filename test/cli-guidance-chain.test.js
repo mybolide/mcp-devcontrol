@@ -10,7 +10,12 @@ import { BIN, makeRepo } from "./helpers.js";
 
 const run = (cwd, args) => {
   try {
-    const stdout = execFileSync(process.execPath, [BIN, ...args], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+    const stdout = execFileSync(process.execPath, [BIN, ...args], {
+      cwd,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, DEVCONTROL_ROOT: cwd },
+    });
     return { code: 0, stdout, stderr: "" };
   } catch (e) {
     return { code: e.status ?? 1, stdout: e.stdout ?? "", stderr: e.stderr ?? "" };
@@ -20,14 +25,45 @@ const run = (cwd, args) => {
 const next = (root) => JSON.parse(run(root, ["status"]).stdout).next;
 
 // 照抄内核给的命令行，真的跑一遍——"给了命令"和"命令能跑"是两件事。
-// 必须交给 shell 跑：命令里带引号（任务标题含空格），自己按空白拆会拆坏，
-// 那样测出来的失败是夹具的锅，不是内核的（这正是上一版报错的原因）。
+// 不依赖 sh/bash：按 CLI 输出的双/单引号规则拆参数，再直接 spawn Node，
+// 这样 Windows 与 POSIX 都能验证「next.cli 照抄即可执行」。
+function splitCliArgs(command) {
+  const args = [];
+  let token = "";
+  let quote = null;
+  let started = false;
+  for (const char of command) {
+    if (quote) {
+      if (char === quote) quote = null;
+      else token += char;
+      started = true;
+      continue;
+    }
+    if (char === "'" || char === '"') {
+      quote = char;
+      started = true;
+    } else if (/\s/.test(char)) {
+      if (started) args.push(token), (token = ""), (started = false);
+    } else {
+      token += char;
+      started = true;
+    }
+  }
+  if (quote) throw new Error(`next.cli 引号未闭合：${command}`);
+  if (started) args.push(token);
+  return args;
+}
+
 const followCli = (root, cli) => {
   assert.ok(cli, "这一步没给命令，纯 CLI 就断在这里了");
   assert.match(cli, /^devcontrol /, `next.cli 该是能直接敲的 devcontrol 命令：${cli}`);
-  const cmd = cli.replace(/^devcontrol /, `"${process.execPath}" "${BIN}" `);
   try {
-    const stdout = execFileSync("sh", ["-c", cmd], { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+    const stdout = execFileSync(process.execPath, [BIN, ...splitCliArgs(cli.replace(/^devcontrol\s+/, ""))], {
+      cwd: root,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, DEVCONTROL_ROOT: root },
+    });
     return { code: 0, stdout, stderr: "" };
   } catch (e) {
     return { code: e.status ?? 1, stdout: e.stdout ?? "", stderr: e.stderr ?? "" };

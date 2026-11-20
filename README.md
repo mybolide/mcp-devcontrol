@@ -82,6 +82,7 @@ One MCP tool, `devcontrol`, with an `action` field:
 | `bootstrap` | Start here. Returns `next` — the kernel's ordered next step — plus open questions and the console URL |
 | `wait` | The kernel says hold; returns current state |
 | `task.work` | Your turn to write code; returns the four-step order |
+| `path.create` | Propose a Path draft for Owner review; it does not grant write access |
 | `task.create` | Split work into a task (scope, acceptance, dependencies) |
 | `task.claim` | Take a task (45-minute lease, one at a time) |
 | `task.renew` | Extend the lease on a long task |
@@ -99,6 +100,7 @@ CLI equivalents, for clients without MCP:
 
 ```bash
 devcontrol status                 # = bootstrap
+devcontrol path create --req FR-003 --allow docs/a.js --allow-new-files --budget 600 --test "node --test test/a.test.js"  # draft only; Owner approves
 devcontrol run -- npm test        # run and record evidence
 devcontrol commit -m "feat: ..."  # commit in-scope files
 devcontrol close                  # verify and close

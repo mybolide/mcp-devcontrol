@@ -21,7 +21,7 @@ const cliSrc = fs.readFileSync(path.join(SRC, "cli.js"), "utf8");
 /** 取出某个 CLI 子命令的实现片段（顶层命令取整个 cmd*，分组命令取对应 sub 分支） */
 function cliSlice(sub) {
   const TOP = { close: "cmdClose", run: "cmdRun", ask: "cmdAsk", bug: "cmdBug", intake: "cmdIntake", approve: "cmdApprove" };
-  const GROUP = { task: "cmdTask", memory: "cmdMemory" };
+  const GROUP = { task: "cmdTask", path: "cmdPath", memory: "cmdMemory" };
 
   const fnBody = (fnName) => {
     const start = cliSrc.search(new RegExp(`export (async )?function ${fnName}\\(`));
