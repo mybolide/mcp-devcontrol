@@ -83,8 +83,15 @@ test("MCP 能握手、能列出工具（发布前必须真的连得上）", asyn
   initFlow(root);
   const { mcp, tools } = await boot(root);
   try {
-    assert.equal(tools.result.tools.length, 1, "只暴露一个工具（单工具 MCP）");
-    assert.equal(tools.result.tools[0].name, "devcontrol");
+    assert.deepEqual(
+      tools.result.tools.map((tool) => tool.name).sort(),
+      ["devcontrol", "devcontrol_request_owner_approval"],
+      "一个 Agent 纪律工具 + 一个必须经客户端真人确认的审批申请工具",
+    );
+    const requestTool = tools.result.tools.find((tool) => tool.name === "devcontrol_request_owner_approval");
+    assert.equal(requestTool.inputSchema?.properties?.requirementId?.type, "string");
+    assert.equal(requestTool.inputSchema?.properties?.pathId?.type, "string");
+    assert.ok(!Object.hasOwn(requestTool.inputSchema.properties, "approved"), "工具不得接收 Agent 自填的批准标记");
   } finally {
     mcp.child.kill();
   }

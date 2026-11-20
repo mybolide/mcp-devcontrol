@@ -18,6 +18,7 @@ import { writeContextPlan } from "./context.js";
 import { fail, getTask, logRejection, mapTask } from "./store.js";
 import { generalizeHint, memoryConfig, openMemory, recallMemories, rememberAndIndex, searchMemories } from "./memory.js";
 import { createRelease, planRelease, shipRelease } from "./release.js";
+import { registerChatOwnerApproval } from "./chat-owner-approval-mcp.js";
 
 export const TOOL_NAME = "devcontrol";
 
@@ -28,7 +29,8 @@ export const INSTRUCTIONS = `你是本项目的编码 Agent。工作纪律（由
 4. **项目上下文过期要自己交代**：close 时如果内核发现「这次改动碰了上下文没覆盖的东西」（新目录、依赖变了、引用了已不存在的文件），会拒绝并要求 \`contextNote\`——一句话说清你是更新了哪篇、还是为什么不用更新。这不是走过场：规范过期了还在被当成权威，比没有规范更糟。
 5. 遇到歧义用 ask，不要猜。
 6. bootstrap 返回的 console 地址就是 Owner 控制台：MCP 启动时自动拉起、挂掉时 bootstrap 自动重建。把它转告 Owner 即可，人不需要手动启动或重启。
-6. memory 是**这个项目自己的经验库**（存在本仓库 .devcontrol/memory.db，不写远程）：踩到的坑/解法、定下的约定、踩过的 SDK 怪癖，随时可以 memory.write（title + body + kind/tags）；动手前先用 memory.search 查一下。任务失败过（bootstrap.task.reviewRound > 0）时，task.close 必须带 resolvedBy，内核会自动记一条 pitfall。`;
+7. memory 是**这个项目自己的经验库**（存在本仓库 .devcontrol/memory.db，不写远程）：踩到的坑/解法、定下的约定、踩过的 SDK 怪癖，随时可以 memory.write（title + body + kind/tags）；动手前先用 memory.search 查一下。任务失败过（bootstrap.task.reviewRound > 0）时，task.close 必须带 resolvedBy，内核会自动记一条 pitfall。
+8. 如果用户在当前对话中要求批准需求，可使用独立工具 devcontrol_request_owner_approval 请求客户端弹出真人确认。该工具只有客户端支持 MCP form elicitation 且用户亲自确认后才调用既有 Owner 审批内核；它不是 Agent 可代签的批准动作。客户端不支持时不要绕过门禁，也不要把聊天文本当成审批凭据。`;
 
 export const ACTIONS = [
   "bootstrap",
@@ -262,6 +264,9 @@ export function createServer({ db, root, consoleUrl, autoInit = null }) {
       }
     },
   );
+  // Standalone, human-elicited approval request. NOT an Agent "devcontrol"
+  // dispatcher action: a tool call cannot fake the human's form confirmation.
+  registerChatOwnerApproval(server, { db, root });
   return server;
 }
 

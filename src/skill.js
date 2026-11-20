@@ -38,17 +38,17 @@ export function skillBody({ noMcp = false } = {}) {
 6. \`devcontrol close\`：内核**不执行测试**，只核验你留下的证据（命令对不对、跑的是不是当前这份代码、退出码满足断言）。
    close 时如果内核说「这次改动碰了上下文没覆盖的东西」，会要求 \`--context-note\`：一句话说清更新了哪篇、或为什么不用更新。规范过期了还被当成权威，比没有规范更糟。
 
-## Owner 的动作不在 MCP 里
+## Owner 的审批需要真人确认，Agent 不能代签
 
-MCP 工具列表里**没有**批准需求、放行、打回、改预算这些动作——这是故意的：
-Agent 能自己批准自己，纪律就没有意义了。
-它们由人来做，有两个地方：控制台（\`devcontrol serve\`）点，或者人自己在终端敲 \`devcontrol approve\`。
+Agent 的 \`devcontrol\` MCP action **没有**批准需求、放行、打回、改预算权限——这是故意的：Agent 能自己批准自己，纪律就没有意义了。
+对于**需求批准**，支持 MCP form elicitation 的聊天客户端还可以使用单独的 \`devcontrol_request_owner_approval\` 工具：它只能**请求**客户端向真人展示完整需求和 Path 并获取确认；用户拒绝、无法确认或内容改变时不执行，且 Agent 无法在工具参数里设置已批准。
+如果当前客户端不支持这种真人确认通道，就走控制台（\`devcontrol serve\`），或者由人自己在终端敲 \`devcontrol approve\`；不要改用 Agent shell 冒充 Owner。
 
 所以碰到下面这些情况，**不要试、不要绕、更不要自己改库**，直接告诉人去做：
 
 | 你要什么 | 人的动作 |
 |---|---|
-| 需求/Path 还没批准 | 控制台「收件箱」点批准，或终端 \`devcontrol approve FR-001 --path P-001\` |
+| 需求/Path 还没批准 | 原聊天调用 \`devcontrol_request_owner_approval\` 请求真人确认；如客户端不支持，使用控制台「收件箱」或由人自己在终端敲 \`devcontrol approve FR-001 --path P-001\` |
 | 想改验收标准 | 「需求」页改（走需求变更，不是改任务） |
 | 动了依赖或既有测试被拦 | 「任务」页点放行，写理由（≥12 字） |
 | 任务太大超预算 | 「需求」页点预算数字改，或把任务拆小 |

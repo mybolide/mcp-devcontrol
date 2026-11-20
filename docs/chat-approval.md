@@ -2,6 +2,14 @@
 
 DevControl 的审批权仍属于 **Owner**。新功能只增加消息入口；**没有修改** `reqApprove`、门禁、任务认领、契约冻结或 SQLite 结构。
 
+## 原聊天内审批：通用 MCP 人工确认（新）
+
+现在无需跳到 DevControl 的独立控制台：配置了 DevControl MCP 的聊天客户端，可以直接对 Agent 说「批准 FR-002」，Agent 调用独立工具 `devcontrol_request_owner_approval`（参数 `requirementId=FR-002`、`pathId=P-001`）。服务器会通过 MCP **form elicitation** 在**同一聊天客户端**请求真人决定。真人确认「批准」后，服务器再次核对需求和 Path 未被修改，再调用原 Owner 审批内核，结果以工具返回值出现在原聊天中。取消、拒绝、客户端不支持或内容变更均不执行批准。
+
+重要限制：MCP 工具调用由 Agent 发起，**Agent 自己无法在调用参数中设置“已批准”**；真人确认由支持 MCP form elicitation 的聊天客户端显示和处理。这种模式仍有一项明确的用户操作，即在聊天客户端的确认表单中选择「批准」，不是无确认地把模型生成的文本当作用户身份凭据。不同聊天客户端对 MCP elicitation 的支持情况不同；如果客户端不支持，会返回 `E_OWNER_CONFIRMATION_UNAVAILABLE` 而不是退回不安全的自动批准。
+
+此工具不需要 `DEVCONTROL_CHAT_APPROVAL_SECRET`（后者仅用于下方独立的**可信 Host 消息事件**模式），但要求 MCP 客户端真正实施真人确认，不得自动接受工具请求。要在当前 ChatGPT 会话中使用，仍需将此 DevControl MCP 服务接入该聊天会话所能调用的工具；**部署 DevControl 并不自动给现有 ChatGPT 对话添加该工具**。
+
 ## 本地控制台：开箱即用
 
 打开 `http://127.0.0.1:7373/` → **收件箱** → **对话授权**。
