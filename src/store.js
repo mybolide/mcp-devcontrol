@@ -595,11 +595,22 @@ export function reqApprove(db, root, input) {
       const busy = db
         .prepare("SELECT id, status FROM tasks WHERE path_id=? AND status IN ('backlog','doing','parked') ORDER BY id")
         .all(p.id);
-      if (busy.length) {
+      // 待处理审批也算「还没收口」：源需求上还挂着 Agent 的问题时，把合同挪走
+      // 等于让那条问题失去上下文（人回答的是旧范围的疑问）。
+      const pendingQuestions = db
+        .prepare(
+          "SELECT q.id FROM questions q JOIN tasks t ON t.id=q.task_id WHERE t.path_id=? AND q.status='open' ORDER BY q.id",
+        )
+        .all(p.id);
+      if (busy.length || pendingQuestions.length) {
+        const parts = [
+          busy.length ? `${busy.map((t) => `${t.id}(${t.status})`).join("、")}` : null,
+          pendingQuestions.length ? `待回答的问题 ${pendingQuestions.map((q) => q.id).join("、")}` : null,
+        ].filter(Boolean);
         fail(
           "E_PATH_IN_USE",
-          `Path ${p.id} 上还有没做完的任务：${busy.map((t) => `${t.id}(${t.status})`).join("、")}；先做完或作废再转移给 ${req.id}`,
-          { pathId: p.id, tasks: busy.map((t) => t.id), boundTo: previousReqId },
+          `Path ${p.id} 上还有没处理完的东西：${parts.join("；")}；先处理完再转移给 ${req.id}`,
+          { pathId: p.id, tasks: busy.map((t) => t.id), questions: pendingQuestions.map((q) => q.id), boundTo: previousReqId },
         );
       }
     }

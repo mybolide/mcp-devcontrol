@@ -105,3 +105,31 @@ test("源需求上还有没做完的任务时，不许把 Path 转移给别的�
   assert.ok(audit, "转移必须留审计");
   assert.match(audit.detail, new RegExp(`P-001: ${firstReq} → ${secondReq}`));
 });
+
+test("源需求上还有待回答的问题时，也不许转移 Path", () => {
+  const { root, db, firstReq, secondReq } = twoReqs();
+  const task = newTask(db, root, firstReq);
+  taskAbandon(db, root, { taskId: task.id, reason: "先放着，但问题还没回答", channel: "owner" });
+  // 直接构造一条待回答的问题（等价于 Agent 用 ask 提过问）
+  db.prepare(
+    "INSERT INTO questions(id,task_id,question,options_json,status,expires_at) VALUES(?,?,?,?,?,?)",
+  ).run("Q-001", task.id, "这次改动要不要顺手改测试？", "[]", "open", new Date(Date.now() + 3600_000).toISOString());
+  assert.throws(
+    () => reqApprove(db, root, { requirementId: secondReq, pathId: "P-001", channel: "cli" }),
+    (e) => e.code === "E_PATH_IN_USE" && e.data.questions.includes("Q-001"),
+    "有问题悬着就不能挪合同",
+  );
+  // 问题答完（状态变更）之后可以转移
+  db.prepare("UPDATE questions SET status='answered', answer='不用', answered_at=? WHERE id='Q-001'").run(new Date().toISOString());
+  assert.equal(reqApprove(db, root, { requirementId: secondReq, pathId: "P-001", channel: "cli" }).rebindFrom, firstReq);
+});
+
+test("同一个 Path 重复批准：拒绝，不重复生成契约", () => {
+  const { root, db, secondReq } = twoReqs();
+  const draft = pathIntake(db, root, { requirementId: secondReq, allowedPaths: ["src"], testCmds: ["npm test"] });
+  const first = pathApprove(db, root, { pathId: draft.id, channel: "cli" });
+  assert.throws(() => pathApprove(db, root, { pathId: draft.id, channel: "cli" }), (e) => e.code === "E_ILLEGAL_TRANSITION");
+  const approvals = db.prepare("SELECT COUNT(*) c FROM events WHERE action='path.approve' AND detail LIKE ?").get(`${draft.id}%`);
+  assert.equal(approvals.c, 1, "只该有一条 path.approve 审计");
+  assert.equal(db.prepare("SELECT contract_commit FROM paths WHERE id=?").get(draft.id).contract_commit, first.contractCommit);
+});
