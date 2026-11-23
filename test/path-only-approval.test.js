@@ -91,3 +91,19 @@ test("确认期间 Path 内容变了：旧确认失效（TOCTOU）", async () =>
   assert.equal(payload.code, "E_APPROVAL_STALE");
   assert.equal(pathRow(db, draft.id).status, "draft", "内容变了就不能沿用旧确认");
 });
+test("需求内容在确认期间变了：旧确认失效（需求侧 TOCTOU）", async () => {
+  const { root, db, reqId, draft } = fixture();
+  const res = await requestOwnerApproval({
+    db, root, requirementId: reqId, pathId: draft.id,
+    clientSupportsElicitation: true,
+    elicit: async () => {
+      // 模拟「真人看确认框的同时，另一边改了这条需求」：摘要必须因此作废。
+      db.prepare("UPDATE requirements SET title=? WHERE id=?").run("确认期间被改写", reqId);
+      return { action: "accept", content: { decision: "批准" } };
+    },
+  });
+  const payload = JSON.parse(res.content[0].text);
+  assert.equal(payload.ok, false, JSON.stringify(payload));
+  assert.equal(payload.code, "E_APPROVAL_STALE");
+  assert.equal(pathRow(db, draft.id).status, "draft", "需求变了就不能沿用旧确认");
+});
