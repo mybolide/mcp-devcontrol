@@ -584,8 +584,13 @@ export function reqApprove(db, root, input) {
     if (!req) fail("E_NEED_APPROVED", `需求不存在：${input.requirementId}`);
     const p = getPath(db, input.pathId);
     if (!p) fail("E_NEED_APPROVED", `Path 不存在：${input.pathId}`);
-    // Path 是「文件区域 + 冻结命令」，不是某个需求的私有物：多个需求可以共用同一条 Path。
-    // 已批准过就只重新绑定（契约里记下这次是哪条需求批准的），不再报 E_ILLEGAL_TRANSITION。
+    // Path 是「文件区域 + 冻结命令」的执行范围合同，可以被多条需求复用。
+    //
+    // 收紧中的状态（未启用）：Owner 显式 rebind 才允许跨需求转移，且源需求上不能有
+    // 未完成任务。这条规则要同时改 cli-accept-derive / path-intake 等 6 处「复用」用例，
+    // 属于独立一轮迁移；在那之前保持既有兼容行为，避免半套规则上线。
+    // 已经落地的是：转移会写 path.rebind 审计，返回值带 rebindFrom（见本函数末尾）。
+    const previousReqId = p.requirement_id && p.requirement_id !== req.id ? p.requirement_id : null;
     const expected = sha256(Buffer.from(JSON.stringify(req.acceptance)));
     if (input.acceptanceHashPrefix && !expected.startsWith(input.acceptanceHashPrefix)) {
       fail("E_HASH_MISMATCH", `哈希前 8 位不符：${expected.slice(0, 8)}`);
@@ -614,7 +619,16 @@ export function reqApprove(db, root, input) {
       p.id,
     );
     logEvent(db, { actor: "owner", channel: input.channel ?? "owner", action: "req.approve", detail: `${req.id} + ${p.id} @ ${sha ? sha.slice(0, 8) : "弱模式"}${via}` });
-    return { requirementId: req.id, pathId: p.id, contractCommit: sha, hash };
+    // 转移单独留一条审计：谁把哪条 Path 从哪条需求挪到了哪条需求，事后要查得到。
+    if (previousReqId) {
+      logEvent(db, {
+        actor: "owner",
+        channel: input.channel ?? "owner",
+        action: "path.rebind",
+        detail: `${p.id}: ${previousReqId} → ${req.id}${via}`,
+      });
+    }
+    return { requirementId: req.id, pathId: p.id, contractCommit: sha, hash, rebindFrom: previousReqId };
   });
 }
 

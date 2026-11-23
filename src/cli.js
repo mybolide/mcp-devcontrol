@@ -1010,6 +1010,7 @@ export function cmdApprove(args) {
     const res = reqApprove(db, root, { requirementId, pathId, channel: "cli" });
     const req = getReq(db, requirementId);
     console.log(`${res.requirementId} + ${res.pathId}  已批准，契约已冻结`);
+    if (res.rebindFrom) console.log(`授权转移：${res.pathId} 从 ${res.rebindFrom} 转到 ${res.requirementId}（已记审计 path.rebind）`);
     if (res.contractCommit) console.log(`契约提交：${res.contractCommit.slice(0, 8)}（Agent 改不了它，改了内核会拒）`);
     if (req?.acceptance?.length) {
       console.log(`冻结的验收：`);
