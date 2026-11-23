@@ -130,12 +130,6 @@
       .form-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
       .form-row > input, .form-row > select { flex: 1; min-width: 120px; }
       .empty { font-size: 13px; color: #7285a0; padding: 10px 2px; }
-      .owner-chat-log { max-height: 240px; overflow: auto; display: grid; gap: 9px; margin: 12px 0; }
-      .owner-chat-line { padding: 10px 12px; border-radius: 11px; background: #f0f4fa; font-size: 13px; line-height: 1.55; white-space: pre-wrap; word-break: break-word; }
-      .owner-chat-line.owner { margin-left: 15%; background: #e8f2ff; }
-      .owner-chat-line.system { margin-right: 10%; }
-      .owner-chat-row { display: flex; gap: 8px; }
-      .owner-chat-row input { flex: 1; min-width: 0; }
       .toast { position: fixed; right: 26px; bottom: 26px; max-width: 420px; background: #1f2f45; color: #fff; border-radius: 12px; padding: 12px 16px; font-size: 13.5px; line-height: 1.5; box-shadow: 0 10px 30px #0d1a2b44; z-index: 50; white-space: pre-wrap; }
       .toast.bad { background: #8d2f2f; }
       .toast[hidden] { display: none; }
@@ -166,10 +160,66 @@
       #weekly-panel .pill { display: inline-block; }
       .sheet-foot { display: flex; justify-content: flex-end; gap: 9px; padding: 16px 24px 20px; border-top: 1px solid #eef1f5; margin-top: 6px; background: #fbfcfe; }
       .sheet-foot .btn { min-width: 92px; justify-content: center; }
+      /* 抽屉容器：桌面端不存在（内容就是侧栏本身），手机上才成为面板 */
+      .sidepanel { display: contents; }
+      .navtoggle { display: none; }
+      .navscrim { display: none; }
+      #project-switch { margin: 10px 0 0; width: 100%; }
       @media (max-width: 900px) {
         body { grid-template-columns: 1fr; }
-        .sidebar { position: static; height: auto; border-right: 0; border-bottom: 1px solid var(--stroke); }
-        .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        /* 侧栏收成一条顶栏：常驻在顶部，正文不再被一屏菜单挤到下面 */
+        .sidebar {
+          position: sticky; top: 0; z-index: 40; height: auto;
+          flex-direction: row; align-items: center; gap: 10px;
+          padding: max(8px, env(safe-area-inset-top)) 14px 8px;
+          border-right: 0; border-bottom: 1px solid var(--stroke);
+          background: #fff; background: rgba(255, 255, 255, 0.94);
+          backdrop-filter: blur(12px);
+        }
+        .brand { padding: 0; gap: 10px; flex: 1 1 auto; min-width: 0; }
+        .brand small { display: none; }
+        .brand strong { font-size: 15px; }
+        .logo { width: 32px; height: 32px; border-radius: 10px; font-size: 13px; }
+        .navtoggle {
+          display: inline-flex; align-items: center; gap: 7px; margin-left: auto; flex: 0 1 auto;
+          min-height: 40px; padding: 7px 12px; border-radius: 10px;
+          border: 1px solid #d8e2ee; background: #fff; color: #24568a;
+          font-size: 13.5px; font-weight: 640;
+        }
+        .navtoggle[aria-expanded="true"] { border-color: #aec9e8; background: #eff6ff; }
+        .navtoggle-icon { font-size: 15px; line-height: 1; }
+        #nav-current { max-width: 8em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        /* 抽屉贴在顶栏下方：一次能点完十项，不挤走正文 */
+        .sidepanel {
+          display: none; position: absolute; left: 0; right: 0; top: 100%;
+          max-height: calc(100vh - 56px); overflow-y: auto; overscroll-behavior: contain;
+          flex-direction: column; gap: 4px;
+          padding: 12px 14px max(16px, env(safe-area-inset-bottom));
+          background: #fff; border-bottom: 1px solid var(--stroke);
+          box-shadow: 0 18px 40px #0d1a2b26;
+        }
+        body.nav-open .sidepanel { display: flex; }
+        body.nav-open .navscrim {
+          display: block; position: fixed; inset: 0; z-index: 30;
+          background: #17212f26;
+        }
+        .navbtn { min-height: 46px; font-size: 15.5px; }
+        .group-label { margin: 2px 14px 6px; }
+        .sidefooter { margin-top: 12px; }
+        #project-switch { margin: 8px 0 0; min-height: 40px; }
+        .main { padding: 16px 16px 40px; }
+        .bar { gap: 10px; padding-bottom: 10px; margin-bottom: 18px; }
+        h1 { font-size: 24px; letter-spacing: -0.6px; }
+        .sub { font-size: 14px; }
+        .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+        .metric { padding: 12px 13px; border-radius: 12px; }
+        .metric strong { font-size: 22px; }
+        .grid { grid-template-columns: 1fr; gap: 10px; }
+        .panel { padding: 16px; border-radius: 14px; }
+        dialog.sheet { width: calc(100vw - 20px); }
+        .sheet-inner { padding: 18px 16px 4px; }
+        .sheet-foot { padding: 14px 16px 16px; }
+        .toast { left: 12px; right: 12px; bottom: 12px; max-width: none; }
       }
     </style>
   </head>
@@ -178,26 +228,36 @@
       <div class="brand">
         <div class="logo">mp</div>
         <div><strong>devcontrol</strong><small>研发纪律内核</small></div>
+        <!-- 手机上才出现：顶栏右侧的菜单按钮，顺带显示当前在哪一页 -->
+        <button class="navtoggle" id="nav-toggle" type="button" aria-expanded="false" aria-controls="side-panel" aria-label="打开菜单">
+          <span class="navtoggle-icon" aria-hidden="true">☰</span>
+          <span id="nav-current">收件箱</span>
+        </button>
       </div>
-      <div class="group-label">项目</div>
-      <nav class="nav">
-        <button class="navbtn active" data-nav="inbox">收件箱 <span class="count" id="n-inbox">0</span></button>
-        <button class="navbtn" data-nav="reqs">需求 <span class="count" id="n-req">0</span></button>
-        <button class="navbtn" data-nav="bugs">Bug <span class="count" id="n-bug">0</span></button>
-        <button class="navbtn" data-nav="tasks">任务 <span class="count" id="n-tasks">0</span></button>
-        <button class="navbtn" data-nav="release">发布 <span class="count" id="n-rel">0</span></button>
-        <button class="navbtn" data-nav="memory">记忆 <span class="count" id="n-mem">0</span></button>
-        <button class="navbtn" data-nav="docs">文档</button>
-        <button class="navbtn" data-nav="evidence">证据 <span class="count" id="n-runs">0</span></button>
-        <button class="navbtn" data-nav="weekly">周报</button>
-        <button class="navbtn" data-nav="settings">设置</button>
-      </nav>
-      <select id="project-switch" style="margin: 10px 8px 0; width: calc(100% - 16px)" hidden></select>
-      <div class="sidefooter">
-        <div class="conn" id="conn">连接中…</div>
-        <div id="meta" class="mu"></div>
+      <!-- 桌面端 display:contents（就是原来那根竖排侧栏）；手机上才变成抽屉 -->
+      <div class="sidepanel" id="side-panel">
+        <div class="group-label">项目</div>
+        <nav class="nav">
+          <button class="navbtn active" data-nav="inbox">收件箱 <span class="count" id="n-inbox">0</span></button>
+          <button class="navbtn" data-nav="reqs">需求 <span class="count" id="n-req">0</span></button>
+          <button class="navbtn" data-nav="bugs">Bug <span class="count" id="n-bug">0</span></button>
+          <button class="navbtn" data-nav="tasks">任务 <span class="count" id="n-tasks">0</span></button>
+          <button class="navbtn" data-nav="release">发布 <span class="count" id="n-rel">0</span></button>
+          <button class="navbtn" data-nav="memory">记忆 <span class="count" id="n-mem">0</span></button>
+          <button class="navbtn" data-nav="docs">文档</button>
+          <button class="navbtn" data-nav="evidence">证据 <span class="count" id="n-runs">0</span></button>
+          <button class="navbtn" data-nav="weekly">周报</button>
+          <button class="navbtn" data-nav="settings">设置</button>
+        </nav>
+        <select id="project-switch" hidden></select>
+        <div class="sidefooter">
+          <div class="conn" id="conn">连接中…</div>
+          <div id="meta" class="mu"></div>
+        </div>
       </div>
     </aside>
+    <!-- 抽屉打开时点空白处收起；桌面端常隐 -->
+    <div class="navscrim" id="nav-scrim"></div>
     <main class="main">
       <div class="bar">
         <div class="breadcrumbs"><b id="view-title">收件箱</b><span id="project" class="mu"></span></div>
@@ -214,16 +274,6 @@
           <p class="sub">批准需求与 Path、回答 Agent 的提问、裁决 Bug、把隔离区里的经验提炼成通则。其余工序由内核和 Agent 走完。</p>
         </div>
         <div class="metrics" id="metrics"></div>
-        <div class="panel" style="margin-bottom: 18px">
-          <h2>对话授权 <span class="pill">不依赖特定 AI</span></h2>
-          <p class="sub">你可以直接输入「待审批」「批准」或「批准 FR-002 使用 P-001」。审批前会显示需求、Path 和验收内容，并要求你确认。</p>
-          <div id="owner-chat-log" class="owner-chat-log" role="log" aria-live="polite"><div class="owner-chat-line system">你可以在这里直接对话批准需求。输入「待审批」开始。</div></div>
-          <div class="owner-chat-row">
-            <input id="owner-chat-text" type="text" maxlength="160" placeholder="例如：批准 FR-002 使用 P-001" aria-label="Owner 对话指令" />
-            <button class="btn primary" type="button" id="owner-chat-send">发送</button>
-          </div>
-          <p class="mu" style="margin-top:8px">这里只有 Owner 控制台会执行授权。第三方 Agent 聊天需经可信 Host 签名转发；模型生成的文字不会自动获得审批权限。</p>
-        </div>
         <div class="grid" id="inbox"></div>
         <div class="panel" style="margin-top: 18px">
           <h2>新建</h2>
@@ -472,45 +522,6 @@
         return res;
       }
 
-      function ownerChatLine(role, content) {
-        const log = $("owner-chat-log");
-        const item = document.createElement("div");
-        item.className = `owner-chat-line ${role}`;
-        item.textContent = content;
-        log.append(item);
-        log.scrollTop = log.scrollHeight;
-      }
-      async function ownerChatSend() {
-        const input = $("owner-chat-text");
-        const message = input.value.trim();
-        if (!message) return;
-        input.value = "";
-        ownerChatLine("owner", message);
-        const res = await api("/api/chat/preview", { message, project: currentProject || undefined });
-        if (!res.ok) {
-          ownerChatLine("system", `无法识别指令：${res.message ?? "请刷新重试"}`);
-          return;
-        }
-        if (res.kind !== "approve") {
-          ownerChatLine("system", res.text ?? "无法解析审批目标。");
-          return;
-        }
-        const acceptance = Array.isArray(res.acceptance) ? res.acceptance.join("\n") : "（未定义）";
-        const cmds = Array.isArray(res.testCmds) ? res.testCmds.join("\n") : "（未定义）";
-        const desc = `需求：${res.requirementId} · ${res.title}\nPath：${res.pathId}${res.rebindFrom ? `（当前绑定 ${res.rebindFrom}，批准后重绑）` : ""}\n允许范围：${(res.allowedPaths || []).join("、")}\n需求验收：\n${acceptance}\nPath 现有命令：\n${cmds}\n\n确认后由 DevControl 原有审批内核冻结契约。`;
-        ownerChatLine("system", desc);
-        if (!(await confirmSheet(`确认批准 ${res.requirementId}？`, desc, "确认批准"))) {
-          ownerChatLine("system", "已取消，本次没有提交审批。");
-          return;
-        }
-        const result = await owner("approve", {
-          requirementId: res.requirementId, pathId: res.pathId, channel: "console-chat",
-        });
-        ownerChatLine("system", result.ok
-          ? `已批准 ${res.requirementId} / ${res.pathId}，契约已冻结并留痕。`
-          : `审批失败：${result.message ?? result.code ?? "未知错误"}`);
-      }
-
       /**
        * 通用表单弹层：返回 { ok: true, values } 或 { ok: false }（取消）。
        * fields: [{ name, label, type: text|number|textarea|select, value, placeholder,
@@ -656,11 +667,68 @@
         const r = await openSheet({ title, desc, okText, danger: true, fields: [] });
         return r.ok;
       }
+      document.getElementById("nav-toggle").addEventListener("click", () => {
+        setNav(!document.body.classList.contains("nav-open"));
+      });
+      document.getElementById("nav-scrim").addEventListener("click", () => setNav(false));
+      // 侧栏里的链接点了就走：抽屉里不留下一个「半开」的状态
+      document.querySelector(".sidepanel").addEventListener("click", (e) => {
+        if (e.target.closest("a[href]")) setNav(false);
+      });
+      document.addEventListener("keydown", (e) => {
+        // Esc 关抽屉；弹层自己开着时先关弹层（dialog 的 Esc 由浏览器处理）
+        if (e.key === "Escape" && document.body.classList.contains("nav-open") && !document.getElementById("sheet").open) {
+          setNav(false);
+        }
+      });
+      /**
+       * 抽屉菜单：手机上侧栏收成一条顶栏，导航收进抽屉。
+       * 桌面端 .sidepanel 是 display:contents，这个函数只改 body 上的一个类，等于空操作。
+       */
+      function setNav(open) {
+        const body = document.body;
+        const wasOpen = body.classList.contains("nav-open");
+        body.classList.toggle("nav-open", open);
+        const toggle = $("nav-toggle");
+        toggle.setAttribute("aria-expanded", String(open));
+        toggle.setAttribute("aria-label", open ? "关闭菜单" : "打开菜单");
+        const panel = document.querySelector(".sidepanel");
+        if (open && !wasOpen) {
+          // 抽屉一开就把焦点送进去：键盘/读屏用户不该还要 Tab 穿过后面的正文
+          (panel.querySelector(".navbtn.active") ?? panel.querySelector(".navbtn"))?.focus({ preventScroll: true });
+        } else if (!open && wasOpen && panel.contains(document.activeElement)) {
+          toggle.focus({ preventScroll: true });
+        }
+      }
+
+      const VIEW_STORE = "devcontrol.view";
+      const VIEW_KEYS = Object.keys(VIEWS);
+      /**
+       * 刷新后停在哪一页：URL hash 优先（能收藏、能贴给别人），其次上次停留的位置。
+       * 单页应用里视图只活在内存中，刷新就回首页——人每次都得重新点一遍，等于没有导航。
+       */
+      function initialView() {
+        const fromHash = decodeURIComponent((location.hash || "").replace(/^#/, ""));
+        if (VIEW_KEYS.includes(fromHash)) return fromHash;
+        const saved = localStorage.getItem(VIEW_STORE);
+        return VIEW_KEYS.includes(saved) ? saved : "inbox";
+      }
+
       function switchView(view) {
-        for (const btn of document.querySelectorAll(".navbtn")) btn.classList.toggle("active", btn.dataset.nav === view);
-        for (const sec of document.querySelectorAll(".view")) sec.hidden = sec.dataset.view !== view;
-        $("view-title").textContent = VIEWS[view] ?? view;
-        if (view === "settings") renderSettings();
+        // 认不出来的名字一律回首页：宁可停在收件箱，也不要留一屏空白
+        const target = VIEW_KEYS.includes(view) ? view : "inbox";
+        for (const btn of document.querySelectorAll(".navbtn")) btn.classList.toggle("active", btn.dataset.nav === target);
+        for (const sec of document.querySelectorAll(".view")) sec.hidden = sec.dataset.view !== target;
+        const title = VIEWS[target] ?? target;
+        $("view-title").textContent = title;
+        $("nav-current").textContent = title;
+        // 记住当前位置；用 replaceState 而不是改 location.hash：刷新能回到同一页，但不往历史里塞垃圾
+        localStorage.setItem(VIEW_STORE, target);
+        const want = `${location.pathname}${location.search}#${target}`;
+        if (`${location.pathname}${location.search}${location.hash}` !== want) history.replaceState(null, "", want);
+        // 选完就收起抽屉：手机上抽屉盖着内容，不收起等于点了个寂寞
+        setNav(false);
+        if (target === "settings") renderSettings();
       }
 
       async function renderSettings() {
@@ -752,9 +820,28 @@
         $("inbox").innerHTML = cards.join("") || `<div class="empty">没有待处理项，交给 Agent 继续跑就行。</div>`;
         $("n-inbox").textContent = String(cards.length);
       }
+      /**
+       * 交付记录：任务做完了到底交付了什么、凭什么说它过了。
+       * 只读后端给的 completion(s)，不在这里拼事实；旧任务没有记录就明确写「未记录」。
+       */
+      function completionCell(t) {
+        const history = t.completions ?? [];
+        if (!history.length) return t.status === "done" ? `<div class="mu" style="margin-top:6px">交付记录：未记录</div>` : "";
+        const rows = history
+          .map((r) => {
+            const kind = r.closedBy === "force-close" ? "Owner 强制完成（未经验收）" : "验收通过";
+            const runs = (r.runs ?? []).map((run) => `<div class="mu">${esc(run.command)} → exit ${run.exitCode}</div>`).join("");
+            return `<div style="margin-top:8px"><b>第 ${r.sequence} 次 · ${kind}</b>
+              <div>${esc(r.summary)}</div>
+              <div class="mu">改动：${esc(r.changes)}</div>
+              <div class="mu">遗留：${esc(r.limitations)}</div>${runs}</div>`;
+          })
+          .join("");
+        return `<details style="margin-top:8px"><summary>交付记录 ${history.length} 次</summary>${rows}</details>`;
+      }
       function taskRow(t) {
         return `<tr><td class="mono nw">${esc(t.id)}</td><td class="nw">${esc(KIND_TEXT[t.kind] ?? t.kind)}</td><td>${esc(t.title)}</td><td class="nw">${tag(t.status)}</td>
-          <td class="mu">${t.acceptance.map((a) => esc(a.assertion)).join("<br>")}</td>
+          <td class="mu">${t.acceptance.map((a) => esc(a.assertion)).join("<br>")}${completionCell(t)}</td>
           <td class="nw"><div class="row inline">
             ${t.status === "backlog" || t.status === "parked" ? `<button class="btn" data-rank="${t.id}" title="置顶：内核挑活时会先看它（顺序就是优先级）">置顶</button>` : ""}
             <button class="btn" data-handoff="${t.id}" title="换人接手：先释放它，再生成一张交接卡">交接</button>
@@ -988,7 +1075,6 @@
         const b = e.target.closest("button");
         if (!b) return;
         if (b.id === "refresh") return tick(true);
-        if (b.id === "owner-chat-send") return ownerChatSend();
         if (b.id === "save-settings") {
           const res = await owner("settings.save", {
             settings: {
@@ -1179,20 +1265,15 @@
         if (b.dataset.ship) return owner("release.ship", { id: b.dataset.ship });
       });
 
-      $("owner-chat-text").addEventListener("keydown", (e) => {
-        if (e.key === "Enter" && !e.isComposing) {
-          e.preventDefault();
-          ownerChatSend();
-        }
-      });
-
       $("project-switch").addEventListener("change", (e) => {
         currentProject = e.target.value;
         localStorage.setItem("devcontrol.project", currentProject);
         tick(true);
       });
 
-      switchView("inbox");
+      // 打开/刷新都回到离开时那一页：地址栏里的 #view 优先，其次 localStorage
+      switchView(initialView());
+      addEventListener("hashchange", () => switchView(initialView()));
       tick();
       setInterval(tick, 4000);
       document.addEventListener("visibilitychange", () => {
