@@ -32,3 +32,15 @@ target/
 opencode.json
 .cursor/mcp.json
 .devcontrol/context-plan.md
+
+# 本地工具产物：不是这个项目的产品文件，别让它们长期占着 git status 的位置。
+# mcp-probe-kit 是某个客户端工具的缓存与生成物；.pi/ 是桌面端的会话目录；
+# .devcontrol/bin/ 是本机 init 出来的版本锁入口——它锁的是「本机装的那个版本」，
+# 提交进来只会让每个 clone 的人看到别人的版本号。目标项目里这层壳要进 git
+# （Agent 靠它跑，CI 也靠它），所以这条忽略只属于内核仓库自己。
+.mcp-probe-kit/
+.agents/skills/mcp-probe-kit/
+.cursor/rules/mcp-probe-kit.mdc
+docs/.mcp-probe/
+.pi/
+.devcontrol/bin/
