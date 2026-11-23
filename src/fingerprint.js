@@ -24,10 +24,14 @@ export function normalize(p) {
 export function inScope(file, scope) {
   const f = normalize(file);
   return scope.some((raw) => {
-    const s = normalize(raw).replace(/\/+$/, "");
-    // "." 表示整个仓库（根 Path）；.devcontrol/ 是内核自己的状态，永远不算在 scope 内
-    if (s === "." || s === "") return !f.startsWith(".devcontrol/");
-    return f === s || f.startsWith(s + "/");
+    let s = normalize(raw).replace(/\/+$/, "");
+    // "." 表示整个仓库（根 Path）；裸 "**" 同理（有人会这么写）
+    if (s === "." || s === "" || s === "**") return !f.startsWith(".devcontrol/");
+    // `dir/**` 是「这个目录 + 它下面的一切」。必须按路径段还原成 `dir` 再比较：
+    // 早先只做字符串前缀，`crates/x/**` 连 `crates/x/Cargo.toml` 都不算在范围内；
+    // 而简单去掉 `*/` 又会让 `dir/**` 吃掉 `dirapi/`——所以统一在这里落成目录前缀。
+    if (s.endsWith("/**")) s = s.slice(0, -3);
+    return f === s || f.startsWith(`${s}/`);
   });
 }
 

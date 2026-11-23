@@ -40,8 +40,8 @@ const actorOf = (db, taskId) => {
 
 /** 路径 a 是否覆盖路径 b；"." 表示根，覆盖一切（和 fingerprint 里的 inScope 保持一致） */
 function coversPath(a, b) {
-  const p = String(a).replace(/\/+$/, "");
-  const q = String(b).replace(/\/+$/, "");
+  const p = String(a).replace(/\/+$/, "").replace(/\/\*\*$/, "");
+  const q = String(b).replace(/\/+$/, "").replace(/\/\*\*$/, "");
   if (p === "" || p === ".") return true;
   return q === p || q.startsWith(`${p}/`);
 }

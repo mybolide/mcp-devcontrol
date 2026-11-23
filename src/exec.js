@@ -9,7 +9,15 @@ export const MAX_OUTPUT = 1024 * 1024;
  * 验收子进程的环境白名单：不把父进程的 token / cloud 凭证透传给仓库里的测试脚本。
  * 需要额外的变量请显式传进来（例如 DevControl 自己的 TASK 号）。
  */
-const ENV_ALLOW = ["PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "TEMP", "TMP", "SHELL", "USER", "LOGNAME", "SystemRoot", "COMSPEC", "PATHEXT"];
+const ENV_ALLOW = [
+  "PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "TEMP", "TMP", "SHELL", "USER", "LOGNAME",
+  "SystemRoot", "COMSPEC", "PATHEXT",
+  // Windows 上 rustup / cargo 从 USERPROFILE 找 home，从 RUSTUP_HOME / CARGO_HOME 找工具链与仓库。
+  // 缺了它们，`devcontrol run -- cargo test` 会报「rustup could not choose a version of cargo」，
+  // 而同一个命令在终端里明明能跑——验收证据因此永远出不来。
+  // 只放这几个定位用的变量；token、云凭证一律不继承。
+  "USERPROFILE", "RUSTUP_HOME", "CARGO_HOME", "RUSTUP_TOOLCHAIN",
+];
 
 export function buildEnv(extra = {}) {
   const env = { CI: "1" };
