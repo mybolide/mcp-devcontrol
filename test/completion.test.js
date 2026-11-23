@@ -21,11 +21,11 @@ function fixture() {
 
 const valid = { summary: "加入分层缓存", changes: "新增读取缓存与失效测试", limitations: "无" };
 
-test("completion migration is schema v5, idempotent, and does not invent legacy history", () => {
+test("completion migration is schema v6, idempotent, and does not invent legacy history", () => {
   const f = fixture();
   try {
-    assert.equal(SCHEMA_VERSION, 5);
-    assert.equal(f.db.prepare("SELECT value FROM meta WHERE key='schema_version'").get().value, "5");
+    assert.equal(SCHEMA_VERSION, 6);
+    assert.equal(f.db.prepare("SELECT value FROM meta WHERE key='schema_version'").get().value, "6");
     f.db.prepare("UPDATE meta SET value='4' WHERE key='schema_version'").run();
     f.db.exec("CREATE TABLE IF NOT EXISTS task_completions(id TEXT PRIMARY KEY, task_id TEXT NOT NULL, sequence INTEGER NOT NULL, actor TEXT NOT NULL, closed_at TEXT NOT NULL, closed_by TEXT NOT NULL, summary TEXT NOT NULL, changes TEXT NOT NULL, limitations TEXT NOT NULL, fingerprint TEXT, runs_json TEXT NOT NULL DEFAULT '[]', commits_json TEXT NOT NULL DEFAULT '[]', UNIQUE(task_id, sequence))");
     // Reopening through the idempotent DDL/migration path must preserve existing history.
@@ -33,7 +33,9 @@ test("completion migration is schema v5, idempotent, and does not invent legacy 
     f.db.close();
     const reopened = openDb(f.root);
     try {
-      assert.equal(reopened.prepare("SELECT value FROM meta WHERE key='schema_version'").get().value, "5");
+      assert.equal(reopened.prepare("SELECT value FROM meta WHERE key='schema_version'").get().value, "6");
+      // 老记录没有 delivery 这一列，迁移只补列、不猜历史：一律按 code 解释
+      assert.equal(listCompletions(reopened, "T-OLD")[0].delivery, "code");
       assert.equal(listCompletions(reopened, "T-OLD")[0].summary, "old summary");
       assert.equal(listCompletions(reopened, "T-UNRECORDED").length, 0);
     } finally {

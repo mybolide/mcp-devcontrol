@@ -37,6 +37,12 @@ const HINTS = {
   NOT_FOUND: "找不到你要的东西。先 devcontrol status 看清当前有什么，再挑一个真实存在的编号。",
   E_NOT_INIT: "这个目录还没有 devcontrol 项目。先 devcontrol init（想看看它怎么用就先 devcontrol help）。",
   E_NO_DELIVERY: "scope 里没有本任务的可提交改动：要么还没写，要么写到了 scope 外面（先看 devcontrol status 的 scope）。顺序是 ① 写代码 ② devcontrol run -- <契约命令> 留证据 ③ devcontrol commit ④ devcontrol close——commit 之后才有 Task-Id 归属，收口靠的就是它。",
+  // 纯验证任务（delivery=verify）不用提交：它只要把契约里的验收命令跑通。
+  // 这条单独给，是为了别让人照着 code 交付的四步去 commit——那正是 T-011 撞墙的地方。
+  E_VERIFY_COMMITTED:
+    "verify 任务（只跑验收、不交代码）名下有提交，两条路选一条：① 让真正的工作任务交付这份代码，这个任务只负责跑验收 ② 撤掉提交（git reset / revert）。别为了过门禁把 verify 改成 code——那是把纪律当摆设。",
+  E_EVIDENCE_STALE_HEAD:
+    "verify 任务的证据是在别的代码版本上跑的（HEAD 变了）。verify 不提交，HEAD 一动就说明代码被改过：重跑一遍验收命令再收口，devcontrol run -- <契约命令>。",
   E_INHERITED_CHANGE:
     "这些改动在你接活之前就存在，不是这个任务干的（多半是上一任留下的）。确认要一起提交就加 --take-over；不想背这个锅就先 git stash 或让上一任提交掉。",
   E_HASH_MISMATCH: "需求内容在你看到之后被改过。刷新控制台，按最新的内容重新批准。",

@@ -146,6 +146,8 @@ export const ENV_ONLY_CODES = new Set([
   "E_TIMEOUT",
   "E_NO_EVIDENCE",
   "E_EVIDENCE_STALE",
+  // verify 交付的证据绑定 HEAD：HEAD 一动就得重跑，属于「补一步就好」。
+  "E_EVIDENCE_STALE_HEAD",
   "E_NO_DELIVERY",
   // 「忘了说一句」和「代码被拒」不是一回事：它补一句话就能过，不该记成返工轮次，
   // 也不该连锁触发 E_NEED_RESOLUTION（那个是「你返工过，解释怎么解决的」）。
@@ -806,6 +808,16 @@ export function taskAdjust(db, root, input) {
     if (!t) fail("NOT_FOUND", `任务不存在：${input.taskId}`);
     const scope = input.scope ?? t.scope;
     const budget = input.budgetLines ?? t.budget_lines;
+    // 交付模式：Owner 是唯一能改它的通道（Agent 只能在 task.create 时选一次）。
+    // 这是 T-011 那类「纯验证任务被当成代码任务派下去」的补救阀门，所以必须留：
+    // 但改它等于改这次交付的验收口径，必须留审计，且已收口的任务不许改（那是改历史）。
+    const delivery = input.delivery ?? t.delivery ?? "code";
+    if (!["code", "verify"].includes(delivery)) {
+      fail("INVALID_ARGUMENT", `交付模式只能是 code 或 verify，收到 ${String(input.delivery)}`);
+    }
+    if (delivery !== t.delivery && t.status === "done") {
+      fail("E_ILLEGAL_TRANSITION", `${t.id} 已收口，不能改交付模式（那会改写这条交付的性质）`);
+    }
     // Owner 放宽 scope 也要守同一道边界：否则 Agent 求 Owner「把 /tmp/x 加进 scope」，
     // 这条路一样能把仓库外的文件变成「内核批准过」的（T-124）。
     assertScopeInsideRepo(scope);
@@ -823,14 +835,21 @@ export function taskAdjust(db, root, input) {
         }
       }
     }
-    db.prepare("UPDATE tasks SET scope_json=?, budget_lines=?, updated_at=? WHERE id=?").run(
+    db.prepare("UPDATE tasks SET scope_json=?, budget_lines=?, delivery=?, updated_at=? WHERE id=?").run(
       JSON.stringify(scope),
       Number(budget),
+      delivery,
       now(),
       t.id,
     );
-    logEvent(db, { actor: "owner", channel: "owner", action: "task.adjust", taskId: t.id, detail: input.reason ?? "" });
-    return { taskId: t.id, scope, budgetLines: budget };
+    logEvent(db, {
+      actor: "owner",
+      channel: "owner",
+      action: "task.adjust",
+      taskId: t.id,
+      detail: `${delivery !== t.delivery ? `交付 ${t.delivery} → ${delivery}；` : ""}${input.reason ?? ""}`,
+    });
+    return { taskId: t.id, scope, budgetLines: budget, delivery };
   });
 }
 

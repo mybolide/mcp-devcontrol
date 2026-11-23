@@ -3,7 +3,7 @@ import { DatabaseSync } from "node:sqlite";
 import fs from "node:fs";
 import path from "node:path";
 
-export const SCHEMA_VERSION = 5;
+export const SCHEMA_VERSION = 6;
 export const DATA_DIR = ".devcontrol";
 export const DB_FILE = "state.db";
 
@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS paths(
   status TEXT NOT NULL, hash TEXT, contract_commit TEXT, approved_at TEXT);
 CREATE TABLE IF NOT EXISTS tasks(
   id TEXT PRIMARY KEY, requirement_id TEXT NOT NULL, path_id TEXT NOT NULL,
-  kind TEXT NOT NULL, title TEXT NOT NULL, status TEXT NOT NULL,
+  kind TEXT NOT NULL, delivery TEXT NOT NULL DEFAULT 'code', title TEXT NOT NULL, status TEXT NOT NULL,
   scope_json TEXT NOT NULL, acceptance_json TEXT NOT NULL, depends_on_json TEXT NOT NULL DEFAULT '[]',
   budget_lines INTEGER NOT NULL DEFAULT 1200, changed_lines INTEGER NOT NULL DEFAULT 0,
   rank INTEGER NOT NULL DEFAULT 0,
@@ -72,6 +72,7 @@ CREATE TABLE IF NOT EXISTS task_completions(
   actor TEXT NOT NULL, closed_at TEXT NOT NULL, closed_by TEXT NOT NULL,
   summary TEXT NOT NULL, changes TEXT NOT NULL, limitations TEXT NOT NULL,
   fingerprint TEXT, runs_json TEXT NOT NULL DEFAULT '[]', commits_json TEXT NOT NULL DEFAULT '[]',
+  delivery TEXT NOT NULL DEFAULT 'code',
   UNIQUE(task_id, sequence));
 CREATE INDEX IF NOT EXISTS ix_task_completions_task ON task_completions(task_id, sequence DESC);
 CREATE TRIGGER IF NOT EXISTS task_completions_no_update
@@ -148,6 +149,14 @@ function migrate(db) {
         SELECT RAISE(ABORT, 'task completion history is immutable');
       END;
     `);
+  }
+  // v5 → v6：任务的交付模式。code（默认）= 必须交出归属提交；verify = 纯验证，
+  // 只需要跑通契约里冻结的验收命令，反向禁止提交。老任务一律按 code 解释。
+  if (from < 6) {
+    const tc = cols("tasks");
+    if (!tc.has("delivery")) db.exec("ALTER TABLE tasks ADD COLUMN delivery TEXT NOT NULL DEFAULT 'code'");
+    const cc = cols("task_completions");
+    if (!cc.has("delivery")) db.exec("ALTER TABLE task_completions ADD COLUMN delivery TEXT NOT NULL DEFAULT 'code'");
   }
   // 版本号必须在所有迁移之后写：先写再迁移的话，中途失败会留下「版本已是新库、表却没建」的半截库。
   if (!cur) db.prepare("INSERT INTO meta(key,value) VALUES('schema_version',?)").run(String(SCHEMA_VERSION));

@@ -150,7 +150,10 @@ export function bootstrap(db, root, extra = {}) {
       //   ① 写代码 → ② 自己跑验收留证据 → ③ commit → ④ close
       // 「有没有提交」「有没有证据」是内核**数得出来**的事实，不是猜的。
       const weak = (metaGet(db, "mode") ?? "git") === "weak";
-      const commits = weak ? 1 : shipped(db, root, current);
+      // verify 任务根本没有「提交」这一步：把 commits 直接当成已交付，
+      // 否则 next 会一直催它去 commit——照做必然撞 E_NO_DELIVERY（T-011 就卡在这）。
+      const verify = current.delivery === "verify";
+      const commits = weak || verify ? 1 : shipped(db, root, current);
       const evidence = hasEvidence(db, current);
       const pathRow = paths.find((p) => p.id === current.path_id);
       const cmds = pathRow?.testCmds ?? [];
@@ -184,12 +187,20 @@ export function bootstrap(db, root, extra = {}) {
         return {
           action: "task.work",
           args: { id: current.id },
-          why: `${current.id} 已经提交，但还没有验收证据：先自己跑一遍（内核不替你跑）`,
+          why: verify
+            ? `${current.id} 是 verify 任务（只跑验收、不交代码）：跑通契约里的验收命令就能收口，不要 commit`
+            : `${current.id} 已经提交，但还没有验收证据：先自己跑一遍（内核不替你跑）`,
           steps: [`devcontrol run -- ${runCmd}`, `devcontrol close ${current.id}`],
           cli: cmds.length ? `devcontrol run -- ${cmds[0]}` : null,
         };
       }
-      return { action: "task.close", args: { id: current.id }, why: `${current.id} 代码和证据都齐了，收口` };
+      return {
+        action: "task.close",
+        args: { id: current.id },
+        why: verify
+          ? `${current.id} 的验收证据齐了（verify 交付：证据绑定当前 HEAD，代码没换过），收口`
+          : `${current.id} 代码和证据都齐了，收口`,
+      };
     }
     if (ready[0]) return { action: "task.claim", args: { id: ready[0].id }, why: `依赖已满足，下一个可领取：${ready[0].title}` };
     if (gaps.length) {

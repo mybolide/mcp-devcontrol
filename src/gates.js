@@ -161,14 +161,24 @@ export function taskCreate(db, root, input, actor = "agent") {
     const rawKind = String(input.kind ?? "feature").trim().toLowerCase();
     const kind = KINDS.includes(rawKind) ? rawKind : KIND_ALIASES[rawKind];
     if (!kind) fail("INVALID_ARGUMENT", `未知任务类型 ${rawKind}，可用 ${KINDS.join(" / ")}（fix→bugfix、feat→feature、refactor/docs/ci→chore）`);
+    // 交付模式：code 交出归属提交；verify 只交出「跑通验收」的证据。
+    // 它必须独立于 kind：kind 只是分类，把门禁挂在分类上等于让标签替代事实（T-014 的老坑）。
+    const DELIVERIES = ["code", "verify"];
+    const DELIVERY_ALIASES = { evidence: "verify", "evidence-only": "verify", "verify-only": "verify" };
+    const rawDelivery = String(input.delivery ?? "code").trim().toLowerCase();
+    const delivery = DELIVERIES.includes(rawDelivery) ? rawDelivery : DELIVERY_ALIASES[rawDelivery];
+    if (!delivery) {
+      fail("INVALID_ARGUMENT", `未知交付模式 ${rawDelivery}，可用 ${DELIVERIES.join(" / ")}（code=交出提交，verify=只跑验收、不交代码）`);
+    }
     const id = `T-${String(n).padStart(3, "0")}`;
     db.prepare(
-      "INSERT INTO tasks(id,requirement_id,path_id,kind,title,status,scope_json,acceptance_json,depends_on_json,budget_lines,base_head,contract_hash,contract_commit,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+      "INSERT INTO tasks(id,requirement_id,path_id,kind,delivery,title,status,scope_json,acceptance_json,depends_on_json,budget_lines,base_head,contract_hash,contract_commit,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
     ).run(
       id,
       req.id,
       p.id,
       kind,
+      delivery,
       title,
       "backlog",
       JSON.stringify(scope),
@@ -301,6 +311,13 @@ export function taskClaim(db, root, input, actor = "agent") {
       scope: t.scope,
       acceptance: t.acceptance,
       dependsOn: t.dependsOn,
+      // 交付模式必须跟着 claim 一起下发：verify 任务没有 commit 这一步，
+      // 照抄 code 的四步会在 commit 上空转（T-011）。
+      delivery: t.delivery ?? "code",
+      cadence:
+        t.delivery === "verify"
+          ? [`devcontrol run -- ${contractCommands(body)[0] ?? "<契约验收命令>"}`, `devcontrol close ${t.id}（verify 不用 commit）`]
+          : [`devcontrol run -- ${contractCommands(body)[0] ?? "<契约验收命令>"}`, 'devcontrol commit -m "…"', `devcontrol close ${t.id}`],
       // Agent 开工时就该知道「代码要怎么写」，而不是收口被拦才第一次听说
       standards: body.standards ?? [],
       // 和别的在办任务共享的目录：不冲突，但这些地方别同时改
@@ -459,12 +476,29 @@ export async function taskClose(db, root, input, opts = {}) {
     // 弱模式（无 git）：没有 base_head，跳过提交归属与 diff 统计，只跑验收 + 指纹
     const weak = !t.base_head;
     const head0 = weak ? null : head(root);
+    // 交付模式：verify 不需要归属提交（它就是「只跑验收」），但反过来严禁提交。
+    const verify = t.delivery === "verify";
     let files = [];
     let lines = 0;
     let owned = [];
     // 规范观测：内核只报事实，不判违规（弱模式也要有，所以放在 if (!weak) 外面）
     const observations = [];
-    if (!weak) {
+    // verify 交付：不要求归属提交（这正是它存在的理由），但反过来严禁提交。
+    // 否则「声明 verify」就成了绕开归属、scope、diff 预算三条检查的后门——
+    // 那比原来的缺口更糟。所以这里查的不是「有没有交付」，是「有没有偷偷交了产品代码」。
+    if (!weak && verify) {
+      const mine = git(root, ["log", "--format=%H", `--grep=Task-Id: ${t.id}`, "HEAD"])
+        .split("\n")
+        .map((x) => x.trim())
+        .filter(Boolean);
+      if (mine.length) {
+        fail("E_VERIFY_COMMITTED", `${t.id} 的交付模式是 verify（只跑验收、不交代码），但它名下有 ${mine.length} 个提交`, {
+          commits: mine,
+          hint: `要么让真正的工作任务交付这份代码、这里改成 code 交付；要么撤掉提交。verify 收口只要两步：devcontrol run -- <契约命令>，然后 devcontrol close ${t.id}`,
+        });
+      }
+    }
+    if (!weak && !verify) {
 
     // R0
     // 区间起点要兜一层：Owner 调预算/重批会在任务提交之后产生新的契约提交，
@@ -688,6 +722,16 @@ export async function taskClose(db, root, input, opts = {}) {
         last = "E_NO_EVIDENCE";
         throw new DFError("E_NO_EVIDENCE", `没有 ${command} 的测试证据`, { command });
       }
+      // verify 交付不产生提交，所以「证据是在哪份代码上跑出来的」必须就是现在这份。
+      // 指纹只覆盖 scope 内的内容；代码要是在 scope 外被别人动过，指纹对不出来，但结果同样不算数。
+      if (verify && same.head && head0 && same.head !== head0) {
+        last = "E_EVIDENCE_STALE_HEAD";
+        throw new DFError(
+          "E_EVIDENCE_STALE_HEAD",
+          `${command} 的证据是在 ${String(same.head).slice(0, 8)} 上跑的，当前 HEAD 已是 ${head0.slice(0, 8)}：verify 任务换过代码就得重跑：devcontrol run -- ${command}`,
+          { command, runId: same.id, runHead: same.head, head: head0 },
+        );
+      }
       const passed = evaluate(predicate, { exit: same.exit_code, stdout: same.output });
       runs.push({ idx, runId: same.id, exit: same.exit_code, passed, command });
       mark("evidence-done", `证据 ${idx + 1}/${t.acceptance.length}：${command} ${passed ? "满足断言" : `不满足（exit ${same.exit_code}）`}`);
@@ -760,6 +804,7 @@ export async function taskClose(db, root, input, opts = {}) {
             fingerprint: fpNow,
             runs: runSnapshot,
             commits: commitSnapshot,
+            delivery: t.delivery ?? "code",
           })
         : null;
       if (observations.length) {
@@ -778,7 +823,9 @@ export async function taskClose(db, root, input, opts = {}) {
         at: closedAt,
         detail: weak
           ? `弱模式 · ${runs.length} 断言`
-          : `${lines} 行 / ${files.length} 文件 / ${runs.length} 断言${observations.length ? ` / ${observations.length} 条规范提醒` : ""}`,
+          : verify
+            ? `verify 交付 · ${runs.length} 断言（无提交）`
+            : `${lines} 行 / ${files.length} 文件 / ${runs.length} 断言${observations.length ? ` / ${observations.length} 条规范提醒` : ""}`,
       });
       return record;
     });
@@ -820,6 +867,7 @@ export async function taskClose(db, root, input, opts = {}) {
       // 收口时顺手补的托管文件（MCP 连上时因为「有在办任务」被跳过的那次）
       agentFiles,
       weak,
+      delivery: t.delivery ?? "code",
     };
   } catch (error) {
     last = last ?? error.code ?? "E_INTERNAL";

@@ -56,14 +56,15 @@ export function insertCompletion(db, {
   fingerprint = null,
   runs = [],
   commits = [],
+  delivery = "code",
 }) {
   const sequence = db.prepare("SELECT COALESCE(MAX(sequence),0)+1 AS n FROM task_completions WHERE task_id=?").get(taskId).n;
   const id = `completion-${randomUUID()}`;
   db.prepare(`
     INSERT INTO task_completions(
       id, task_id, sequence, actor, closed_at, closed_by,
-      summary, changes, limitations, fingerprint, runs_json, commits_json
-    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+      summary, changes, limitations, fingerprint, runs_json, commits_json, delivery
+    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
   `).run(
     id,
     taskId,
@@ -77,6 +78,7 @@ export function insertCompletion(db, {
     fingerprint,
     JSON.stringify(runs),
     JSON.stringify(commits),
+    delivery,
   );
   return { id, taskId, sequence, closedAt, closedBy };
 }
@@ -110,6 +112,7 @@ export function mapCompletion(row) {
     changes: row.changes,
     limitations: row.limitations,
     fingerprint: row.fingerprint,
+    delivery: row.delivery ?? "code",
     runs: JSON.parse(row.runs_json),
     commits: JSON.parse(row.commits_json),
   };
