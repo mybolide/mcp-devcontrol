@@ -49,7 +49,11 @@ export function availableActions(db) {
   const doing = tasks.filter((t) => t.status === "doing");
   const { ok } = claimableTasks(db, tasks);
   const approvedReq = reqs.some((r) => ["approved", "building"].includes(r.status));
-  const approvedPath = paths.some((p) => p.status === "approved");
+  // 只有「属于某条已批准需求」的 approved Path 才算有开发权限。
+  // 别家需求有一条 approved Path 不算数——那正是跨需求搭便车的入口。
+  const approvedPath = paths.some(
+    (p) => p.status === "approved" && reqs.some((r) => ["approved", "building"].includes(r.status) && r.id === p.requirement_id),
+  );
   const acts = new Set(["bootstrap", "bug.report"]);
   // Path 草案不授予权限：只要有尚在进行的需求、且当前没有 Agent 在办任务，
   // 就允许 Agent 提交新的范围提案；真正生效仍由 Owner 批准并冻结契约。
@@ -112,7 +116,8 @@ export function bootstrap(db, root, extra = {}) {
   const where = extra.console ? `或打开控制台 ${extra.console}` : "或起控制台：devcontrol serve";
   const blockers = [];
   for (const r of reqs.filter((r) => r.status === "draft")) {
-    const p = draftPaths[0] ?? approvedPaths[0];
+    // 只拿这条需求自己的 Path：别的需求的 draft/approved 都不能拿来给这条需求当依据
+    const p = draftPaths.find((x) => x.requirement_id === r.id) ?? approvedPaths.find((x) => x.requirement_id === r.id);
     blockers.push({
       code: "E_NEED_APPROVED",
       requirementId: r.id,
@@ -136,8 +141,9 @@ export function bootstrap(db, root, extra = {}) {
 
   // 内核自己排优先级：收口 > 领取（依赖已满足）> 补拆（验收没被覆盖）> 等阻塞。
   // next.args 必须能原样执行：Agent 照抄就成功，不要逼它自己补 pathId/kind/scope。
-  const approvedPath = (reqId) =>
-    paths.find((p) => p.status === "approved" && p.requirement_id === reqId) ?? paths.find((p) => p.status === "approved");
+  // Path 必须属于这条需求本身。**不许兜底到「任意已批准的 Path」**：
+  // 那样 FR-004 没有 Path 时会悄悄拿到 FR-003 的 P-002，等于拿别人的授权开工。
+  const approvedPath = (reqId) => paths.find((p) => p.status === "approved" && p.requirement_id === reqId);
   const next = (() => {
     if (current) {
       // 一条在办任务要按顺序走三步，next 每一步都要说对，不能一上来就催收口：
@@ -189,7 +195,7 @@ export function bootstrap(db, root, extra = {}) {
     if (gaps.length) {
       const gap = gaps[0];
       const pth = approvedPath(gap.id);
-      if (!pth) return { action: "wait", args: {}, why: `需求 ${gap.id} 没有已批准的 Path，等 Owner 批准` };
+      if (!pth) return { action: "wait", args: {}, requirementId: gap.id, why: `需求 ${gap.id} 没有自己的已批准 Path：等 Owner 为它批准（不能借用别的需求的 Path）` };
       return {
         action: "task.create",
         args: {
