@@ -72,18 +72,49 @@ function startMcp(root, extraEnv = {}) {
   };
 }
 
-async function startConsole(root, port = null, extraEnv = {}, extraArgs = []) {
-  // Ask the OS for an available loopback port instead of guessing one from a
-  // broad range: Windows sandboxes may reserve otherwise-valid ports (EACCES).
-  if (port === null) {
-    const probe = net.createServer();
-    await new Promise((resolve, reject) => {
-      probe.once("error", reject);
-      probe.listen(0, "127.0.0.1", resolve);
+/**
+ * 让操作系统当场给一个空端口。
+ *
+ * 不用「随机挑 20000-40000」：那一段在 Windows 上会撞 Hyper-V 保留段（EACCES）
+ * 和别的用例（EADDRINUSE），表现是随机某条用例失败——排查时会去怀疑产品代码。
+ * bind(0) 由内核分配，撞上的概率低得多。
+ */
+function bindPort() {
+  return new Promise((resolve, reject) => {
+    const srv = net.createServer();
+    srv.unref();
+    srv.once("error", reject);
+    srv.listen(0, "127.0.0.1", () => {
+      const { port } = srv.address();
+      srv.close(() => resolve(port));
     });
-    port = probe.address().port;
-    await new Promise((resolve, reject) => probe.close((error) => error ? reject(error) : resolve()));
-  }
+  });
+}
+
+/** 一次要多个互不相同的端口：同时占住再一起放，免得拿到同一个号 */
+function freePorts(count) {
+  const servers = [];
+  const open = (srv) =>
+    new Promise((resolve, reject) => {
+      srv.once("error", reject);
+      srv.listen(0, "127.0.0.1", resolve);
+    });
+  return (async () => {
+    try {
+      for (let i = 0; i < count; i += 1) {
+        const srv = net.createServer();
+        srv.unref();
+        await open(srv);
+        servers.push(srv);
+      }
+      return servers.map((s) => s.address().port);
+    } finally {
+      await Promise.all(servers.map((s) => new Promise((resolve) => s.close(resolve))));
+    }
+  })();
+}
+
+function spawnConsole(root, port, extraEnv = {}, extraArgs = []) {
   const child = spawn(process.execPath, [BIN, "serve", "--port", String(port), ...extraArgs], {
     env: { ...process.env, DEVCONTROL_ROOT: root, ...extraEnv },
     stdio: ["ignore", "pipe", "pipe"],
@@ -106,6 +137,22 @@ async function startConsole(root, port = null, extraEnv = {}, extraArgs = []) {
       reject(new Error(`serve 退出 ${code}：${out}`));
     });
   });
+}
+
+/** 起一个真控制台。调用方没指定端口就自己找，撞端口换一个再试——环境问题不该记成产品失败 */
+async function startConsole(root, port, extraEnv = {}, extraArgs = []) {
+  let lastError = null;
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const chosen = port ?? (await bindPort());
+    try {
+      return await spawnConsole(root, chosen, extraEnv, extraArgs);
+    } catch (error) {
+      lastError = error;
+      // 指定了端口就是有意义的（例如验「端口上是别的项目就绝不杀」），不能偷偷换掉
+      if (port !== undefined) throw error;
+    }
+  }
+  throw lastError;
 }
 
 function runCli(root, args, env = {}) {
@@ -212,7 +259,8 @@ test("MCP：initialize / tools/list / claim 默认 actor / bootstrap", async () 
 test("MCP 连上就拉起控制台：同版本复用，别人的端口不碰", async () => {
   const root = makeRepo();
   initFlow(root);
-  const port = 21000 + Math.floor(Math.random() * 2000);
+  // 两个互不相同的空闲端口：本项目与另一个项目分别使用。
+  const [port, foreignPort] = await freePorts(2);
   const env = { DEVCONTROL_CONSOLE: "1", DEVCONTROL_PORT: String(port), DEVCONTROL_RESTART_GRACE_MS: "0" };
   const pids = [];
   const getJson = async (url) => (await fetch(url)).json();
@@ -268,13 +316,13 @@ test("MCP 连上就拉起控制台：同版本复用，别人的端口不碰", a
     // 端口上是别的项目 → 绝不杀，换下一个端口
     const other = makeRepo();
     initFlow(other);
-    const foreign = await startConsole(other, port + 1);
+    const foreign = await startConsole(other, foreignPort);
     try {
-      const third = startMcp(root, { DEVCONTROL_CONSOLE: "1", DEVCONTROL_PORT: String(port + 1) });
+      const third = startMcp(root, { DEVCONTROL_CONSOLE: "1", DEVCONTROL_PORT: String(foreignPort) });
       try {
         const boot3 = await third.call("tools/call", { name: "devcontrol", arguments: { action: "bootstrap" } });
         const url3 = JSON.parse(boot3.result.content[0].text).console;
-        assert.equal(url3, `http://127.0.0.1:${port + 2}/`);
+        assert.notEqual(url3, `${foreign.base}/`, "不能复用其他项目占用的端口");
         const mine = await getJson(`${url3}api/meta`);
         assert.equal(mine.root, root);
         pids.push(mine.pid);
@@ -394,7 +442,7 @@ test("CLI 全链路：init → claim → commit → close → status", async () 
 
   const evidence = await run(["run", "--", "npm test"]);
   assert.equal(evidence.code, 0, evidence.out);
-  const close = await run(["close"]);
+  const close = await run(["close", "--summary", "夹具结论", "--changes", "夹具改动", "--limitations", "无"]);
   assert.equal(close.code, 0, close.out);
   assert.equal(getTask(db, task.id).status, "done");
 

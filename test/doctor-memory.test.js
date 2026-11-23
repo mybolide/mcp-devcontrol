@@ -105,9 +105,10 @@ test("doctor：真的索引失败才是 warn，且只算本项目的", () => {
   assert.equal(items.some((i) => i.code === "MEMORY_INDEX_OFFLINE"), false);
 });
 
-test("Agent 说明里写清了：Owner 审批必须真人确认，不能由 Agent 代签", () => {
+test("Agent 说明里写清了：Owner 的审批要真人确认，Agent 不能代签", () => {
   const body = skillContent();
   assert.match(body, /Owner 的审批需要真人确认，Agent 不能代签/, "要有一节专门讲这件事");
+  assert.match(body, /devcontrol_request_owner_approval/, "要说清哪条通道能请求真人确认");
   assert.match(body, /devcontrol serve/, "要说清 Owner 用什么界面");
   assert.match(body, /不要改用 Agent shell 冒充 Owner/, "要明确禁止绕过");
   // 人类动作清单里几条最容易踩的要出现

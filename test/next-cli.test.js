@@ -19,14 +19,18 @@ import { listTasks } from "../src/store.js";
 
 /** 在项目里执行一行 next 命令（拆成 argv，不经 shell：测的是命令本身，不是 shell） */
 function runLine(root, line) {
-  // 我们的 quote() 只产生单引号包裹；这里用一个最小的切分器还原参数
+  // next 给的引号按平台不同（POSIX 单引号、Windows 双引号），这里用一个最小的切分器
+  // 还原参数：两种引号都支持，不做变量展开——测的是命令本身，不是 shell。
   const argv = [];
   let cur = "";
-  let inQuote = false;
+  let quoteChar = null;
   for (let i = 0; i < line.length; i += 1) {
     const c = line[i];
-    if (c === "'") inQuote = !inQuote;
-    else if (c === " " && !inQuote) {
+    if (quoteChar) {
+      if (c === quoteChar) quoteChar = null;
+      else cur += c;
+    } else if (c === "'" || c === '"') quoteChar = c;
+    else if (c === " ") {
       if (cur) argv.push(cur);
       cur = "";
     } else cur += c;
@@ -81,14 +85,20 @@ test("带空格和中文的标题被引号包住，不会被 shell 拆散", () =
     title: "周报：把事件流变成人能读的东西",
     acceptance: [{ deriveFrom: 0, assertion: "npm test :: exit==0" }],
   });
-  assert.ok(line.includes(`'周报：把事件流变成人能读的东西'`), line);
-  assert.ok(line.includes(`'npm test :: exit==0'`), "断言里的空格和 :: 也要保住");
+  // 引号形式按平台不同（cmd.exe 不认单引号），所以期望值也从 quote() 取，不写死
+  assert.ok(line.includes(quote("周报：把事件流变成人能读的东西")), line);
+  assert.ok(line.includes(quote("npm test :: exit==0")), "断言里的空格和 :: 也要保住");
 });
 
 test("quote 只管引号，不改内容：标题里的单引号也得活着", () => {
-  assert.equal(quote("it's fine"), `'it'\\''s fine'`);
-  assert.equal(quote("plain"), "plain");
-  assert.equal(quote("has space"), "'has space'");
+  assert.equal(quote("plain"), "plain", "没有特殊字符就别加引号");
+  // 去掉外层引号 + 还原转义后，必须原样等于输入：「加引号」不等于「改内容」
+  const strip = (v) => {
+    if (v.startsWith('"')) return v.slice(1, -1);
+    return v.slice(1, -1).split("'\\''").join("'");
+  };
+  assert.equal(strip(quote("it's fine")), "it's fine");
+  assert.equal(strip(quote("has space")), "has space");
 });
 
 test("不认识的 action 就返回 null——宁可不说，也不编一条跑不通的命令", () => {

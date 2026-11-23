@@ -58,8 +58,13 @@ test("完整一轮：收件 → 批准 → 建任务 → 领取 → 提交 → �
   assert.match(cmd1, /^devcontrol task create /, `最后一行应当能直接粘进终端：${cmd1}`);
 
   // ④ 照着执行（拆成 argv，不经 shell）
+  // next 给的引号按平台不同（POSIX 单引号 / Windows 双引号）：两种都得还原。
+  // 不还原就把 `--title "…"` 连引号一起交给内核，报出来的却是「断言缺少 ::」——
+  // 失败信息和真因差三条街，排查的人会去改契约。
   const runLine = (line) => {
-    const argv = line.replace(/^devcontrol /, "").match(/'[^']*'|\S+/g).map((s) => s.replace(/^'|'$/g, ""));
+    const argv = (line.replace(/^devcontrol /, "").match(/'[^']*'|"[^"]*"|\S+/g) ?? []).map((s) =>
+      /^(['"]).*\1$/.test(s) ? s.slice(1, -1) : s,
+    );
     const out = cli(root, ...argv);
     assert.equal(out.code, 0, `命令失败：${line}\n${out.stdout}${out.stderr}`);
     return out;
@@ -80,7 +85,7 @@ test("完整一轮：收件 → 批准 → 建任务 → 领取 → 提交 → �
   const n3 = cli(root, "next");
   const cmd3 = n3.stdout.trim().split("\n").pop();
   assert.match(cmd3, /^devcontrol close T-\d+$/);
-  const closed = runLine(cmd3);
+  const closed = runLine(`${cmd3} --summary "夹具结论" --changes "夹具改动" --limitations "无"`);
   const payload = JSON.parse(closed.stdout.slice(closed.stdout.indexOf("{")));
   assert.equal(payload.ok, true, `收口应当成功：${closed.stdout}`);
   assert.equal(payload.closedBy, "evidence", "收口靠的是证据");
@@ -124,11 +129,10 @@ test("approve 的路径：批准后契约真的进 git，Agent 改不动它", ()
   assert.ok(contracts.length >= 1, "契约文件要落盘");
 });
 
-test("谁批准的要查得到：终端批准记 channel=cli，不是冒充控制台点的", () => {
+test("谁批准的要查得到：终端批准记 channel=cli，不是冒充控制台点的", async () => {
   const root = soloProject();
   cli(root, "intake", "标题", "--accept", "npm test :: exit==0");
   cli(root, "approve", "FR-001", "--path", "P-001");
-  // 不依赖机器是否额外安装 sqlite3 CLI；项目运行时本来就通过 node:sqlite 读写这份库。
   const db = openDb(root);
   const rows = db.prepare("select channel||'|'||action as event from events where action like 'req.%' order by id")
     .all().map((row) => row.event);

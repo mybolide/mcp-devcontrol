@@ -5,11 +5,42 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
+import net from "node:net";
 import { buildEnv } from "../src/exec.js";
 import { compact } from "../src/mcp.js";
 import { makeRepo, initFlow, BIN, closeProven } from "./helpers.js";
 
-function startConsole(root, port = 20000 + Math.floor(Math.random() * 20000)) {
+/**
+ * 起一个真控制台。端口交给操作系统分配（bind(0)），撞上了就换一个：
+ * 随机挑 20k-40k 的写法在 Windows 上会撞 Hyper-V 保留段（EACCES），
+ * 撞一次就变成「某条安全用例随机失败」，看着像回归。
+ */
+function bindPort() {
+  return new Promise((resolve, reject) => {
+    const srv = net.createServer();
+    srv.unref();
+    srv.once("error", reject);
+    srv.listen(0, "127.0.0.1", () => {
+      const { port } = srv.address();
+      srv.close(() => resolve(port));
+    });
+  });
+}
+
+async function startConsole(root) {
+  let lastError = null;
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const port = await bindPort();
+    try {
+      return await spawnConsole(root, port);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError;
+}
+
+function spawnConsole(root, port) {
   const child = spawn(process.execPath, [BIN, "serve", "--port", String(port)], {
     env: { ...process.env, DEVCONTROL_ROOT: root },
     stdio: ["ignore", "pipe", "pipe"],

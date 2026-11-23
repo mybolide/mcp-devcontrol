@@ -66,7 +66,7 @@ const followCli = (root, cli) => {
     });
     return { code: 0, stdout, stderr: "" };
   } catch (e) {
-    return { code: e.status ?? 1, stdout: e.stdout ?? "", stderr: e.stderr ?? "" };
+    return { code: e.status ?? 1, stdout: e.stdout ?? "", stderr: e.stderr ?? String(e.message) };
   }
 };
 
@@ -129,7 +129,7 @@ test("整条链一次走完：intake → approve → create → claim → run �
   fs.writeFileSync(`${root}/src/b.js`, "export const b = 2;\n");
   assert.equal(run(root, ["run", "--", "npm", "test"]).code, 0);
   assert.equal(run(root, ["commit", "-m", "feat: add b"]).code, 0);
-  const closed = run(root, ["close", "T-001"]);
+  const closed = run(root, ["close", "T-001", "--summary", "夹具结论", "--changes", "夹具改动", "--limitations", "无"]);
   assert.equal(closed.code, 0, `收口失败：${closed.stderr}`);
   assert.match(closed.stdout, /"closedBy": "evidence"/);
 });

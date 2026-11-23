@@ -8,10 +8,19 @@
 // 所以内核自己算命令：它知道两边的对应关系，让 Agent 少做一次翻译，
 // 就少一次翻错的机会（T-102）。
 
-/** shell 引号：参数里常有中文标题、:: 、空格，裸拼会被 shell 拆开 */
+/**
+ * shell 引号：参数里常有中文标题、`::`、空格，裸拼会被 shell 拆开。
+ *
+ * 引号按平台选，不能一律单引号：Windows 的 cmd.exe 不认单引号，它会把 `'x'`
+ * 连引号一起交给程序——`--title '覆盖验收：npm test :: exit==0'` 于是被拆成
+ * `--title` + `'覆盖验收：npm` + `test` + `::` + `exit==0'`，内核报的是
+ * `E_CONTRACT: 断言缺少 "::"`，报错和真因差着三条街（T-102 的同一个坑）。
+ * POSIX 侧保持单引号：双引号里 `$`、反引号仍会展开，标题里带这些字符就会走样。
+ */
 export function quote(value) {
   const s = String(value);
   if (/^[A-Za-z0-9_.,:=/@%+-]+$/.test(s)) return s;
+  if (process.platform === "win32") return `"${s.replace(/"/g, '\\"')}"`;
   return `'${s.replace(/'/g, `'\\''`)}'`;
 }
 
