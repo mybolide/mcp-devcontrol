@@ -3,7 +3,7 @@ import { DatabaseSync } from "node:sqlite";
 import fs from "node:fs";
 import path from "node:path";
 
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 export const DATA_DIR = ".devcontrol";
 export const DB_FILE = "state.db";
 
@@ -67,6 +67,21 @@ CREATE TABLE IF NOT EXISTS releases(
 CREATE TABLE IF NOT EXISTS release_tasks(
   release_id TEXT NOT NULL, task_id TEXT NOT NULL,
   PRIMARY KEY(release_id, task_id));
+CREATE TABLE IF NOT EXISTS task_completions(
+  id TEXT PRIMARY KEY, task_id TEXT NOT NULL, sequence INTEGER NOT NULL,
+  actor TEXT NOT NULL, closed_at TEXT NOT NULL, closed_by TEXT NOT NULL,
+  summary TEXT NOT NULL, changes TEXT NOT NULL, limitations TEXT NOT NULL,
+  fingerprint TEXT, runs_json TEXT NOT NULL DEFAULT '[]', commits_json TEXT NOT NULL DEFAULT '[]',
+  UNIQUE(task_id, sequence));
+CREATE INDEX IF NOT EXISTS ix_task_completions_task ON task_completions(task_id, sequence DESC);
+CREATE TRIGGER IF NOT EXISTS task_completions_no_update
+BEFORE UPDATE ON task_completions BEGIN
+  SELECT RAISE(ABORT, 'task completion history is immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS task_completions_no_delete
+BEFORE DELETE ON task_completions BEGIN
+  SELECT RAISE(ABORT, 'task completion history is immutable');
+END;
 CREATE INDEX IF NOT EXISTS ix_releases_status ON releases(status);
 CREATE INDEX IF NOT EXISTS ix_tasks_status ON tasks(status);
 CREATE INDEX IF NOT EXISTS ix_tasks_doing ON tasks(status, claim_expires_at);
@@ -113,6 +128,28 @@ function migrate(db) {
   if (from < 4 && !cols("tasks").has("rank")) {
     db.exec("ALTER TABLE tasks ADD COLUMN rank INTEGER NOT NULL DEFAULT 0");
   }
+  // v4 → v5：追加不可变的任务完成交付历史。旧 done 任务不回填推测出来的结论。
+  if (from < 5) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS task_completions(
+        id TEXT PRIMARY KEY, task_id TEXT NOT NULL, sequence INTEGER NOT NULL,
+        actor TEXT NOT NULL, closed_at TEXT NOT NULL, closed_by TEXT NOT NULL,
+        summary TEXT NOT NULL, changes TEXT NOT NULL, limitations TEXT NOT NULL,
+        fingerprint TEXT, runs_json TEXT NOT NULL DEFAULT '[]', commits_json TEXT NOT NULL DEFAULT '[]',
+        UNIQUE(task_id, sequence)
+      );
+      CREATE INDEX IF NOT EXISTS ix_task_completions_task ON task_completions(task_id, sequence DESC);
+      CREATE TRIGGER IF NOT EXISTS task_completions_no_update
+      BEFORE UPDATE ON task_completions BEGIN
+        SELECT RAISE(ABORT, 'task completion history is immutable');
+      END;
+      CREATE TRIGGER IF NOT EXISTS task_completions_no_delete
+      BEFORE DELETE ON task_completions BEGIN
+        SELECT RAISE(ABORT, 'task completion history is immutable');
+      END;
+    `);
+  }
+  // 版本号必须在所有迁移之后写：先写再迁移的话，中途失败会留下「版本已是新库、表却没建」的半截库。
   if (!cur) db.prepare("INSERT INTO meta(key,value) VALUES('schema_version',?)").run(String(SCHEMA_VERSION));
   else db.prepare("UPDATE meta SET value=? WHERE key='schema_version'").run(String(SCHEMA_VERSION));
   return db;

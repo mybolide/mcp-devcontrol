@@ -123,7 +123,11 @@ Agent 侧纪律（`AGENTS.md` 与 MCP `instructions` 同源）：**只调用 `ac
 - **配置随仓库走**：`init` 检测 `.mcp.json` / `.cursor/mcp.json` / `opencode.json` 里的 `DEVCONTROL_ROOT` 与本项目是否一致，不一致就按新路径重写（保留其他 server，解析失败则不动）。
 - **多项目**：`devcontrol serve --project <path>` 可重复；`/api/state?project=<root>` 按项目取快照，`/api/owner` 带 `project` 落到对应仓库；侧栏切换，选择存 localStorage。
 - **弱模式**（无 git）：`devcontrol init --weak` 把 `meta.mode` 记为 `weak`；契约只存在工作树（`contract_commit` 为 null），`base_head` 为空，close 跳过 R0/R1/R4 与脏树检查，只做 R2 重跑 + 指纹漂移；`doctor` 报 `WEAK_MODE`，`devcontrol commit` 返回 `E_WEAK_NO_GIT`。
+- **分发形态**：发布物是 `bin/devcontrol.js`（分发壳）+ `build/devcontrol.js`（`npm run build` 打出的单文件产物）+ `public/`。`files` 不含 `src/`、不含 `scripts/`，运行时依赖（SDK / zod）内联进产物并降级为 `devDependencies`——装完即跑，不再依赖 npm 解析，SDK 换代也不会让老版本装崩。壳在仓库里优先跑 `src/`（测试与调试永远测源码），装成包后 `src/` 不存在才走产物。
+- **项目内版本锁入口**：`init` 在 `.devcontrol/bin/` 落 `devcontrol` / `devcontrol.cmd` / `devcontrol.ps1`，版本写死在文件里，解析顺序是 `DEVCONTROL_LOCAL_ENTRY` → 本项目 `node_modules/mcp-devcontrol`（产物优先、源码次之）→ `npx --yes --cache <系统缓存> mcp-devcontrol@<锁定版本>`。用途：客户端掉了 MCP 工具租约、纯 CLI 项目、CI 里没装 devcontrol。壳跟着 `chore(devcontrol): init` 一起提交，幂等（内容不变不重写，版本变了才重写）。
 
+- **移动端**：≤900px 时侧栏收成一条常驻顶栏（品牌 + 菜单按钮，按钮显示当前视图），十项导航进抽屉：点按钮展开、点选项/遮罩/Esc 收起，展开时焦点进入抽屉、关闭时回到按钮。正文因此从 57px 开始，而不是被一整屏菜单推到 680px。表格在同断点改成一列一列的卡片。断点写在 `public/index.html` 的 `@media (max-width: 900px)`，`test/console-ui.test.js` 钉住关键约定。
+- **客户端配置按需生成**：`.mcp.json` 总是写（MCP 通用入口，Claude Code 等直接读）；`.cursor/mcp.json` 与 `opencode.json` 只在项目确实在用那个客户端时写（判据见 `src/clients.js`：`.cursor/`、`opencode.json`/`.opencode/`），和 `.cursor/rules`、`CLAUDE.md` 共用同一套判据，避免「写了 MCP 配置却没有 agent 说明」的半套状态。`--mcp-for cursor,opencode|all` 显式要求，`--no-mcp` 一份都不写。三份文件一律进 `.gitignore`（里面是本机绝对路径），但已跟踪的不翻案。
 ## 7. 迁移（v5 → v6）
 
 一次性脚本，只读 v5 库、写 v6 库、失败不写：

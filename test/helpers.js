@@ -87,10 +87,21 @@ export function prove(db, root, taskId, { exit = 0, command = null, output = "" 
   );
 }
 
+/**
+ * 夹具默认的交付说明。正常收口要求说明必填——那是产品约束，测试不该绕开它，
+ * 只是把「这次交付了什么」补齐成一句真话。要测「缺说明会被拒」就显式传空。
+ */
+export const CLOSE_NOTE = {
+  summary: "完成本任务声明的改动",
+  changes: "见本次提交；夹具使用固定说明",
+  limitations: "无",
+};
+
 /** 先交证据再收口：等价于 Agent 的正常动作顺序 */
 export async function closeProven(db, root, input, { exit = 0, output = "", ...closeOpts } = {}) {
   const id = typeof input === "string" ? input : input.id;
   prove(db, root, id, { exit, output });
   const { taskClose } = await import("../src/gates.js");
-  return taskClose(db, root, input, closeOpts);
+  const merged = typeof input === "string" ? { id, ...CLOSE_NOTE } : { ...CLOSE_NOTE, ...input };
+  return taskClose(db, root, merged, closeOpts);
 }

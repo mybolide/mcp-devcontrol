@@ -10,20 +10,13 @@ DevControl 的审批权仍属于 **Owner**。新功能只增加消息入口；**
 
 此工具不需要 `DEVCONTROL_CHAT_APPROVAL_SECRET`（后者仅用于下方独立的**可信 Host 消息事件**模式），但要求 MCP 客户端真正实施真人确认，不得自动接受工具请求。要在当前 ChatGPT 会话中使用，仍需将此 DevControl MCP 服务接入该聊天会话所能调用的工具；**部署 DevControl 并不自动给现有 ChatGPT 对话添加该工具**。
 
-## 本地控制台：开箱即用
+## 本地控制台：点一下就批
 
-打开 `http://127.0.0.1:7373/` → **收件箱** → **对话授权**。
+打开 `http://127.0.0.1:7373/` → **收件箱**。草稿需求旁边就是「批准」，点之前会展开需求标题、验收断言、Path 原有命令与文件范围；复用已批准的 Path 会再确认一次。
 
-可输入：
+这里**没有**输入框式的「对话授权」（早先有过：输入 `批准 FR-002 使用 P-001` 再确认）。点击更快，而且少一条「把自然语言变成授权」的路径，就少一处要防伪造的地方——面板、它的脚本和 `/api/chat/preview` 预览口已经一起删掉。
 
-- `待审批`：列出草稿需求。
-- `批准`：只有一个草稿需求、一个可用 Path 时才自动匹配。
-- `批准 FR-002`：只有一个可用 Path 时才自动匹配。
-- `批准 FR-002 使用 P-001`：显式指定需求与 Path。
-
-对于任何审批，控制台先展示需求标题、验收断言、Path 原有命令与文件范围，再让真人点击确认。之后调用原来的 `/api/owner` → `approve`。取消确认无任何副作用，批准事件记录 `channel=console-chat`。
-
-**不会将**「好」「继续」「批准所有」「Agent 建议批准……」等模糊/引用性文本解释为审批。
+批准事件记录 `channel=owner`；终端批准记 `channel=cli`，签名聊天记 `channel=chat:<connector>`——谁批的、从哪儿批的，事后查得到。
 
 ## 其它聊天客户端（Claude / Codex / Pi / ChatGPT / 自建聊天等）
 
@@ -96,7 +89,7 @@ Body（`connector` 只是 Host 标识，可填 `claude`、`codex`、`pi`、`chat
 - `authorRole=owner` **不是身份凭证**：服务端信任的是签名对应的 Host；Host 必须自行根据其聊天平台的用户身份体系，验证该消息来自真实 Owner。仅凭 Agent 提供的 `authorRole` 不能批准。
 - 签名保护的是完整 HTTP 原始 body + 时间戳；Host 不应重签 Agent 改写或总结的文字。
 - 新入口目前只支持**需求批准**；「放行门禁」「删除/作废」「修改验收」等高风险 Owner 动作仍须使用原有控制台流程，不允许自由文本绕过。
-- 本机 `/api/chat/preview` 仅解析意图，不执行授权；`/api/chat/owner-message` 也不暴露为 Agent MCP action。
+- `/api/chat/owner-message` 不暴露为 Agent MCP action；控制台也没有把自然语言变成审批的入口（原 `/api/chat/preview` 已随「对话授权」面板删除）。
 - 与 ChatGPT/Claude/Codex/Pi 的具体 Chat UI 连接仍需要各自提供可信真人消息事件的 Host 适配器；仅安装 DevControl 不等于自动获得第三方聊天平台的身份验证能力。
 
 ## 测试

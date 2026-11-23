@@ -76,6 +76,9 @@ export const SCHEMA = {
   repro: z.array(z.string()).optional(),
   severity: z.string().optional(),
   resolvedBy: z.string().optional().describe("失败过的任务必填：一句话说清最后怎么解决的（自动写进通用记忆）"),
+  summary: z.string().optional().describe("task.close：完成结论——这次交付解决了什么（必填，缺了交付记录为空）"),
+  changes: z.string().optional().describe("task.close：主要改动——方案与关键位置（必填）"),
+  limitations: z.string().optional().describe("task.close：遗留与限制；没有遗留也要明确写「无」（必填）"),
   contextNote: z.string().optional().describe("碰到项目上下文没覆盖的东西时必填：一句话说清更新了哪篇，或为什么不用更新"),
   body: z.string().optional().describe("memory.write 的内容：现象 + 原因 + 解法"),
   tags: z.array(z.string()).optional(),
@@ -99,6 +102,7 @@ export async function dispatch(db, root, args, ctx = {}) {
   const REQUIRED = {
     "task.create": ["requirementId", "pathId", "title"],
     "path.create": ["requirementId"],
+    "task.close": ["summary", "changes", "limitations"],
     "task.claim": ["id"],
     "evidence.record": ["command"],
     "task.renew": ["id"],

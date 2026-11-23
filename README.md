@@ -37,7 +37,7 @@ cd your-project
 devcontrol init
 ```
 
-`init` sets up state, freezes a draft contract per directory, registers the MCP server in Claude Code / Cursor / OpenCode / Codex, and drops a rules block into `AGENTS.md`.
+`init` sets up state, freezes a draft contract per directory, writes `.mcp.json` (the generic MCP entry — Claude Code and others read it directly), and drops a rules block into `AGENTS.md`. **Client-specific** config is written only when the project already uses that client (`.cursor/`, `opencode.json` or `.opencode/`); ask for it explicitly with `devcontrol init --mcp-for cursor,opencode` (or `all`). Codex needs a manual snippet — `init` prints it.
 
 Then, from your agent's session or a terminal:
 
@@ -49,6 +49,9 @@ devcontrol next                                                                 
 
 No MCP? `devcontrol init --no-mcp` — same gates, same evidence, everything in the terminal.
 
+`init` also drops three version-locked entry points into the project — `.devcontrol/bin/devcontrol` (`devcontrol.cmd` on Windows). Use them when a client dropped the MCP tool lease, or in CI where devcontrol isn't installed: same kernel, no `node_modules`, no network.
+
+The published package is **one self-contained file**: `npm run build` bundles the kernel and its dependencies into `build/devcontrol.js`, so an install runs as-is and an SDK major bump can't break an old version.
 ## One task, end to end
 
 ```text
@@ -106,6 +109,23 @@ devcontrol commit -m "feat: ..."  # commit in-scope files
 devcontrol close                  # verify and close
 devcontrol task abandon T-003 --reason "not needed any more"
 ```
+
+## A finished task says what it delivered
+
+Closing is no longer just "the tests ran". `devcontrol close` now requires three things, stored in `task_completions` in `.devcontrol/state.db` (append-only):
+
+```bash
+devcontrol close T-003 \
+  --summary "hero headline rewritten to plain language" \
+  --changes "only the Hero component and its copy constants" \
+  --limitations "mobile font size not verified on a device yet"
+```
+
+- A note is a note: the evidence is still the runs the kernel verifies (command, exit code, which code they ran against).
+- Re-closing after a reopen **appends** a record instead of overwriting it; `devcontrol task show T-003` lists every round with its evidence, and `devcontrol export` has a matching section.
+- Tasks closed before this existed show "未记录"; nothing is backfilled.
+- Owner force-close is recorded too, but labelled "forced (unverified)" — never as a passing acceptance.
+- Done ≠ human review: the kernel proves the gates, not the judgement.
 
 ## Your console, as a side effect
 

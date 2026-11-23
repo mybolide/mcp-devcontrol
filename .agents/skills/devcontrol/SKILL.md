@@ -3,7 +3,7 @@ name: devcontrol
 description: >-
   本项目的研发纪律：开工先问内核，改代码前 claim，只改 scope 内文件，
   你的工作是写代码 + 自己跑测试。内核只核验证据：它不替你跑测试，也不猜你有没有跑过。所有动作走 devcontrol 工具或 devcontrol CLI。
-version: "6.0.0-alpha.2"
+version: "6.0.0-alpha.3"
 ---
 
 # devcontrol —— 本项目的研发纪律
@@ -22,17 +22,17 @@ version: "6.0.0-alpha.2"
 6. `devcontrol close`：内核**不执行测试**，只核验你留下的证据（命令对不对、跑的是不是当前这份代码、退出码满足断言）。
    close 时如果内核说「这次改动碰了上下文没覆盖的东西」，会要求 `--context-note`：一句话说清更新了哪篇、或为什么不用更新。规范过期了还被当成权威，比没有规范更糟。
 
-## Owner 的动作不在 MCP 里
+## Owner 的审批需要真人确认，Agent 不能代签
 
-MCP 工具列表里**没有**批准需求、放行、打回、改预算这些动作——这是故意的：
-Agent 能自己批准自己，纪律就没有意义了。
-它们由人来做，有两个地方：控制台（`devcontrol serve`）点，或者人自己在终端敲 `devcontrol approve`。
+Agent 的 `devcontrol` MCP action **没有**批准需求、放行、打回、改预算权限——这是故意的：Agent 能自己批准自己，纪律就没有意义了。
+对于**需求批准**，支持 MCP form elicitation 的聊天客户端还可以使用单独的 `devcontrol_request_owner_approval` 工具：它只能**请求**客户端向真人展示完整需求和 Path 并获取确认；用户拒绝、无法确认或内容改变时不执行，且 Agent 无法在工具参数里设置已批准。
+如果当前客户端不支持这种真人确认通道，就走控制台（`devcontrol serve`），或者由人自己在终端敲 `devcontrol approve`；不要改用 Agent shell 冒充 Owner。
 
 所以碰到下面这些情况，**不要试、不要绕、更不要自己改库**，直接告诉人去做：
 
 | 你要什么 | 人的动作 |
 |---|---|
-| 需求/Path 还没批准 | 控制台「收件箱」点批准，或终端 `devcontrol approve FR-001 --path P-001` |
+| 需求/Path 还没批准 | 原聊天调用 `devcontrol_request_owner_approval` 请求真人确认；如客户端不支持，使用控制台「收件箱」或由人自己在终端敲 `devcontrol approve FR-001 --path P-001` |
 | 想改验收标准 | 「需求」页改（走需求变更，不是改任务） |
 | 动了依赖或既有测试被拦 | 「任务」页点放行，写理由（≥12 字） |
 | 任务太大超预算 | 「需求」页点预算数字改，或把任务拆小 |
@@ -40,6 +40,12 @@ Agent 能自己批准自己，纪律就没有意义了。
 | 任务做完但验收过不了 | 只能改到过；放行由人决定 |
 
 控制台地址在 `devcontrol status` 的 `console` 字段；没起来就 `devcontrol serve`。
+
+## 客户端掉了 MCP 工具 / 本来就没接 MCP
+
+项目根下有 `.devcontrol/bin/devcontrol`（Windows 用 `devcontrol.cmd`，PowerShell 用 `.ps1`）。它版本锁在本项目上，敲下去打的就是同一套内核，不需要机器上装过 devcontrol，也不需要 MCP 进程。
+
+只有这种情况才用它：MCP 工具列表里没有 `devcontrol`（工具租约掉了、客户端重启了），或者项目就是纯 CLI 模式。命令和 MCP 的 action 一一对应：`devcontrol status`（= bootstrap）、`devcontrol run -- <命令>`、`devcontrol commit -m "..."`、`devcontrol close`。能走 MCP 时不要绕开它，否则内核看不到你手上的是哪一份代码。
 
 ## 硬规则（违反会被拦，不是建议）
 

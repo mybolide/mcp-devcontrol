@@ -23,6 +23,9 @@ const HINTS = {
   E_MEMORY_CANDIDATE: "这条经验不合格，已进隔离区。按返回的模板改写成「可复用的一条」再提交。",
   E_CONTRACT: "违反契约。看 message 里的具体条款——契约是 Owner 批准的，Agent 不能改。",
   E_NO_TEST_CMD: "按项目现状采不到验收命令。这需要 Owner 处理：控制台「需求」页里给这条 Path 手填一条（例如 npm test）。",
+  // 废弃 Path 前会查「还有没有没做完的任务绑在它上面」：那类任务没办收口，
+  // 悄悄抽掉契约只会让它们撞一句看不懂的报错，所以这里要告诉人先处理任务。
+  E_PATH_IN_USE: "这条 Path 上还有没做完的任务。先把那些任务做完或作废，再废弃 Path；别直接改库。",
   E_ID_EXHAUSTED: "Path 编号已达到上限。请 Owner 检查 .devcontrol/state.db 中的 Path 记录后再处理；不要手动改数据库编号。",
   E_RELEASE_TAG: "发布时打不上 git tag，回滚点没建成，所以不算发布。检查 .git/refs/tags 的权限，或本地是否有同名 tag 冲突。",
   E_NO_CONTRACT: "还没有契约。先 devcontrol init，并让 Owner 批准 Path。",

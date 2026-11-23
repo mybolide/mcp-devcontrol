@@ -11,7 +11,7 @@ import { cliCommand } from "./nextcmd.js";
 import { doctor, exportMarkdown } from "./report.js";
 import { createRelease, getRelease, listReleases, planRelease, shipRelease } from "./release.js";
 import { FLOWS_REL, flowFromRequirement, flowToRequirement, listFlows, readFlow } from "./flow.js";
-import { getReq, getTask, mapTask, listTasks, listReqs, listPaths, listDocs, reqIntake, reqApprove, pathIntake, taskAbandon, disciplineStats, logRejection } from "./store.js";
+import { getReq, getTask, mapTask, listTasks, listReqs, listPaths, listDocs, reqIntake, reqApprove, pathIntake, pathApprove, pathRevoke, taskAbandon, disciplineStats, logRejection } from "./store.js";
 import { hintFor } from "./hints.js";
 import { assertionCommand, detectTestCmds } from "./testcmd.js";
 import { isVendorPath, vendorIgnores } from "./vendor.js";
@@ -34,6 +34,7 @@ import { execCommand } from "./exec.js";
 import { startConsole } from "./console.js";
 import { runMcp } from "./mcp.js";
 import { VERSION } from "./protocol.js";
+import { parseMcpFor } from "./clients.js";
 import { openDb as _openDb } from "./db.js";
 import { weekly } from "./weekly.js";
 import { renderWeekly } from "./weekly-md.js";
@@ -68,16 +69,32 @@ export function cmdInit(args) {
   const noMcp = args.includes("--no-mcp");
   const onlyIdx = args.indexOf("--only");
   const only = onlyIdx >= 0 ? new Set(String(args[onlyIdx + 1] ?? "").split(",").filter(Boolean)) : null;
+  const forIdx = args.indexOf("--mcp-for");
+  let mcpFor = null;
+  try {
+    mcpFor = forIdx >= 0 ? parseMcpFor(args[forIdx + 1]) : null;
+  } catch (error) {
+    return failCli(error.message.replace(/^E_INVALID:\s*/, ""), "E_INVALID");
+  }
 
   // 干活的全在 initializeProject 里（它一个字都不打印——MCP 那条路也要调它，
   // 而 MCP 的 stdout 是 JSON-RPC 通道）。这里只负责把结果翻译成人话。
-  const res = initializeProject(root, { noMcp, only, weak: args.includes("--weak") });
+  const res = initializeProject(root, { noMcp, only, weak: args.includes("--weak"), mcpFor });
   if (!res.ok) {
     // 不是用法写错，是环境不满足：退出码 1（被拒），不是 2（用法）
     return failCli("这里不是 git 仓库。加 --weak 使用弱模式（只跑验收，没有提交归属与 scope 校验）", "E_NOT_REPO", null, 1);
   }
 
-  const label = (v) => ({ written: "已写", updated: "已按新路径更新", exists: "已存在", invalid: "已存在但解析失败，未改动", skipped: "跳过（--no-mcp）" })[v] ?? v;
+  const label = (v) =>
+    ({
+      written: "已写",
+      updated: "已按新路径更新",
+      exists: "已存在",
+      invalid: "已存在但解析失败，未改动",
+      skipped: "跳过（--no-mcp）",
+      // 没写是因为这个项目不用那个客户端：说清楚，别让人以为出了错
+      "skipped-no-client": "跳过（本项目没在用这个客户端；要写就加 --mcp-for）",
+    })[v] ?? v;
   const { contextPlan: ctxPlan, context: ctxNow } = res;
   // 模板全文很长，不往 stdout 灌——写成一份计划文件，让 Agent 去读。
   // 但摘要必须打在 stdout：Owner 一眼要能看出「这项目还缺项目上下文」。
@@ -88,14 +105,18 @@ export function cmdInit(args) {
   填写计划（含每篇的完整模板骨架）：.devcontrol/context-plan.md
   摘要：${ctxPlan.steps.map((s) => s.action.replace(/^创建 /, "")).join(" / ")}
   硬要求：${ctxPlan.rules.join("；")}`;
+  // 项目内入口按平台给名字：Windows 上敲不了 sh 壳，直接给 .cmd
+  const wrapperCli = process.platform === "win32" ? ".devcontrol\\bin\\devcontrol.cmd" : "./.devcontrol/bin/devcontrol";
   console.log(`devcontrol init 完成：
 - 模式：${res.gitMode ? "git（完整门禁）" : "weak（无 git：只跑验收，无归属校验）"}
 ${ctxSection}
 ${res.unignored ? "- .gitignore：已移除整体忽略 .devcontrol/ 的规则（契约必须能进 git）\n" : ""}- Path 草稿 ${res.pathsCreated} 条（都还是 draft，需要 Owner 批准）
-- 客户端配置：.mcp.json ${label(res.wroteMcp)} / .cursor/mcp.json ${label(res.wroteCursor)} / opencode.json ${label(res.wroteOpencode)}
+- 客户端配置：.mcp.json ${label(res.wroteMcp)}（通用入口）
+  Cursor：${label(res.wroteCursor)} / OpenCode：${label(res.wroteOpencode)}${res.clients && !res.clients.picked.cursor && !res.clients.picked.opencode ? "\n  要给它们也写：devcontrol init --mcp-for cursor,opencode（或 --mcp-for all）" : ""}
 - Agent 说明：${Object.keys(res.agentFiles).join(" / ")}（${SKILL_REL} 是规范，其余是指针）
+- 项目内入口：${res.wrappers.dir}（${res.wrappers.files.join(" / ")}，版本锁 ${VERSION}；客户端掉了 MCP 工具、CI、纯 CLI 都走它）
 ${noMcp ? "" : "- 控制台：随 MCP 连接自动启动并复用（Owner 也可以手动 devcontrol serve）\n"}- 托管文件：${res.initCommit ? `已提交 chore(devcontrol): init @ ${res.initCommit.slice(0, 8)}` : "无变化"}
-${noMcp ? "- 纯 CLI 模式：没有注册 MCP，Agent 直接用 devcontrol status / commit / close；需要控制台时自己 devcontrol serve" : `- Codex 需要手动加：\n${CODEX_SNIPPET}`}`);
+${noMcp ? `- 纯 CLI 模式：没有注册 MCP，Agent 用 ${wrapperCli} status / commit / close（不依赖机器上装没装 devcontrol）；需要控制台时加 serve` : `- Codex 需要手动加：\n${CODEX_SNIPPET}`}`);
   return 0;
 }
 
@@ -506,7 +527,40 @@ export function cmdTask(args) {
     }
   }
 
-
+  if (sub === "show") {
+    // 交付记录是 append-only 的：多轮做完就多轮，review 时按时间从新到旧看。
+    const id = args.slice(1).find((a) => /^T-\d+$/.test(a));
+    const task = id ? getTask(db, id) : undefined;
+    if (!task) return failCli(`用法：devcontrol task show T-00x（找不到任务 ${id ?? "（未给编号）"}）`, "E_USAGE");
+    const history = task.completions ?? [];
+    console.log(`${task.id}  ${task.title}`);
+    console.log(`状态：${task.status}${task.closed_by ? ` · ${task.closed_by}` : ""}${task.closed_at ? ` · ${task.closed_at}` : ""}`);
+    console.log(`需求 ${task.requirement_id} · Path ${task.path_id} · scope: ${task.scope.join(", ") || "(未设)"}`);
+    if (!history.length) {
+      console.log(
+        task.status === "done"
+          ? "\n交付记录：未记录（这条任务是本功能上线前收口的，没有事后补造）"
+          : "\n交付记录：还没有（收口时用 --summary/--changes/--limitations 写入）",
+      );
+      return 0;
+    }
+    for (const record of history) {
+      const kind = record.closedBy === "force-close" ? "Owner 强制完成（未经验收）" : "验收通过";
+      console.log(`\n第 ${record.sequence} 次 · ${kind} · ${record.closedAt} · ${record.actor}`);
+      console.log(`结论：${record.summary}`);
+      console.log(`改动：${record.changes}`);
+      console.log(`遗留：${record.limitations}`);
+      if (record.runs?.length) {
+        console.log("证据：");
+        for (const run of record.runs) console.log(`  · ${run.command} → exit ${run.exitCode}（${run.head?.slice(0, 8) || "无 HEAD"}，${run.runId}）`);
+      }
+      if (record.commits?.length) {
+        console.log(`提交：${record.commits.map((commit) => commit.sha.slice(0, 8)).join(", ")}`);
+      }
+      if (!record.runs?.length && record.closedBy === "force-close") console.log("证据：无（强制完成不代表验收通过）");
+    }
+    return 0;
+  }
   if (sub === "list") {
     // 列宽要容得下最长的状态（abandoned = 9），否则 "abandonedfeature" 粘成一坨
     for (const t of db.prepare("SELECT id,status,kind,title FROM tasks ORDER BY id").all()) {
@@ -514,7 +568,7 @@ export function cmdTask(args) {
     }
     return 0;
   }
-  return failCli("用法：devcontrol task <create|claim|list|abandon> ...", "E_USAGE");
+  return failCli("用法：devcontrol task <create|claim|list|show|abandon> ...", "E_USAGE");
   return 2;
 }
 
@@ -584,13 +638,45 @@ export function cmdPath(args) {
       return failCli(error.message, error.code ?? "E_ERROR", error.data ?? null, 1);
     }
   }
+  if (sub === "approve") {
+    const pathId = args.slice(1).find((a) => /^P-\d+$/.test(a)) ?? flag("path");
+    if (!pathId) return failCli("用法：devcontrol path approve P-002 [--req FR-001]", "E_USAGE");
+    try {
+      const result = pathApprove(db, root, { pathId, requirementId: flag("req") ?? flag("requirement"), channel: "cli" });
+      console.log(`${result.pathId}  已批准（契约已冻结）`);
+      if (result.requirementId) console.log(`需求：${result.requirementId}（状态不变，只冻 Path）`);
+      console.log(`范围：${result.allowedPaths.join(", ")}；预算：${result.budgetLines} 行；新增文件：${result.allowNewFiles ? "允许" : "不允许"}`);
+      console.log(`验收命令：\n${result.testCmds.map((command) => `  · ${command}`).join("\n")}`);
+      console.log(`契约提交：${result.contractCommit ? result.contractCommit.slice(0, 8) : "弱模式（无回滚点）"}`);
+      return 0;
+    } catch (error) {
+      return failCli(error.message, error.code ?? "E_ERROR", error.data ?? null, 1);
+    }
+  }
+  if (sub === "revoke") {
+    const pathId = args.slice(1).find((a) => /^P-\d+$/.test(a)) ?? flag("path");
+    const reason = flag("reason");
+    if (!pathId || !reason) {
+      return failCli('用法：devcontrol path revoke P-002 --reason "范围写到别的模块了，重建一条"', "E_USAGE");
+    }
+    try {
+      const result = pathRevoke(db, root, { pathId, reason, channel: "cli" });
+      console.log(`${result.pathId}  已废弃（需求不受影响）`);
+      return 0;
+    } catch (error) {
+      return failCli(error.message, error.code ?? "E_ERROR", error.data ?? null, 1);
+    }
+  }
   if (sub === "list") {
     for (const p of listPaths(db)) {
       console.log(`${p.id}  ${p.status.padEnd(9)}budget=${p.budget_lines}  newFiles=${Boolean(p.allow_new_files)}  ${p.allowedPaths.join(", ")}`);
     }
     return 0;
   }
-  return failCli('用法：devcontrol path <create|list>；create: --req FR-003 --allow docs/a.js --allow-new-files --budget 600 --test "node --test test/a.test.js"', "E_USAGE");
+  return failCli(
+    '用法：devcontrol path <create|approve|revoke|list>\n  create: --req FR-003 --allow docs/a.js --allow-new-files --budget 600 --test "node --test test/a.test.js"\n  approve: devcontrol path approve P-002 [--req FR-001]\n  revoke:  devcontrol path revoke P-002 --reason "这条 Path 范围错了"',
+    "E_USAGE",
+  );
 }
 
 export function cmdRenew(args) {
@@ -603,7 +689,6 @@ export function cmdRenew(args) {
   const id = explicit ?? held?.id;
   if (!id) {
     return failCli(`${actor} 手上没有在办任务`, "E_NO_TASK", null, 1);
-    return 1;
   }
   const res = taskRenew(db, root, { id }, actor);
   console.log(`${res.id} 租期续到 ${res.claimExpiresAt}`);
@@ -620,7 +705,11 @@ export async function cmdClose(args) {
   const actor = flagValue("--actor") ?? process.env.DEVCONTROL_ACTOR ?? "agent";
   const resolvedBy = flagValue("--resolved-by");
   const contextNote = flagValue("--context-note");
-  const consumed = new Set([actor, resolvedBy, contextNote].filter(Boolean));
+  // 交付说明：这一版缺了只告警（见下面 completionMissing），下一版会变成硬拦。
+  const summary = flagValue("--summary");
+  const changes = flagValue("--changes");
+  const limitations = flagValue("--limitations");
+  const consumed = new Set([actor, resolvedBy, contextNote, summary, changes, limitations].filter(Boolean));
   let id = args.find((a) => !a.startsWith("--") && !consumed.has(a));
   if (!id) {
     const doing = db.prepare("SELECT id FROM tasks WHERE status='doing' AND claimed_by=? AND closing_token IS NULL").all(actor);
@@ -631,6 +720,22 @@ export async function cmdClose(args) {
       return 1;
     }
     id = doing[0].id;
+  }
+  // 交付说明必填：缺了立刻拦，别等证据核验完才告诉人（那时人也累了）。
+  // 它不替代证据：说明是给人看的，证据仍然是内核要核验的那几条 run。
+  const missingNote = [["--summary", summary], ["--changes", changes], ["--limitations", limitations]]
+    .filter(([, value]) => typeof value !== "string" || !value.trim())
+    .map(([name]) => name);
+  // 只对「真的在办」的任务先查说明：任务根本不在办时，该报的是状态错误（E_ILLEGAL_TRANSITION），
+  // 不能拿一句「缺 --summary」把真问题盖住。
+  const currentStatus = db.prepare("SELECT status FROM tasks WHERE id=?").get(id)?.status;
+  if (missingNote.length && currentStatus === "doing") {
+    return failCli(
+      `收口要写清交付了什么：缺 ${missingNote.join("、")}。补上再收（说明不能替代证据）`,
+      "E_NEED_COMPLETION",
+      { missing: missingNote, taskId: id, hint: `devcontrol close ${id} --summary "解决了什么" --changes "主要改动" --limitations "遗留与限制（没有就写 无）"` },
+      1,
+    );
   }
   try {
     // 进度走 stderr：stdout 必须可以整段 JSON.parse，进度只是给人看的
@@ -647,8 +752,16 @@ export async function cmdClose(args) {
       process.stderr.write(`\r\x1b[2K[devcontrol ${secs}] ${detail}`);
       if (milestone) process.stderr.write("\n");
     };
-    const res = await taskClose(db, root, { id, resolvedBy, contextNote }, { onProgress });
+    const res = await taskClose(db, root, { id, resolvedBy, contextNote, summary, changes, limitations }, { onProgress });
     if (tty) process.stderr.write("\n");
+    if (res.completionMissing) {
+      process.stderr.write(
+        "\n[devcontrol] 这次收口没有交付说明，交付记录是空的——回看和 review 时看不出做了什么。\n" +
+          "  把这三条写上再收一次，记录才会落库：\n" +
+          `    devcontrol close ${res.id} --summary "解决了什么" --changes "主要改动" --limitations "遗留与限制（没有就写 无）"\n` +
+          "  说明只是说明：证据仍然要你自己跑、自己留。\n",
+      );
+    }
     // 规范对照只走 stderr（人读）：内核报事实，判不判由人。
     // stdout 仍然是一整段 JSON，observations 在里面，脚本能自己用。
     if (res.observations?.length) {
@@ -1106,6 +1219,29 @@ export function cmdExport() {
   const root = resolveRoot();
   const db = openDb(root);
   process.stdout.write(`${exportMarkdown(db)}\n`);
+  // 交付记录单独一节：说明是自由文本，塞进表格会把格式撑破，所以按小节+列表写。
+  const oneLine = (text) => String(text ?? "").replace(/\s*\n+\s*/g, " ").trim();
+  const lines = ["## 任务交付记录", ""];
+  for (const t of listTasks(db)) {
+    const history = t.completions ?? [];
+    if (!history.length) {
+      if (t.status === "done") lines.push(`- ${t.id} · 未记录（本功能上线前收口，没有事后补造）`);
+      continue;
+    }
+    lines.push(`### ${t.id} ${oneLine(t.title)}`, "");
+    for (const record of history) {
+      const kind = record.closedBy === "force-close" ? "Owner 强制完成（未经验收）" : "验收通过";
+      lines.push(`- 第 ${record.sequence} 次 · ${kind} · ${record.closedAt} · ${oneLine(record.actor)}`);
+      lines.push(`  - 结论：${oneLine(record.summary)}`);
+      lines.push(`  - 改动：${oneLine(record.changes)}`);
+      lines.push(`  - 遗留：${oneLine(record.limitations)}`);
+      for (const run of record.runs ?? []) {
+        lines.push(`  - 证据：\`${oneLine(run.command)}\` → exit ${run.exitCode}（${run.runId}）`);
+      }
+      if (record.commits?.length) lines.push(`  - 提交：${record.commits.map((commit) => commit.sha.slice(0, 8)).join(", ")}`);
+    }
+  }
+  process.stdout.write(`${lines.join("\n")}\n`);
   return 0;
 }
 
@@ -1214,7 +1350,9 @@ export async function main(argv) {
       case undefined:
         console.log(`devcontrol ${VERSION} — 极小的研发纪律内核
 
-  devcontrol init [--weak] [--no-mcp]  建 .devcontrol/、Path 草稿、MCP 配置（--no-mcp 则不写）、AGENTS.md
+ devcontrol init [--weak] [--no-mcp] [--mcp-for cursor,opencode|all]  建 .devcontrol/、Path 草稿、MCP 配置、AGENTS.md
+   客户端配置按需生成：.mcp.json 总是写；.cursor/mcp.json、opencode.json 只在这个项目
+   确实在用那个客户端时写（--mcp-for 可强制，--no-mcp 则一份都不写）
   devcontrol run -- <cmd>            跑一条命令并记为测试证据（有在办任务时生效）
   devcontrol commit -m "<msg>"       只提交 scope 内文件，自动写 Task-Id trailer
                                     接活前就存在的改动会拦住（那是上一任留下的），

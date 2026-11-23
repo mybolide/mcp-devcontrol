@@ -369,18 +369,6 @@ export async function startConsole(args) {
         weekly: { ...w, verdict: verdict(w) },
       });
     }
-    // 无执行能力的意图预览。控制台可说「批准」，但必须向 Owner 展示待冻的
-    // 需求/Path/验收，再使用现有 /api/owner 完成动作。
-    if (req.method === "POST" && url.pathname === "/api/chat/preview") {
-      const denied = guard(req);
-      if (denied) return json(denied.code, denied.body);
-      const body = await readSmallJson(req);
-      if (body.error) return json(body.error.status, { ok: false, code: body.error.code, message: body.error.message });
-      const active = pickProject(body.value.project);
-      if (!active) return json(400, { ok: false, code: "INVALID_ARGUMENT", message: "未知 project" });
-      const adb = freshDb(active);
-      return json(200, { ok: true, ...resolveOwnerChat(body.value.message, { requirements: listReqs(adb), paths: listPaths(adb) }) });
-    }
     // 与模型厂商无关的可信聊天桥：只有拿到独立 HMAC 密钥的 Host 后台，
     // 才能提交它验证过的真人消息。模型/Agent 本身不能调用 Owner 动作。
     // 「批准」若未指明目标，必须带签名的会话上下文（明确需求和 Path）。

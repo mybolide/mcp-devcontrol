@@ -19,6 +19,22 @@ export const CAPABILITIES = [
     console: null,
   },
   {
+    name: "批准 Path（只冻 Path，不动需求）",
+    // 批准 = 授予写权限，所以不进 MCP：Agent 能自己批就能自己扩权。
+    // action 必须是 null：写成字符串等于宣称它是 MCP 动作，对照表会要求登记 zod 参数。
+    action: null,
+    mcp: null,
+    cli: { sub: "path approve", flags: ["req"] },
+    console: null,
+  },
+  {
+    name: "废弃错误的 Path（不影响需求）",
+    action: null,
+    mcp: null,
+    cli: { sub: "path revoke", flags: ["reason"] },
+    console: null,
+  },
+  {
     name: "建任务",
     action: "task.create",
     // MCP 参数名（zod schema 的字段）

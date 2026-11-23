@@ -23,6 +23,7 @@ import { CONTEXT_MAX_CHARS, contextDrift, loadContext } from "./context.js";
 import { addedFiles, git, head, isAncestor, logCommits, numstat, patchId, statusPorcelain, trailers } from "./git.js";
 import { evaluate } from "./exec.js";
 import { generalizeHint, memoryConfig, rememberTaskPitfall } from "./memory.js";
+import { insertCompletion, validateCompletionInput } from "./completion.js";
 import { refreshAgentFiles } from "./skill.js";
 import { isVendorPath } from "./vendor.js";
 // 这些失败不计入 review_round：都是「补一步就能好」，不是「试了没成功」。
@@ -707,33 +708,79 @@ export async function taskClose(db, root, input, opts = {}) {
       if (notLanded.length) throw new DFError("E_UNMERGED_WORK", "归属提交不在 HEAD 祖先链上", { commits: notLanded.map((c) => c.sha) });
     }
 
+    // 交付说明：给了就校验并记录；没给这一版先记一条告警，不硬拦。
+    // 硬拦要同时改造 40+ 处测试调用点，那是独立的一轮迁移；在那之前，
+    // 这里既不伪造一条「完成结论」，也不让缺说明悄悄变成一条假账。
+    let completion = null;
+    let completionMissing = false;
+    // 证据快照只取本次核验通过的那几条 run：不接受调用方自称「验证通过」。
+    const runSnapshot = runs.map((r) => {
+      const row = db.prepare("SELECT id,command,exit_code,head,fingerprint,log_sha256,started_at FROM runs WHERE id=?").get(r.runId);
+      return {
+        runId: row.id,
+        assertionIdx: r.idx,
+        command: row.command,
+        exitCode: row.exit_code,
+        passed: r.passed,
+        head: row.head,
+        fingerprint: row.fingerprint,
+        logSha256: row.log_sha256,
+        startedAt: row.started_at,
+      };
+    });
+    const commitSnapshot = owned.map((c) => ({ sha: c.sha, subject: c.subject, patch: c.patch ?? null, files: c.files }));
+
     // 收口。时间戳只取一次：closed_at 和下面那条 close 事件必须是同一个时刻，
     // 否则「按 closed_at 归天」与「按事件时间归天」会在窗口边界上分家（T-127）。
+    // 状态、归属、事件和交付记录必须同一个事务：只落一半，等于给 review 一份假账。
     const closedAt = now();
-    const done = db
-      .prepare("UPDATE tasks SET status='done', changed_lines=?, closed_by='evidence', closed_at=?, closing_at=NULL, closing_token=NULL, updated_at=? WHERE id=? AND status='doing' AND closing_token=?")
-      .run(lines, closedAt, closedAt, t.id, token);
-    if (done.changes !== 1) throw new DFError("E_BUSY", "任务状态已被改变");
-    for (const c of owned) {
-      if (c.patch) db.prepare("INSERT OR REPLACE INTO patch_ids(patch_id,task_id,commit_sha) VALUES(?,?,?)").run(c.patch, t.id, c.sha);
-    }
-    if (observations.length) {
-      logEvent(db, { actor: actorOf(db, t.id), action: "close.observed", taskId: t.id, at: closedAt, detail: observations.map((o) => o.detail).join("；") });
-    }
-    // 上下文那句话单独记一条：它和「又是哪条规范提醒了」不是一回事——
-    // 这条是 agent 自己说的「我看见了、我更新了/我故意不改」，人要看得见它的原话。
-    const ctxNote = String(input.contextNote ?? "").trim();
-    if (ctxNote) {
-      logEvent(db, { actor: actorOf(db, t.id), action: "close.context", taskId: t.id, at: closedAt, detail: ctxNote });
-    }
-    logEvent(db, {
-      actor: actorOf(db, t.id),
-      action: "close",
-      taskId: t.id,
-      at: closedAt,
-      detail: weak
-        ? `弱模式 · ${runs.length} 断言`
-        : `${lines} 行 / ${files.length} 文件 / ${runs.length} 断言${observations.length ? ` / ${observations.length} 条规范提醒` : ""}`,
+    const closed = tx(db, () => {
+      const done = db
+        .prepare("UPDATE tasks SET status='done', changed_lines=?, closed_by='evidence', closed_at=?, closing_at=NULL, closing_token=NULL, updated_at=? WHERE id=? AND status='doing' AND closing_token=?")
+        .run(lines, closedAt, closedAt, t.id, token);
+      if (done.changes !== 1) throw new DFError("E_BUSY", "任务状态已被改变");
+      for (const c of owned) {
+        if (c.patch) db.prepare("INSERT OR REPLACE INTO patch_ids(patch_id,task_id,commit_sha) VALUES(?,?,?)").run(c.patch, t.id, c.sha);
+      }
+      if (!completion) {
+        try {
+          completion = validateCompletionInput(input);
+        } catch (error) {
+          if (error.code !== "E_NEED_COMPLETION") throw error;
+          completionMissing = true;
+        }
+      }
+      const record = completion
+        ? insertCompletion(db, {
+            taskId: t.id,
+            actor: actorOf(db, t.id),
+            closedAt,
+            closedBy: "evidence",
+            ...completion,
+            fingerprint: fpNow,
+            runs: runSnapshot,
+            commits: commitSnapshot,
+          })
+        : null;
+      if (observations.length) {
+        logEvent(db, { actor: actorOf(db, t.id), action: "close.observed", taskId: t.id, at: closedAt, detail: observations.map((o) => o.detail).join("；") });
+      }
+      // 上下文那句话单独记一条：它和「又是哪条规范提醒了」不是一回事——
+      // 这条是 agent 自己说的「我看见了、我更新了/我故意不改」，人要看得见它的原话。
+      const ctxNote = String(input.contextNote ?? "").trim();
+      if (ctxNote) {
+        logEvent(db, { actor: actorOf(db, t.id), action: "close.context", taskId: t.id, at: closedAt, detail: ctxNote });
+      }
+      logEvent(db, {
+        actor: actorOf(db, t.id),
+        action: "close",
+        taskId: t.id,
+        at: closedAt,
+        detail: weak
+          ? `弱模式 · ${runs.length} 断言`
+          : `${lines} 行 / ${files.length} 文件 / ${runs.length} 断言${observations.length ? ` / ${observations.length} 条规范提醒` : ""}`,
+      });
+      return record;
     });
     mark("done", `${t.id} 收口完成，用时 ${Math.round((Date.now() - startedAt) / 100) / 10}s`);
     // 失败过才记坑：现象取最近一次失败事件，解法取 resolvedBy（上面已强制）
@@ -759,6 +806,11 @@ export async function taskClose(db, root, input, opts = {}) {
       files: files.length,
       runs,
       closedBy: "evidence",
+      // 这次收口留下的交付记录：调用方直接拿它回报人，不用再查一次库
+      completion: closed,
+      // true = 这次收口没写交付说明，记录为空。CLI 会把该补的参数打出来，
+      // 下一步（迁移完成后）这里会变成硬拦。
+      completionMissing,
       commits: weak ? [] : owned.map((c) => c.sha),
       fingerprint: fpNow,
       // 规范对照：内核只报事实，不判违规。Owner 看这个决定要不要打回。

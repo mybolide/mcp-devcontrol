@@ -8,6 +8,8 @@ import { logCommits, numstat, trailers } from "./git.js";
 import { sha256 } from "./fingerprint.js";
 import { assertionCommand, detectTestCmds, retargetAssertion } from "./testcmd.js";
 import { assertScopeInsideRepo, assertScopeIsSpecific } from "./scope.js";
+import { listCompletionsForTasks } from "./completion.js";
+import { forceCloseCompletionInput, insertCompletion } from "./completion.js";
 
 export const now = () => new Date().toISOString();
 export const MIN = 60_000;
@@ -57,14 +59,24 @@ export function getReq(db, id) {
 export function getPath(db, id) {
   return mapPath(db.prepare("SELECT * FROM paths WHERE id=?").get(id));
 }
+/** 任务的交付历史：一次查询取完，避免每个任务各查一次（控制台一次要列全部任务）。 */
+function withCompletions(db, tasks) {
+  const grouped = listCompletionsForTasks(db, tasks.map((t) => t.id));
+  return tasks.map((t) => {
+    const completions = grouped.get(t.id) ?? [];
+    return { ...t, completions, completion: completions[0] ?? null };
+  });
+}
+
 export function getTask(db, id) {
-  return mapTask(db.prepare("SELECT * FROM tasks WHERE id=?").get(id));
+  const task = mapTask(db.prepare("SELECT * FROM tasks WHERE id=?").get(id));
+  return task ? withCompletions(db, [task])[0] : task;
 }
 export function getBug(db, id) {
   return mapBug(db.prepare("SELECT * FROM bugs WHERE id=?").get(id));
 }
 export function listTasks(db) {
-  return db.prepare("SELECT * FROM tasks ORDER BY id").all().map(mapTask);
+  return withCompletions(db, db.prepare("SELECT * FROM tasks ORDER BY id").all().map(mapTask));
 }
 export function listReqs(db) {
   return db.prepare("SELECT * FROM requirements ORDER BY id").all().map(mapReq);
@@ -139,6 +151,8 @@ export const ENV_ONLY_CODES = new Set([
   // 也不该连锁触发 E_NEED_RESOLUTION（那个是「你返工过，解释怎么解决的」）。
   "E_CONTEXT_UNREVIEWED",
   // ② 用法
+  // 交付说明缺失同上：补三句话就过，不是「试了没成功」。
+  "E_NEED_COMPLETION",
   "E_USAGE",
   "INVALID_ARGUMENT",
   // ③ 找错了
@@ -432,9 +446,12 @@ export function pathIntake(db, root, input, actor = "agent") {
     const id = `P-${String(next).padStart(3, "0")}`;
     metaSet(db, "counter:P", next);
 
+    // 记下这条草案是为哪条需求建的：不记的话，Owner 之后 `path approve` 不重说 --req
+    // 就不知道要冻哪条需求的验收，Path 与需求的关系只能靠猜。
+    // 记出处不等于授权：真正授予写权限仍要等 Owner 批准（pathApprove / reqApprove）。
     db.prepare(
-      "INSERT INTO paths(id,requirement_id,allowed_paths_json,allow_new_files,budget_lines,test_cmds_json,status) VALUES(?,NULL,?,?,?,?,?)",
-    ).run(id, JSON.stringify(allowedPaths), allowNewFiles ? 1 : 0, budgetLines, JSON.stringify(testCmds), "draft");
+      "INSERT INTO paths(id,requirement_id,allowed_paths_json,allow_new_files,budget_lines,test_cmds_json,status) VALUES(?,?,?,?,?,?,?)",
+    ).run(id, requirementId, JSON.stringify(allowedPaths), allowNewFiles ? 1 : 0, budgetLines, JSON.stringify(testCmds), "draft");
     logEvent(db, {
       actor: actor || "agent",
       channel: input.channel ?? "agent",
@@ -452,6 +469,110 @@ export function pathIntake(db, root, input, actor = "agent") {
       testCmds,
       requiresOwnerApproval: true,
     };
+  });
+}
+
+/**
+ * Owner：单独冻结一条 Path 的范围、预算和验收命令（不动需求状态）。
+ *
+ * 和 reqApprove 的区别：那个是「需求 + Path 一起批」；这里只冻契约——需求早就是
+ * approved/building，只是原来那条 Path 范围不对，另建一条来批。
+ * 不进 MCP：批准等于授予写权限，Agent 能自己批就能自己扩权。
+ */
+export function pathApprove(db, root, input = {}) {
+  return tx(db, () => {
+    const p = getPath(db, input.pathId);
+    if (!p) fail("E_NEED_APPROVED", `Path 不存在：${input.pathId ?? "（未提供）"}`);
+    if (p.status === "revoked") fail("E_ILLEGAL_TRANSITION", `${p.id} 已废弃，不能批准——给需求新建一条 Path 再来`);
+    if (p.status === "approved") {
+      fail(
+        "E_ILLEGAL_TRANSITION",
+        `${p.id} 已经批准过（契约 ${String(p.contract_commit ?? "").slice(0, 8) || "弱模式"}）。改范围/预算走 path adjust，改验收走 req amend`,
+      );
+    }
+    assertScopeInsideRepo(p.allowedPaths);
+    assertScopeIsSpecific(p.allowedPaths);
+    const requirementId = input.requirementId ?? p.requirement_id ?? null;
+    let req = null;
+    if (requirementId) {
+      req = getReq(db, requirementId);
+      if (!req) fail("E_NEED_APPROVED", `需求不存在：${requirementId}`);
+      if (!["draft", "approved", "building"].includes(req.status)) {
+        fail("E_NEED_APPROVED", `需求 ${req.id} 已归档，不能为它批准 Path`);
+      }
+    }
+    // 与 reqApprove 同一口径：Owner 写在需求验收里的命令必须一起冻进契约，
+    // 否则任务照需求建出来，收口时会被 E_CONTRACT 拦住（说契约里没这条命令）。
+    const wanted = req ? req.acceptance.map((a) => assertionCommand(a)).filter(Boolean) : [];
+    const testCmds = [...new Set([...p.testCmds, ...wanted])];
+    if (!testCmds.length) fail("E_NO_TEST_CMD", "Path 至少需要一条验收命令才能批准");
+    const body = contractBody({
+      pathId: p.id,
+      requirementId: req?.id ?? null,
+      allowedPaths: p.allowedPaths,
+      allowNewFiles: Boolean(p.allow_new_files),
+      testCmds,
+      budgetLines: p.budget_lines,
+    });
+    const { sha, hash } = commitContract(root, body, "approve", { weak: metaGet(db, "mode") === "weak" });
+    db.prepare("UPDATE paths SET requirement_id=?, status='approved', hash=?, contract_commit=?, test_cmds_json=?, approved_at=? WHERE id=?").run(
+      req?.id ?? null,
+      hash,
+      sha,
+      JSON.stringify(testCmds),
+      now(),
+      p.id,
+    );
+    logEvent(db, {
+      actor: "owner",
+      channel: input.channel ?? "owner",
+      action: "path.approve",
+      detail: `${p.id}${req ? ` for ${req.id}` : ""} @ ${sha ? sha.slice(0, 8) : "弱模式"}`,
+    });
+    return {
+      pathId: p.id,
+      requirementId: req?.id ?? null,
+      status: "approved",
+      allowedPaths: p.allowedPaths,
+      allowNewFiles: Boolean(p.allow_new_files),
+      budgetLines: p.budget_lines,
+      testCmds,
+      contractCommit: sha,
+      hash,
+    };
+  });
+}
+
+/**
+ * Owner：只废弃这条 Path，需求、其它 Path、已完成任务历史都不动。
+ *
+ * 以前 Path 建错只有两条路：带着错契约继续做，或作废整个需求重收一遍（连已批准的
+ * 验收一起丢）。这里只把 Path 置为 revoked。
+ * 边界：还挂着没做完的任务就不许废弃——它们的 scope/acceptance 绑在这条契约上，
+ * 悄悄抽掉会让它们收不了口，而报错完全看不出原因。
+ */
+export function pathRevoke(db, root, input = {}) {
+  return tx(db, () => {
+    const p = getPath(db, input.pathId);
+    if (!p) fail("E_NEED_APPROVED", `Path 不存在：${input.pathId ?? "（未提供）"}`);
+    if (p.status === "revoked") fail("E_ILLEGAL_TRANSITION", `${p.id} 已经废弃过了`);
+    const reason = typeof input.reason === "string" ? input.reason.trim() : "";
+    if (reason.length < 12) {
+      fail("E_CONTRACT", `废弃理由至少 12 字（现在 ${reason.length} 字）：写清楚这条 Path 错在哪，会进审计`);
+    }
+    const busy = db
+      .prepare("SELECT id, status FROM tasks WHERE path_id=? AND status IN ('backlog','doing','parked') ORDER BY id")
+      .all(p.id);
+    if (busy.length) {
+      fail(
+        "E_PATH_IN_USE",
+        `${p.id} 上还有没做完的任务：${busy.map((t) => `${t.id}(${t.status})`).join("、")}。先 devcontrol task abandon <id> --reason "…"，再废弃这条 Path`,
+        { pathId: p.id, tasks: busy.map((t) => t.id) },
+      );
+    }
+    db.prepare("UPDATE paths SET status='revoked' WHERE id=?").run(p.id);
+    logEvent(db, { actor: "owner", channel: input.channel ?? "owner", action: "path.revoke", detail: `${p.id}：${reason}` });
+    return { pathId: p.id, status: "revoked", requirementUntouched: true, reason };
   });
 }
 
@@ -825,8 +946,20 @@ export function override(db, input) {
       // 「按 closed_at 归天」与「按事件归天」差几毫秒，窗口边界上就分家（T-127）。
       const closedAt = now();
       db.prepare("UPDATE tasks SET status='done', closed_by='force-close', closed_at=?, closing_at=NULL, closing_token=NULL, updated_at=? WHERE id=?").run(closedAt, closedAt, t.id);
+      // 强制完成也要留记录，但它是「Owner 签字放行」，不是验收通过：
+      // closed_by=force-close、runs/commits 为空，谁看都不会误以为测试跑过了。
+      const record = insertCompletion(db, {
+        taskId: t.id,
+        actor: "owner",
+        closedAt,
+        closedBy: "force-close",
+        ...forceCloseCompletionInput(reason),
+        fingerprint: null,
+        runs: [],
+        commits: [],
+      });
       logEvent(db, { actor: "owner", channel: "owner", action: "override", taskId: t.id, code: input.code, at: closedAt, detail: input.reason });
-      return { taskId: t.id, mode: input.mode, code: input.code };
+      return { taskId: t.id, mode: input.mode, code: input.code, completion: record };
     }
     setWaive(db, t.id, input.code);
     logEvent(db, { actor: "owner", channel: "owner", action: "override", taskId: t.id, code: input.code, detail: input.reason });

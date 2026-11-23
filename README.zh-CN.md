@@ -37,7 +37,7 @@ cd 你的项目
 devcontrol init
 ```
 
-`init` 建好状态库、按目录冻结契约草稿、在 Claude Code / Cursor / OpenCode / Codex 里注册 MCP 服务，再往 `AGENTS.md` 里写一段规矩。
+`init` 建好状态库、按目录冻结契约草稿、写下 `.mcp.json`（MCP 的通用入口，Claude Code 等直接读它），再往 `AGENTS.md` 里写一段规矩。客户端**私有**配置按需生成：项目里已经有 `.cursor/`、`opencode.json` 或 `.opencode/` 时才给对应客户端各写一份；想显式要就 `devcontrol init --mcp-for cursor,opencode`（或 `all`）。Codex 的配置要手动加一段，`init` 会把那段原样打出来。
 
 然后（在 Agent 会话里，或者终端里）：
 
@@ -48,6 +48,9 @@ devcontrol next                                                        # 内核�
 ```
 
 不想接 MCP？`devcontrol init --no-mcp`，同样的门禁、同样的证据链，全在终端里。
+`init` 还会在项目里落三个版本锁入口：`.devcontrol/bin/devcontrol`（Windows 是 `devcontrol.cmd`）。客户端掉了 MCP 工具、CI 里没装 devcontrol，都用它——敲下去打的是同一套内核，不需要 node_modules，也不需要联网。
+
+发布物是**一个自包含文件**：`npm run build` 把内核和依赖压成 `build/devcontrol.js`，装完即跑，SDK 换代不会把老版本装崩。
 
 ## 一个任务长什么样
 
@@ -106,6 +109,23 @@ devcontrol commit -m "feat: ..."  # 提交范围内的文件
 devcontrol close                  # 核对并收口
 devcontrol task abandon T-003 --reason "这条不做了"
 ```
+
+## 任务完成时要留下交付结论
+
+收口不是「跑过了就算完」。`devcontrol close` 现在必须写清三件事，记进 `.devcontrol/state.db` 的 `task_completions`（只增不改）：
+
+```bash
+devcontrol close T-003 \
+  --summary "首页标题改成一句话能读懂" \
+  --changes "只动 Hero 组件与它的文案常量" \
+  --limitations "移动端字号还没在真机验过"
+```
+
+- 说明只是说明：证据仍然是内核要核验的那几条 run（命令、退出码、跑在哪份代码上）。
+- 打回后再完成不是覆盖，是**追加**一条；`devcontrol task show T-003` 看历次结论与证据，`devcontrol export` 里也有一节。
+- 旧任务没有这段记录就显示「未记录」，不事后补造。
+- Owner 点「放行」强制完成也会留一条，但标明「强制完成（未经验收）」，跟验收通过区分开。
+- 完成 ≠ 人工 review 通过：内核只证明门禁过了。
 
 ## 控制台是白送的
 
