@@ -584,13 +584,25 @@ export function reqApprove(db, root, input) {
     if (!req) fail("E_NEED_APPROVED", `需求不存在：${input.requirementId}`);
     const p = getPath(db, input.pathId);
     if (!p) fail("E_NEED_APPROVED", `Path 不存在：${input.pathId}`);
-    // Path 是「文件区域 + 冻结命令」的执行范围合同，可以被多条需求复用。
-    //
-    // 收紧中的状态（未启用）：Owner 显式 rebind 才允许跨需求转移，且源需求上不能有
-    // 未完成任务。这条规则要同时改 cli-accept-derive / path-intake 等 6 处「复用」用例，
-    // 属于独立一轮迁移；在那之前保持既有兼容行为，避免半套规则上线。
-    // 已经落地的是：转移会写 path.rebind 审计，返回值带 rebindFrom（见本函数末尾）。
+    // Path 是「文件区域 + 冻结命令」的执行范围合同，可以被多条需求复用；
+    // 但复用是一次**授权转移**，不能把还挂着活儿的合同悄悄挪走：
+    // 源需求上如果还有没做完的任务（backlog/doing/parked），那些任务的 scope 与验收
+    // 都绑在旧绑定上，挪走会让它们莫名收不了口。
+    // 注：reqApprove 本身就是 Owner 动作，"显式"体现在这次调用上，不需要额外开关。
     const previousReqId = p.requirement_id && p.requirement_id !== req.id ? p.requirement_id : null;
+    if (previousReqId) {
+      if (!getReq(db, previousReqId)) fail("E_NEED_APPROVED", `源需求 ${previousReqId} 不存在`);
+      const busy = db
+        .prepare("SELECT id, status FROM tasks WHERE path_id=? AND status IN ('backlog','doing','parked') ORDER BY id")
+        .all(p.id);
+      if (busy.length) {
+        fail(
+          "E_PATH_IN_USE",
+          `Path ${p.id} 上还有没做完的任务：${busy.map((t) => `${t.id}(${t.status})`).join("、")}；先做完或作废再转移给 ${req.id}`,
+          { pathId: p.id, tasks: busy.map((t) => t.id), boundTo: previousReqId },
+        );
+      }
+    }
     const expected = sha256(Buffer.from(JSON.stringify(req.acceptance)));
     if (input.acceptanceHashPrefix && !expected.startsWith(input.acceptanceHashPrefix)) {
       fail("E_HASH_MISMATCH", `哈希前 8 位不符：${expected.slice(0, 8)}`);

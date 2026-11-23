@@ -10,8 +10,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { availableActions } from "../src/digest.js";
-import { pathApprove, pathIntake, reqApprove, reqIntake } from "../src/store.js";
-import { makeRepo, initFlow } from "./helpers.js";
+import { pathApprove, pathIntake, reqApprove, reqIntake, taskAbandon } from "../src/store.js";
+import { makeRepo, initFlow, newTask } from "./helpers.js";
 
 function twoReqs() {
   const root = makeRepo();
@@ -87,4 +87,21 @@ test("需求草稿的首次审批仍需 Owner：Agent 没有等价动作", () =>
   reqApprove(db, root, { requirementId: secondReq, pathId: draft.id, channel: "cli" });
   assert.equal(db.prepare("SELECT status FROM requirements WHERE id=?").get(secondReq).status, "approved");
   assert.equal(db.prepare("SELECT status FROM paths WHERE id=?").get(draft.id).status, "approved");
+});
+test("源需求上还有没做完的任务时，不许把 Path 转移给别的需求", () => {
+  const { root, db, firstReq, secondReq } = twoReqs();
+  const task = newTask(db, root, firstReq); // 挂在 P-001 上，还在 backlog
+  assert.throws(
+    () => reqApprove(db, root, { requirementId: secondReq, pathId: "P-001", channel: "cli" }),
+    (e) => e.code === "E_PATH_IN_USE",
+    "还有没做完的任务就不能挪走合同",
+  );
+  // 任务作废后：转移放行，且留下 path.rebind 审计
+  taskAbandon(db, root, { taskId: task.id, reason: "这条先不做了，合同要转给别的需求", channel: "owner" });
+  const res = reqApprove(db, root, { requirementId: secondReq, pathId: "P-001", channel: "cli" });
+  assert.equal(res.rebindFrom, firstReq);
+  assert.equal(db.prepare("SELECT requirement_id FROM paths WHERE id='P-001'").get().requirement_id, secondReq);
+  const audit = db.prepare("SELECT detail FROM events WHERE action='path.rebind' ORDER BY id DESC LIMIT 1").get();
+  assert.ok(audit, "转移必须留审计");
+  assert.match(audit.detail, new RegExp(`P-001: ${firstReq} → ${secondReq}`));
 });
