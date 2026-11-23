@@ -796,6 +796,22 @@
             <div class="mu">待批准需求 · ${r.acceptance.length} 条验收</div>
             <div class="row wrap">${paths || `<span class="mu">没有可用的 Path</span>`}</div></div>`);
         }
+        // 已批准需求下新增的 draft Path：这类 Path 只能单独批（不重审需求）。
+        // 早先收件箱只看 draft 需求，所以它们永远不出现，人只能靠命令行发现。
+        for (const p of s.paths.filter(
+          (x) =>
+            x.status === "draft" &&
+            x.requirement_id &&
+            s.requirements.some((r) => r.id === x.requirement_id && ["approved", "building"].includes(r.status)),
+        )) {
+          const req = s.requirements.find((r) => r.id === p.requirement_id);
+          const cmds = (p.testCmds || []).map((c) => `<code>${esc(c)}</code>`).join(" ");
+          cards.push(`<div class="card req"><strong>${esc(p.id)} 待批准 · ${esc(req?.id ?? "")} ${esc(req?.title ?? "")}</strong>
+            <div class="mu">需求已批准，只批这条 Path：需求状态与验收不动</div>
+            <div class="mu">范围：${esc((p.allowedPaths || []).join("、") || "（未定义）")} · 预算 ${esc(p.budget_lines)} 行</div>
+            <div class="mu">冻结命令：${cmds || `<span style="color:var(--warn)">（空，close 会无命令可跑）</span>`}</div>
+            <div class="row wrap" style="margin-top:6px"><button class="btn primary" data-path-approve="${esc(p.id)}">批准 ${esc(p.id)}</button></div></div>`);
+        }
         for (const q of s.questions.filter((x) => x.status === "open")) {
           cards.push(`<div class="card q"><strong>${esc(q.id)} ${esc(q.question)}</strong>
             <div class="mu">Agent 在等回答</div>
@@ -878,8 +894,19 @@
             const cov = `<span class="pill ${p.missing.length ? "parked" : "good"}">覆盖 ${esc(p.text)}</span>`;
             const miss = p.missing.length ? `<div class="mu" style="color:#a86b1a">待补拆：${p.missing.map(esc).join("；")}</div>` : "";
             // Path 可被多条需求共用，所以先从这条需求的任务反查它实际用的 Path
-            const usedPath = s.tasks.find((t) => t.requirement_id === r.id)?.path_id;
-            const pth = (usedPath && s.paths.find((x) => x.id === usedPath)) || s.paths.find((x) => x.requirement_id === r.id);
+            // 一条需求可能有多条 Path（新的替换旧的、或并行存在）：全都列出来，
+        // 别只取「第一条」——否则已作废的旧 Path 会一直占着显示位，新的看不见。
+        const related = s.paths.filter((x) => x.requirement_id === r.id);
+        const usedPath = s.tasks.find((t) => t.requirement_id === r.id)?.path_id;
+        const pth =
+          related.find((x) => x.id === usedPath && x.status === "approved") ??
+          related.find((x) => x.status === "approved") ??
+          related[0];
+        const allPaths = related.length
+          ? `<div class="mu" style="margin-top:2px">Path：${related
+              .map((x) => `${esc(x.id)}<span class="pill ${x.status === "approved" ? "good" : x.status === "revoked" ? "bad" : "parked"}">${esc(x.status)}</span>`)
+              .join(" ")}</div>`
+          : "";
             const tasks = s.tasks
               .filter((t) => t.requirement_id === r.id)
               .map((t) => `<span class="pill ${t.status === "done" ? "done" : t.status === "doing" ? "doing" : ""}">${esc(t.id)}</span>`)
@@ -888,7 +915,7 @@
               <td class="mono">${canAbandon(r) ? `<button class="btn danger" data-abandon="${esc(r.id)}" title="这件事不做了：需求归档，连带还挂着的任务一起放弃">作废</button> ` : ""}${pth ? `${esc(pth.id)} <button class="btn" data-budget="${pth.id}" data-cur="${pth.budget_lines ?? ""}" data-used="${s.tasks.filter((t) => t.path_id === pth.id && t.status === "done").reduce((n, t) => n + (t.changed_lines ?? 0), 0)}" title="改这条 Path 的改动预算">${pth.budget_lines ?? "?"} 行</button>` : "—"}
                 ${pth && (pth.testCmds || []).length ? `<div class="mu" style="margin-top:4px">验收：${pth.testCmds.map(esc).join(" · ")} <button class="btn" data-retest="${pth.id}" data-cmds="${esc((pth.testCmds || []).join(" | "))}" title="项目改了 test 脚本，重新采一次验收命令">重采</button></div>` : ""}
                 ${pth && pth.standards?.rules?.length ? `<div class="mu" style="margin-top:2px" title="${esc(pth.standards.rules.map((s) => (s.enforced ? "[内核会拦] " : "") + s.text).join("\n"))}">规范 ${pth.standards.rules.length} 条 · 悬停看全文</div>` : ""}</td>
-              <td>${cov}${miss}<div class="mu">${r.acceptance.map((a) => esc(a)).join(" · ")}</div></td>
+              <td>${cov}${miss}${allPaths}<div class="mu">${r.acceptance.map((a) => esc(a)).join(" · ")}</div></td>
               <td>${tasks || `<span class="mu">—</span>`}</td></tr>`;
           })
           .join("");
@@ -1142,6 +1169,7 @@
               : { type: "requirement", title: $("title").value, goal: $("detail").value, acceptance: [$("assertion").value || "npm test :: exit==0"] };
           return owner("intake", payload);
         }
+        if (b.dataset.pathApprove) return owner("path.approve", { pathId: b.dataset.pathApprove });
         if (b.dataset.approve) {
           if (b.dataset.rebind === "true") {
             const pathId = b.dataset.path;

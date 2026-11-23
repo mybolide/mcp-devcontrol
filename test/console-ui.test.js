@@ -122,3 +122,21 @@ test("刷新后停在原来那一页：视图写进 hash 和 localStorage，启�
   assert.match(script, /switchView\(initialView\(\)\)/, "打开/刷新时必须按 hash 恢复视图");
   assert.match(script, /addEventListener\("hashchange"/, "改 hash 也要跟着切页");
 });
+
+test("收件箱要显示「已批准需求下新增的 draft Path」，让人能单独批 Path", () => {
+  // 早先收件箱只看 draft 需求，这类 Path 永远不出现，人只能去命令行 discover。
+  const inbox = script.slice(script.indexOf("function renderInbox"), script.indexOf("function completionCell"));
+  assert.match(inbox, /x\.status === "draft"/, "要筛 draft Path");
+  assert.match(inbox, /\["approved", "building"\]\.includes\(r\.status\)/, "只针对已批准/在办的需求");
+  assert.match(inbox, /data-path-approve=/, "要有单独的批准按钮");
+  assert.match(script, /dataset\.pathApprove\) return owner\("path\.approve"/, "按钮要调 Owner 的 path.approve");
+});
+
+test("需求页要列出这条需求的全部 Path，不能只取第一条", () => {
+  // FR-004 曾一直显示已作废的 P-001，新的 P-003 看不见。
+  const reqs = script.slice(script.indexOf("function renderReqs"), script.indexOf("function renderDocs"));
+  assert.match(reqs, /s\.paths\.filter\(\(x\) => x\.requirement_id === r\.id\)/, "要按需求取全部 Path");
+  assert.match(reqs, /related\.find\(\(x\) => x\.status === "approved"\)/, "优先展示仍然有效的 Path");
+  assert.match(reqs, /\$\{allPaths\}/, "全部 Path 要渲染出来");
+  assert.doesNotMatch(reqs, /s\.paths\.find\(\(x\) => x\.requirement_id === r\.id\)/, "不许再只取第一条");
+});
