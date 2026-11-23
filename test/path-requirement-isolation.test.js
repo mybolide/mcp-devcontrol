@@ -133,3 +133,27 @@ test("同一个 Path 重复批准：拒绝，不重复生成契约", () => {
   assert.equal(approvals.c, 1, "只该有一条 path.approve 审计");
   assert.equal(db.prepare("SELECT contract_commit FROM paths WHERE id=?").get(draft.id).contract_commit, first.contractCommit);
 });
+
+test("并发批准同一条 Path：只有一个成功，另一个被状态机挡住", async () => {
+  const { root, db, secondReq } = twoReqs();
+  const draft = pathIntake(db, root, { requirementId: secondReq, allowedPaths: ["src"], testCmds: ["npm test"] });
+  // 两个连接各自尝试批准同一条草案：事务里 BEGIN IMMEDIATE 会串行，第二个必须失败
+  const other = (await import("../src/db.js")).openDb(root);
+  try {
+    const results = await Promise.allSettled([
+      Promise.resolve().then(() => pathApprove(db, root, { pathId: draft.id, channel: "cli" })),
+      Promise.resolve().then(() => pathApprove(other, root, { pathId: draft.id, channel: "cli" })),
+    ]);
+    const ok = results.filter((r) => r.status === "fulfilled").length;
+    const rejected = results.filter((r) => r.status === "rejected");
+    assert.equal(ok, 1, `只能有一个成功：${JSON.stringify(results.map((r) => r.status))}`);
+    assert.equal(rejected.length, 1);
+    assert.ok(
+      ["E_ILLEGAL_TRANSITION", "E_BUSY"].includes(rejected[0].reason.code),
+      `第二个必须是状态机拒绝：${rejected[0].reason.code}`,
+    );
+    assert.equal(db.prepare("SELECT status FROM paths WHERE id=?").get(draft.id).status, "approved");
+  } finally {
+    other.close();
+  }
+});
