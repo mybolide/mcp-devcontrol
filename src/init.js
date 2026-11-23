@@ -17,6 +17,8 @@ import { isVendorPath, vendorIgnores } from "./vendor.js";
 import { detectTestCmds } from "./testcmd.js";
 import { buildContextPlan, contextStatus } from "./context.js";
 import { installAgentFiles, SKILL_REL } from "./skill.js";
+import { WRAPPER_DIR, WRAPPER_FILES, writeWrappers } from "./wrapper.js";
+import { CURSOR_MCP_REL, MCP_REL, OPENCODE_REL, resolveClients } from "./clients.js";
 
 const DEVCONTROL_BIN = fileURLToPath(new URL("../bin/devcontrol.js", import.meta.url));
 
@@ -120,7 +122,11 @@ function writeMcpConfig(root, rel, value) {
   } catch {
     return "invalid"; // 不碰用户手写的坏文件
   }
-  const isOpenCode = Boolean(current.mcp);
+  // OpenCode 的配置形状不同（mcp.<name>.command 是数组），而且经常从空文件起步：
+  // 早先靠「current.mcp 存不存在」猜是不是 OpenCode，`{}` 就被当成通用文件，
+  // 于是往 opencode.json 里写了 mcpServers —— OpenCode 读不到，用户也看不出为什么没生效。
+  // 现在按路径认：写的是 opencode.json 就一定是 OpenCode。
+  const isOpenCode = rel === OPENCODE_REL || Boolean(current.mcp);
   const entry = isOpenCode ? current.mcp?.devcontrol : current.mcpServers?.devcontrol;
   if (JSON.stringify(entry) === JSON.stringify(isOpenCode ? value.mcp.devcontrol : value.mcpServers.devcontrol)) return "exists";
   if (isOpenCode) {
@@ -136,7 +142,8 @@ function writeMcpConfig(root, rel, value) {
  * 真正干活的初始化。**一个字都不打印**，返回结构化结果由调用方决定怎么说。
  *
  * @param {string} root 项目根（git 顶层或 cwd）
- * @param {{noMcp?: boolean, only?: Set<string>|null, weak?: boolean}} opts
+ * @param {{noMcp?: boolean, only?: Set<string>|null, weak?: boolean, mcpFor?: Set<string>|null}} opts
+ *   mcpFor = `--mcp-for cursor,opencode`：显式要求写客户端私有配置（优先于自动探测）
  */
 export function initializeProject(root, opts = {}) {
   const noMcp = Boolean(opts.noMcp);
@@ -149,6 +156,9 @@ export function initializeProject(root, opts = {}) {
 
   fs.mkdirSync(path.join(root, ".devcontrol", "runs"), { recursive: true });
   fs.mkdirSync(path.join(root, ".devcontrol", "contracts"), { recursive: true });
+  // 项目内版本锁入口：客户端掉了 MCP 工具、纯 CLI 项目、CI 都用它，
+  // 免得「跑 devcontrol」实际跑的是哪一份、哪个版本说不清。
+  const wrappers = writeWrappers(root);
   const unignored = dropBlanketDataDirIgnore(root);
   // 依赖/构建产物默认忽略——但项目特意提交过的（dist/ 进了 git）不能忽略，
   // 否则 git 拒绝再 add，反而把正常提交挡住。
@@ -157,7 +167,9 @@ export function initializeProject(root, opts = {}) {
   // 仓库里会露出作者的主目录结构。所以它们是本机配置，不是项目文件。
   // 但已经被跟踪的项目（老项目/团队共享配置）不翻案：git 对已跟踪文件不会
   // 因为后加的 ignore 而停止跟踪，硬加只会造出「被跟踪却被忽略」的怪状态。
-  const mcpFiles = noMcp ? [] : [".mcp.json", ".cursor/mcp.json", "opencode.json"];
+  // ignore 列表仍然写全三份：这次没写不代表以后不会用（用户临时装个 Cursor 就冒出一条 ??），
+  // 而「忽略一个不存在的文件」没有任何副作用。实际写哪些由 clients 决定。
+  const mcpFiles = noMcp ? [] : [MCP_REL, CURSOR_MCP_REL, OPENCODE_REL];
   const mcpIgnorable = notAlreadyTracked(root, mcpFiles);
   appendLines(root, ".gitignore", [
     ...notAlreadyTracked(root, vendorIgnores(root)),
@@ -210,13 +222,22 @@ export function initializeProject(root, opts = {}) {
     created += 1;
   }
 
-  const wroteMcp = noMcp ? "skipped" : writeMcpConfig(root, ".mcp.json", mcpServerConfig(root));
-  const wroteCursor = noMcp ? "skipped" : writeMcpConfig(root, ".cursor/mcp.json", mcpServerConfig(root));
+  // 通用入口照写（MCP 客户端都认它）；客户端私有配置只在项目确实在用那个客户端时才写，
+  // 别把 .cursor/ 和 opencode.json 塞进一个根本不用它们的仓库。
+  const clients = noMcp ? null : resolveClients(root, { forced: opts.mcpFor ?? null });
+  const wroteMcp = noMcp ? "skipped" : writeMcpConfig(root, MCP_REL, mcpServerConfig(root));
+  const wroteCursor = noMcp
+    ? "skipped"
+    : clients.picked.cursor
+      ? writeMcpConfig(root, CURSOR_MCP_REL, mcpServerConfig(root))
+      : "skipped-no-client";
   const wroteOpencode = noMcp
     ? "skipped"
-    : writeMcpConfig(root, "opencode.json", {
-        mcp: { devcontrol: { type: "local", command: [process.execPath, DEVCONTROL_BIN, "mcp"], environment: { DEVCONTROL_ROOT: root } } },
-      });
+    : clients.picked.opencode
+      ? writeMcpConfig(root, OPENCODE_REL, {
+          mcp: { devcontrol: { type: "local", command: [process.execPath, DEVCONTROL_BIN, "mcp"], environment: { DEVCONTROL_ROOT: root } } },
+        })
+      : "skipped-no-client";
   // Agent 侧安装物：规范 Skill 只有一份，其余都是指针（避免多份内容各自漂移）
   const agentFiles = installAgentFiles(root, { noMcp });
   // init 自己写的配置要自己提交：否则第一次 close 会被 E_DIRTY_SCOPE 拦住
@@ -226,6 +247,8 @@ export function initializeProject(root, opts = {}) {
     ".gitignore",
     ".gitattributes",
     ...Object.keys(agentFiles),
+    // 入口壳也是项目文件：不跟 init 一起提交，第一次 close 就会被 E_DIRTY_SCOPE 拦
+    ...wrappers.files.map((f) => `${WRAPPER_DIR}/${f}`),
     ...mcpFiles.filter((f) => !mcpIgnorable.includes(f)),
   ].filter((f) => fs.existsSync(path.join(root, f)));
   let initCommit = null;
@@ -252,6 +275,8 @@ export function initializeProject(root, opts = {}) {
     wroteCursor,
     wroteOpencode,
     agentFiles,
+    clients,
+    wrappers,
     initCommit,
     contextPlan: buildContextPlan(root),
     context: contextStatus(root),

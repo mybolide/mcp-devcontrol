@@ -1,6 +1,6 @@
 {
   "name": "mcp-devcontrol",
-  "version": "6.0.0-alpha.2",
+  "version": "6.0.0-alpha.3",
   "description": "DevControl — a discipline kernel for coding agents: gates in the core, single-tool MCP, SQLite as the only source of truth, console owned by the connection",
   "type": "module",
   "bin": {
@@ -10,6 +10,9 @@
   "scripts": {
     "test": "node --test test/*.test.js",
     "mcp": "node bin/devcontrol.js mcp",
+    "build": "node scripts/bundle.mjs",
+    "prepare": "npm run build",
+    "prepack": "npm run build",
     "packcheck": "node scripts/packcheck.mjs"
   },
   "engines": {
@@ -40,15 +43,15 @@
   ],
   "files": [
     "bin",
-    "src",
+    "build",
     "public",
-    "scripts",
     "README.md",
     "README.zh-CN.md",
     "LICENSE"
   ],
-  "dependencies": {
+  "devDependencies": {
     "@modelcontextprotocol/sdk": "^1.32.2",
+    "esbuild": "^0.28.2",
     "zod": "^4.0.0"
   }
 }

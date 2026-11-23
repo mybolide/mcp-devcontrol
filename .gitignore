@@ -31,3 +31,4 @@ target/
 .mcp.json
 opencode.json
 .cursor/mcp.json
+.devcontrol/context-plan.md

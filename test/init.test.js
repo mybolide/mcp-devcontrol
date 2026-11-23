@@ -60,26 +60,55 @@ test("--no-mcp：只写 AGENTS.md，不写任何客户端配置，纪律块改�
   assert.match(agents, /devcontrol serve/);
 });
 
-test("init 不把 MCP 配置提交进仓库：里面是本机绝对路径，clone 下来就是死的", () => {
+test("客户端配置按需生成：不用的客户端不往仓库里塞文件", async () => {
   // 公开仓库踩到的：.mcp.json 里写着 /Users/<某人>/.../node 和 .../devcontrol.js，
-  // 三个客户端配置全都推上去了。别人 clone 下来得到一份指向别人机器的死配置，
-  // 顺带把作者的主目录结构也印在公网上。
+  // 而且一个只用 Claude Code 的仓库里也躺着 .cursor/ 和 opencode.json —— 那是噪音，
+  // 谁也不知道该不该留、改了会不会被下次 init 覆盖。
   const root = makeRepo();
-  return runInit(root).then(({ code }) => {
-    assert.equal(code, 0);
-    // 文件该在磁盘上——本机自己要用
-    for (const f of [".mcp.json", ".cursor/mcp.json", "opencode.json"]) {
-      assert.ok(fs.existsSync(path.join(root, f)), `${f} 该被写出来`);
-    }
-    // 但不该被 git 跟踪
-    const tracked = sh(root, "git", "ls-files").split("\n");
-    for (const f of [".mcp.json", ".cursor/mcp.json", "opencode.json"]) {
-      assert.ok(!tracked.includes(f), `${f} 不该提交（里面是本机路径）`);
-    }
-    // 也不能因此变成一条天天挂着的 ?? —— 那就只是把问题挪了个地方
-    const status = sh(root, "git", "status", "--porcelain").trim();
-    assert.equal(status, "", `init 之后工作树该干净，实际有：\n${status}`);
-  });
+  const { code } = await runInit(root);
+  assert.equal(code, 0);
+  // 通用入口照写：不写就等于 init 完还得手工配一遍
+  assert.ok(fs.existsSync(path.join(root, ".mcp.json")), ".mcp.json 该被写出来");
+  // 没在用 Cursor / OpenCode：一份都不该出现
+  assert.ok(!fs.existsSync(path.join(root, ".cursor")), "没在用 Cursor 就不该建 .cursor/");
+  assert.ok(!fs.existsSync(path.join(root, "opencode.json")), "没在用 OpenCode 就不该写 opencode.json");
+  // 但凡是写出来的，都绝不能进仓库：里面是本机绝对路径
+  const tracked = sh(root, "git", "ls-files").split("\n");
+  assert.ok(!tracked.includes(".mcp.json"), "本机绝对路径的配置不该提交");
+  const status = sh(root, "git", "status", "--porcelain").trim();
+  assert.equal(status, "", `init 之后工作树该干净，实际有：\n${status}`);
+});
+
+test("项目在用那个客户端就写它的配置：.cursor/ 在 → mcp.json 和 rules 一起写", async () => {
+  const root = makeRepo();
+  fs.mkdirSync(path.join(root, ".cursor"), { recursive: true });
+  const { code } = await runInit(root);
+  assert.equal(code, 0);
+  assert.ok(fs.existsSync(path.join(root, ".cursor/mcp.json")), "检测到 .cursor/ 就该写它的 MCP 配置");
+  assert.ok(fs.existsSync(path.join(root, ".cursor/rules/devcontrol.mdc")), "判据要和 agent 说明文件同一套");
+  assert.ok(!fs.existsSync(path.join(root, "opencode.json")), "没在用 OpenCode 还是不该写");
+});
+
+test("--mcp-for 能强制写：不想靠探测、或探测不出来时用", async () => {
+  const root = makeRepo();
+  fs.writeFileSync(path.join(root, "opencode.json"), "{}\n");
+  const { code } = await runInit(root, ["--mcp-for", "opencode,cursor"]);
+  assert.equal(code, 0);
+  assert.match(
+    fs.readFileSync(path.join(root, "opencode.json"), "utf8"),
+    /devcontrol/,
+    "已有的 opencode.json 要被合并进 devcontrol，不是被覆盖",
+  );
+  assert.ok(fs.existsSync(path.join(root, ".cursor/mcp.json")), "--mcp-for 显式要了就写");
+});
+
+test("--mcp-for 写了不认识的名字：报错，不许悄悄忽略", async () => {
+  const root = makeRepo();
+  const { code, out } = await runInit(root, ["--mcp-for", "vscode"]);
+  assert.notEqual(code, 0);
+  assert.match(out, /E_INVALID/);
+  assert.match(out, /vscode/);
+  assert.ok(!fs.existsSync(path.join(root, ".mcp.json")), "参数错就不该动任何配置");
 });
 
 test("已经被跟踪的 MCP 配置不翻案：继续跟着一起提交", () => {

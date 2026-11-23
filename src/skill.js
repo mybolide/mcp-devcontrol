@@ -4,11 +4,14 @@ import fs from "node:fs";
 import path from "node:path";
 import { commitFiles } from "./git.js";
 import { VERSION } from "./protocol.js";
+// 客户端判据只有一份（clients.js）：MCP 配置和 agent 说明文件必须同进同退，
+// 否则会出现「写了 .cursor/mcp.json 却没有 .cursor/rules」这种半套配置。
+import { CLAUDE_REL, usesClaude, usesCursor } from "./clients.js";
 
+export { CLAUDE_REL };
 export const SKILL_NAME = "devcontrol";
 export const SKILL_REL = ".agents/skills/devcontrol/SKILL.md";
 export const CURSOR_RULE_REL = ".cursor/rules/devcontrol.mdc";
-export const CLAUDE_REL = "CLAUDE.md";
 export const AGENTS_REL = "AGENTS.md";
 
 // 版本号必须进标记里：否则用户看不出装的是哪一版，升级后也无法判断
@@ -56,6 +59,12 @@ Agent 的 \`devcontrol\` MCP action **没有**批准需求、放行、打回、�
 | 任务做完但验收过不了 | 只能改到过；放行由人决定 |
 
 控制台地址在 \`devcontrol status\` 的 \`console\` 字段；没起来就 \`devcontrol serve\`。
+
+## 客户端掉了 MCP 工具 / 本来就没接 MCP
+
+项目根下有 \`.devcontrol/bin/devcontrol\`（Windows 用 \`devcontrol.cmd\`，PowerShell 用 \`.ps1\`）。它版本锁在本项目上，敲下去打的就是同一套内核，不需要机器上装过 devcontrol，也不需要 MCP 进程。
+
+只有这种情况才用它：MCP 工具列表里没有 \`devcontrol\`（工具租约掉了、客户端重启了），或者项目就是纯 CLI 模式。命令和 MCP 的 action 一一对应：\`devcontrol status\`（= bootstrap）、\`devcontrol run -- <命令>\`、\`devcontrol commit -m "..."\`、\`devcontrol close\`。能走 MCP 时不要绕开它，否则内核看不到你手上的是哪一份代码。
 
 ## 硬规则（违反会被拦，不是建议）
 
@@ -172,13 +181,7 @@ function writeIfChanged(file, content) {
  * 安装 Agent 侧的全部文件。返回每个文件的状态，供 init 打印与提交。
  * 规范 Skill 只有一份，其余都是指针 —— 内容不会各自漂移。
  */
-/** 项目在用哪个客户端，就只给它装指针：不用的别往仓库里塞文件 */
-function usesClaude(root) {
-  return fs.existsSync(path.join(root, CLAUDE_REL)) || fs.existsSync(path.join(root, ".claude"));
-}
-function usesCursor(root) {
-  return fs.existsSync(path.join(root, ".cursor"));
-}
+// usesClaude / usesCursor 来自 clients.js（判据只写一处）
 
 export function installAgentFiles(root, opts = {}) {
   const out = {};
