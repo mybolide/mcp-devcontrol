@@ -154,3 +154,15 @@ Agent 侧纪律（`AGENTS.md` 与 MCP `instructions` 同源）：**只调用 `ac
 - 不做 worktree 默认隔离（只有 R2 重跑用临时 worktree）；
 - 不做审批链、不做租约恢复；
 - 不在 v6 里兼容 v5 的工具名（谁要旧接口就继续用 v5）。
+## 10. Path 归属与审批（6.0.0-alpha.4 收紧）
+
+这一轮修的是「授权能不能被悄悄借用」：Path 是执行范围合同（文件范围、冻结命令、预算、新增文件策略），它必须始终属于**当前这条需求**。
+
+- **归属隔离**：`approvedPath(reqId)` 只按 `requirement_id` 精确匹配，去掉「回落到任意 approved Path」。没有自有 Path 时 `next` 返回 `wait` 并带 `requirementId`，理由写明不能借用别家的。
+- **动作面**：`availableActions` 只把「挂在已批准需求上」的 approved Path 算作开发权限；draft 需求的 blocker 也只认自己的 Path。
+- **两种审批形态**（`approvalMode`）：
+  - `first`：需求还是 draft → `reqApprove`，需求 + Path 一起冻（原有流程）。
+  - `path-only`：需求已批准 → `pathApprove`，只冻新 Path，需求状态与验收一字不动；只接受挂在本需求名下的 draft Path。
+  - 两者都走真人 elicitation；摘要含 `mode`，确认前后各算一次，内容变了返回 `E_APPROVAL_STALE`。`path.approve` 不进 MCP 动作面（`capabilities` 里 `action: null`），只在 `OWNER_ACTIONS`。
+- **转移保护**：跨需求复用 Path 是 Owner 的显式动作（`reqApprove` 本身就是 Owner 通道），但源需求上还有 `backlog/doing/parked` 任务、在办租约、或 `questions.status='open'` 时一律 `E_PATH_IN_USE`。转移成功写 `path.rebind` 审计并回传 `rebindFrom`。
+- **不变的部分**：转移只改 `paths.requirement_id`，合同内容不动；历史任务各自保存 `contract_commit`，按自己的契约核验，快照不因转移而漂移。重复批准由 `E_ILLEGAL_TRANSITION` 挡住且只留一条审计，并发批准因 `BEGIN IMMEDIATE` 只有一个成功。
