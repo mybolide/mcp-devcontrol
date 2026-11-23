@@ -80,9 +80,11 @@ Agent 的 \`devcontrol\` MCP action **没有**批准需求、放行、打回、�
 | \`E_NEED_APPROVED\` | 需求或 Path 还没批准，等 Owner 在控制台批 |
 | \`E_CLAIMED_BY_OTHER\` / \`E_SCOPE_OVERLAP\` / \`E_WIP_LIMIT\` | 等别人收口，或换一个不冲突的任务 |
 | \`E_NO_DELIVERY\` | 还没有本任务的提交，先 commit |
+| \`E_VERIFY_COMMITTED\` | 这是 verify 任务（只跑验收、不交代码）：撤掉提交，或让真正的工作任务交付这份代码 |
 | \`E_SCOPE_VIOLATION\` | 改了 scope 外的文件，撤掉 |
 | \`E_NO_EVIDENCE\` | 还没跑过验收：\`devcontrol run -- <命令>\` |
 | \`E_EVIDENCE_STALE\` | 跑完之后又改了代码，重跑一次 |
+| \`E_EVIDENCE_STALE_HEAD\` | verify 任务的证据是在旧 HEAD 上跑的：重跑 \`devcontrol run -- <命令>\` |
 | \`E_ASSERTION_FAILED\` | 证据里的退出码没过，去控制台「证据」看输出 |
 | \`E_NEED_RESOLUTION\` | 补 \`--resolved-by\` 再 close |
 | \`E_MEMORY_CANDIDATE\` | 记忆写得太具体，按提示模板改写后再写一次 |

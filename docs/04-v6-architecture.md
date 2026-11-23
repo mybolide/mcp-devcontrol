@@ -166,3 +166,21 @@ Agent 侧纪律（`AGENTS.md` 与 MCP `instructions` 同源）：**只调用 `ac
   - 两者都走真人 elicitation；摘要含 `mode`，确认前后各算一次，内容变了返回 `E_APPROVAL_STALE`。`path.approve` 不进 MCP 动作面（`capabilities` 里 `action: null`），只在 `OWNER_ACTIONS`。
 - **转移保护**：跨需求复用 Path 是 Owner 的显式动作（`reqApprove` 本身就是 Owner 通道），但源需求上还有 `backlog/doing/parked` 任务、在办租约、或 `questions.status='open'` 时一律 `E_PATH_IN_USE`。转移成功写 `path.rebind` 审计并回传 `rebindFrom`。
 - **不变的部分**：转移只改 `paths.requirement_id`，合同内容不动；历史任务各自保存 `contract_commit`，按自己的契约核验，快照不因转移而漂移。重复批准由 `E_ILLEGAL_TRANSITION` 挡住且只留一条审计，并发批准因 `BEGIN IMMEDIATE` 只有一个成功。
+
+## 11. 任务交付模式（6.0.0-alpha.6：`delivery` = code / verify）
+
+这一轮修的是「纯验证任务根本收不了口」。真实案例（T-011，Rust Clippy 验收）：领任务 → `cargo clippy` 全绿、证据已留 → `commit` 时 `E_NO_DELIVERY`（本来就没有代码改动）→ `close` 时还是 `E_NO_DELIVERY`（找不到归属提交）→ 只能 parked 等 Owner。这不是 Clippy 的问题，也不是那个项目的配置问题：**内核把「交付」等同于「交出归属提交」，而有一整类任务只交付验收结果。**
+
+**模型**：`tasks.delivery`（schema v6，老库默认 `code`，迁移只加列不改历史）。
+
+| 模式 | 完成条件 | 允许提交 | 典型任务 |
+|---|---|---|---|
+| `code`（默认） | 归属提交 + 验收证据 + 收口 | 必须 | 写代码、改行为 |
+| `verify` | 验收证据 + 收口 | **禁止**（`E_VERIFY_COMMITTED`） | Clippy / 编译检查 / 只跑测试 / 安全审计 |
+
+- **不做的事**：不把 `E_NO_DELIVERY` 改成「有证据就放过」。那会让「交付了什么」重新变成一句自述，纪律塌成纸面。verify 不是放松门禁，是**换一批判据**。
+- **声明在哪**：`task.create`（`delivery` / CLI `--delivery`），建后 Agent 不可改；Owner 可在控制台改（`task.adjust`，写审计 `交付 code → verify`），这是派错任务时的补救阀门。已收口的任务不许改（那是改写历史）。
+- **反向卡死**（这是关键，否则「声明 verify」成了绕开归属/scope/diff 预算的后门）：R0 跳过归属扫描，但区间内若存在本任务名下提交 → `E_VERIFY_COMMITTED`；工作树脏检照旧（`E_DIRTY_SCOPE`）；R2 证据一点不放松（`E_NO_EVIDENCE` / `E_EVIDENCE_STALE` / `E_ASSERTION_FAILED` 全部生效）。
+- **证据绑定代码版本**：verify 不产生提交，所以证据里的 `runs.head` 必须等于当前 HEAD，否则 `E_EVIDENCE_STALE_HEAD`（指纹只覆盖 scope 内内容，scope 外的改动指纹看不出来，但同样让旧结果失效）。`E_EVIDENCE_STALE_HEAD` 属于 `ENV_ONLY_CODES`：重跑一遍就好，不记 Agent 返工轮次。
+- **引导面同步**：`digest.next` 对 verify 任务只给 `run → close`，绝不催 `commit`；`task.claim` 返回 `delivery` + `cadence`（本模式的两步/三步）；`hints.js` 对两个新错误码给出对应出路；控制台任务行显示 `verify` 徽标并允许 Owner 一键切换模式。
+- **审计可见**：`task_completions.delivery` 随交付记录落盘——「这条验收是被跑通验收覆盖的，不是被代码覆盖的」这件事，事后必须查得到。
