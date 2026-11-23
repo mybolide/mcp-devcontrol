@@ -25,7 +25,7 @@ export const CAPABILITIES = [
     action: null,
     mcp: null,
     cli: { sub: "path approve", flags: ["req"] },
-    console: null,
+    console: "path.approve",
   },
   {
     name: "废弃错误的 Path（不影响需求）",

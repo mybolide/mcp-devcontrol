@@ -16,6 +16,7 @@ import {
   reqApprove,
   reqAmend,
   pathAdjust,
+  pathApprove,
   pathRetest,
   taskAdjust,
   taskReopen,
@@ -63,6 +64,8 @@ const REQUIRED = {
   "task.rank": ["taskId"],
   "path.adjust": ["pathId"],
   "path.retest": ["pathId"],
+  // 只冻一条 Path（需求已批准时的路径）：同样只走 Owner 通道，不进 MCP dispatcher。
+  "path.approve": ["pathId"],
   "memory.promote": ["id"],
   "memory.edit": ["id"],
   "memory.drop": ["id"],
@@ -82,6 +85,7 @@ const RAW_ACTIONS = {
   override: (db, root, p) => override(db, p),
   "path.adjust": (db, root, p) => pathAdjust(db, root, p),
   "path.retest": (db, root, p) => pathRetest(db, root, p),
+  "path.approve": (db, root, p) => pathApprove(db, root, p),
   handoff: (db, root, p) => handoff(db, p, root),
   release: (db, root, p) => taskRelease(db, p),
   // Owner 直接下单：单人场景里人心里已经知道要做什么，没必要非得等 Agent 拆出机器标题。

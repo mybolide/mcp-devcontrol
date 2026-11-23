@@ -15,8 +15,21 @@ function safeJson(value) {
   return JSON.stringify(value);
 }
 
-function digest(req, pth) {
+/**
+ * 审批有两种形态，摘要必须把它算进去，否则「先批需求」和「只批 Path」会被当成同一件事：
+ *   · first    —— 需求还是 draft：需求 + Path 一起批（原有流程）
+ *   · path-only —— 需求已批准：只冻这条新 Path，需求的验收和状态一律不动
+ */
+export function approvalMode(req, path) {
+  if (!req) return null;
+  if (req.status === "draft") return "first";
+  if (["approved", "building"].includes(req.status)) return "path-only";
+  return null;
+}
+
+function digest(req, pth, mode) {
   return createHash("sha256").update(safeJson({
+    mode,
     requirementId: req.id,
     status: req.status,
     title: req.title,
@@ -39,12 +52,30 @@ function toolResponse(result, error = false) {
 export function getApprovalPreview(db, requirementId, pathId) {
   const req = listReqs(db).find((r) => r.id === requirementId);
   const path = listPaths(db).find((p) => p.id === pathId);
-  if (!req || req.status !== "draft") return { ok: false, code: "E_NEED_APPROVED", message: `需求 ${requirementId} 不存在或不处于草稿状态` };
-  if (!path || (path.requirement_id && path.status !== "approved")) {
-    return { ok: false, code: "E_INVALID_PATH", message: `Path ${pathId} 不存在或无法复用` };
+  if (!req) return { ok: false, code: "E_NEED_APPROVED", message: `需求 ${requirementId} 不存在` };
+  const mode = approvalMode(req, path);
+  if (!mode) {
+    return { ok: false, code: "E_NEED_APPROVED", message: `需求 ${requirementId} 处于 ${req.status}，不能审批` };
+  }
+  // first 模式沿用既有语义：Path 可被多条需求复用（rebindFrom 会提示重绑）。
+  // path-only 模式必须是自己名下的草案：给已批准需求新增 Path 时，拿别家的 Path 来批
+  // 等于绕过归属，所以这一条只对 path-only 生效。
+  if (!path) {
+    return { ok: false, code: "E_INVALID_PATH", message: `Path ${pathId} 不存在` };
+  }
+  if (mode === "path-only") {
+    if (path.requirement_id !== requirementId) {
+      return { ok: false, code: "E_INVALID_PATH", message: `Path ${pathId} 不属于需求 ${requirementId}，不能单独批准` };
+    }
+    if (path.status !== "draft") {
+      return { ok: false, code: "E_INVALID_PATH", message: `Path ${pathId} 当前 ${path.status}，不是待批准的草案` };
+    }
+  } else if (path.status === "revoked") {
+    return { ok: false, code: "E_INVALID_PATH", message: `Path ${pathId} 已废弃，不能批准` };
   }
   return {
     ok: true,
+    mode,
     requirementId,
     pathId,
     title: req.title,
@@ -52,7 +83,7 @@ export function getApprovalPreview(db, requirementId, pathId) {
     allowedPaths: path.allowedPaths,
     pathTestCmds: path.testCmds,
     rebindFrom: path.requirement_id && path.requirement_id !== requirementId ? path.requirement_id : null,
-    fingerprint: digest(req, path),
+    fingerprint: digest(req, path, mode),
   };
 }
 
@@ -70,12 +101,16 @@ export async function requestOwnerApproval({ db, root, requirementId, pathId, el
   // The model can pick a target to request, but the *client* owns this form.
   // Never accept {approved:true}, a token, or a quoted user message from tool arguments.
   const details = [
-    `需求 ${requirementId}：${before.title}`,
+    before.mode === "path-only"
+      ? `只批准 Path（需求 ${requirementId} 已批准，本次不重新审需求）`
+      : `需求 ${requirementId}：${before.title}`,
     `Path：${pathId}${before.rebindFrom ? `（会从 ${before.rebindFrom} 重新绑定）` : ""}`,
     `文件范围：${before.allowedPaths?.join("、") || "（未定义）"}`,
-    `需求验收：${before.acceptance?.join("；") || "（未定义）"}`,
+    before.mode === "path-only" ? `需求验收（本次不改）：${before.acceptance?.join("；") || "（未定义）"}` : `需求验收：${before.acceptance?.join("；") || "（未定义）"}`,
     `Path 当前验收命令：${before.pathTestCmds?.join("；") || "（未定义）"}`,
-    "这将由原 DevControl 审批内核冻结契约。请选择是否批准。",
+    before.mode === "path-only"
+      ? "这将只冻结这条 Path 的契约，需求的验收与状态保持不变。请选择是否批准。"
+      : "这将由原 DevControl 审批内核冻结契约。请选择是否批准。",
   ];
   let decision;
   try {
@@ -109,15 +144,20 @@ export async function requestOwnerApproval({ db, root, requirementId, pathId, el
   }
   try {
     // Leave all validation, contract creation, audit and DB transactions to the
-    // existing Owner implementation. No changes to its core logic.
-    const result = await OWNER_ACTIONS.approve(db, root, {
+    // existing Owner implementations. No changes to their core logic:
+    //   first     → reqApprove（需求 + Path 一起冻）
+    //   path-only → pathApprove（只冻 Path，需求状态与验收不动）
+    const result = await (before.mode === "path-only" ? OWNER_ACTIONS["path.approve"] : OWNER_ACTIONS.approve)(db, root, {
       requirementId, pathId, channel: "mcp-human-elicitation",
     });
     return toolResponse({
       ok: true,
-      kind: "approved",
+      kind: before.mode === "path-only" ? "path-approved" : "approved",
       result,
-      message: `Owner 已批准 ${requirementId}/${pathId}，已生成契约。可在此对话中继续执行后续开发。`,
+      message:
+        before.mode === "path-only"
+          ? `Owner 已批准 Path ${pathId}（需求 ${requirementId} 未重新审批），可继续开发。`
+          : `Owner 已批准 ${requirementId}/${pathId}，已生成契约。可在此对话中继续执行后续开发。`,
     });
   } catch (error) {
     return toolResponse({ ok: false, code: error.code ?? "E_APPROVAL_FAILED", message: error.message }, true);
