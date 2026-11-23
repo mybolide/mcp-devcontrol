@@ -3,7 +3,7 @@ name: devcontrol
 description: >-
   本项目的研发纪律：开工先问内核，改代码前 claim，只改 scope 内文件，
   你的工作是写代码 + 自己跑测试。内核只核验证据：它不替你跑测试，也不猜你有没有跑过。所有动作走 devcontrol 工具或 devcontrol CLI。
-version: "6.0.0-alpha.3"
+version: "6.0.0-alpha.7"
 ---
 
 # devcontrol —— 本项目的研发纪律
@@ -18,9 +18,20 @@ version: "6.0.0-alpha.3"
 3. 改代码只能动 `claim` 返回的 `scope` 里的文件。
    **`claim` 的返回里还带项目上下文**（架构、数据约定、怎么加功能、错误怎么处理）——那是这个项目自己的文档，内核直接给你内容、不是路径。开工前先看它，别自己重新摸索一遍项目；它和实际代码冲突时以代码为准，并把冲突告诉人。项目还没写上下文时 claim 会明说，这时按 `devcontrol init` 给的清单补上。
 4. **先自己跑验收**：CLI 用 `devcontrol run -- <契约里的命令>`；走 MCP 就用自己的 shell 跑，然后把结果交给 `evidence.record`（command + exit）。跑几次都行，内核取当前代码上的那份。
-5. `devcontrol commit -m "..."`：只提交 scope 内的文件，自动写 Task-Id。
-6. `devcontrol close`：内核**不执行测试**，只核验你留下的证据（命令对不对、跑的是不是当前这份代码、退出码满足断言）。
+5. 只有 `delivery=code` 才执行 `devcontrol commit -m "..."`：只提交 scope 内的文件，自动写 Task-Id。`delivery=verify` 不提交，也不允许改文件。
+6. `devcontrol close`：内核**不执行测试**，只核验你留下的证据（命令对不对、跑的是不是当前这份代码、退出码满足断言）；verify 还会核验 HEAD 未漂移、工作树干净。
    close 时如果内核说「这次改动碰了上下文没覆盖的东西」，会要求 `--context-note`：一句话说清更新了哪篇、或为什么不用更新。规范过期了还被当成权威，比没有规范更糟。
+
+## 任务交付模式必须按任务意图选择
+
+`delivery` 与 `kind` 独立，不能因为 `kind=test` 或验收命令看起来像测试就推断交付模式：
+
+- `code`（默认）：任务需要实现功能、修复问题或修改/交付文件；必须跑验收并提交 scope 内改动。
+- `verify`：任务目标**仅仅是运行已冻结的验收命令**，不修改任何文件；只跑验收、留证据、直接收口，不得 commit。
+
+创建任务时由 Agent 自己判断：MCP `task.create` 显式传 `delivery: "verify"`，CLI 显式传 `--delivery verify`。如果验收失败后需要改代码，应另建 `code` 任务；不要把实现任务误标为 verify。内核自动补齐的验收覆盖任务默认仍是 code，因为它可能需要实现才能满足验收。
+
+旧版自动生成的「覆盖验收」任务可能被默认建成 code。task.claim 只有在全部派生验收证据都已在当前 HEAD 通过、工作树干净且没有任务提交时，才会自动迁移为 verify；返回的 deliveryMigration 字段会说明迁移原因。条件不全就保持 code，不要求 Owner 手工修正，也不猜测普通实现任务。
 
 ## Owner 的审批需要真人确认，Agent 不能代签
 
@@ -61,9 +72,11 @@ Agent 的 `devcontrol` MCP action **没有**批准需求、放行、打回、改
 | `E_NEED_APPROVED` | 需求或 Path 还没批准，等 Owner 在控制台批 |
 | `E_CLAIMED_BY_OTHER` / `E_SCOPE_OVERLAP` / `E_WIP_LIMIT` | 等别人收口，或换一个不冲突的任务 |
 | `E_NO_DELIVERY` | 还没有本任务的提交，先 commit |
+| `E_VERIFY_COMMITTED` | 这是 verify 任务（只跑验收、不交代码）：撤掉提交，或让真正的工作任务交付这份代码 |
 | `E_SCOPE_VIOLATION` | 改了 scope 外的文件，撤掉 |
 | `E_NO_EVIDENCE` | 还没跑过验收：`devcontrol run -- <命令>` |
 | `E_EVIDENCE_STALE` | 跑完之后又改了代码，重跑一次 |
+| `E_EVIDENCE_STALE_HEAD` | verify 任务的证据是在旧 HEAD 上跑的：重跑 `devcontrol run -- <命令>` |
 | `E_ASSERTION_FAILED` | 证据里的退出码没过，去控制台「证据」看输出 |
 | `E_NEED_RESOLUTION` | 补 `--resolved-by` 再 close |
 | `E_MEMORY_CANDIDATE` | 记忆写得太具体，按提示模板改写后再写一次 |

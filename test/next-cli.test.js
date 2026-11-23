@@ -59,6 +59,28 @@ test("建任务：next 给的那行命令真的能在项目里建出任务", () 
   runLine(root, next.cli);
   const tasks = listTasks(openDb(root));
   assert.equal(tasks.length, 1, "命令跑完了就必须真的有一条任务");
+  assert.equal(tasks[0].delivery, "code", "自动补齐的验收覆盖任务可能需要实现，默认必须保留 code");
+});
+
+test("显式 verify 交付模式会进入 next CLI 命令，执行后仍是 verify", () => {
+  const root = makeRepo();
+  const { db, reqId } = initFlow(root);
+  const line = cliCommand("task.create", {
+    requirementId: reqId,
+    pathId: "P-001",
+    kind: "test",
+    delivery: "verify",
+    title: "只运行冻结验收",
+    scope: ["src"],
+    acceptance: [{ deriveFrom: 0, assertion: "npm test :: exit==0" }],
+  });
+
+  assert.match(line, /--kind test/);
+  assert.match(line, /--delivery verify/);
+  runLine(root, line);
+  const [task] = listTasks(openDb(root));
+  assert.equal(task.kind, "test");
+  assert.equal(task.delivery, "verify");
 });
 
 test("领任务 / 收口：命令同样是可执行的", async () => {

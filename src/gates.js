@@ -200,6 +200,71 @@ export function taskCreate(db, root, input, actor = "agent") {
   });
 }
 
+/**
+ * 旧版 next 自动生成的「覆盖验收」任务曾统一按 code 创建。
+ * 只有在证据已经完整证明它其实是纯验证任务时，claim 才做一次自动迁移：
+ *   - 任务必须匹配旧生成器的特征（feature +「覆盖验收：」+ deriveFrom 原样引用）；
+ *   - 每条冻结验收都已有当前 HEAD、当前 scope 指纹上的通过证据；
+ *   - 工作树干净，且任务名下没有任何提交/patch。
+ *
+ * 缺任一条件都保持 code，不猜、不放宽门禁。迁移写 system 审计事件，且只在 claim
+ * 成功后发生，避免把普通实现任务或尚未验证的任务静默改成交付证据。
+ */
+function migrateLegacyCoverageTaskToVerify(db, root, task, currentHead) {
+  if (
+    !currentHead ||
+    task.delivery !== "code" ||
+    task.kind !== "feature" ||
+    !task.title.startsWith("覆盖验收：") ||
+    !task.acceptance.length
+  ) return null;
+
+  const req = getReq(db, task.requirement_id);
+  if (!req || task.acceptance.some((item) => {
+    if (!Number.isInteger(item.deriveFrom) || item.deriveFrom < 0) return true;
+    const source = req.acceptance[item.deriveFrom];
+    const sourceAssertion = typeof source === "string" ? source : source?.assertion;
+    return sourceAssertion !== item.assertion;
+  })) return null;
+
+  try {
+    const owned = git(root, ["log", "--format=%H", `--grep=Task-Id: ${task.id}`, "HEAD"])
+      .split("\n").map((x) => x.trim()).filter(Boolean);
+    if (owned.length || db.prepare("SELECT 1 FROM patch_ids WHERE task_id=? LIMIT 1").get(task.id)) return null;
+
+    const dirty = statusPorcelain(root, ["--untracked-files=all"])
+      .split("\n")
+      .filter((line) => line.length > 3)
+      .map((line) => line.slice(3).trim().replace(/^"|"$/g, ""))
+      .filter((file) => file && !file.startsWith(".devcontrol/") && !isVendorPath(file, root));
+    if (dirty.length) return null;
+
+    const currentFingerprint = fingerprint(root, task.scope, null);
+    for (const item of task.acceptance) {
+      const { command, predicate } = parseAssertion(item.assertion);
+      const run = db.prepare(
+        "SELECT exit_code, head, fingerprint, output FROM runs WHERE task_id=? AND command=? ORDER BY started_at DESC LIMIT 1",
+      ).get(task.id, command);
+      if (
+        !run ||
+        run.exit_code !== 0 ||
+        run.head !== currentHead ||
+        run.fingerprint !== currentFingerprint ||
+        !evaluate(predicate, { exit: run.exit_code, stdout: run.output })
+      ) return null;
+    }
+
+    const updated = db.prepare("UPDATE tasks SET delivery='verify', updated_at=? WHERE id=? AND delivery='code'").run(now(), task.id);
+    if (updated.changes !== 1) return null;
+    const reason = "legacy coverage task auto-migrated: all frozen assertions passed on current HEAD; clean worktree; no task-owned commits";
+    logEvent(db, { actor: "system", action: "task.delivery.auto-migrate", taskId: task.id, detail: reason });
+    return { from: "code", to: "verify", reason };
+  } catch {
+    // 自动迁移失败时按原交付模式继续；绝不因迁移探测故障放宽或阻断正常 claim。
+    return null;
+  }
+}
+
 // ── task.claim ─────────────────────────────────────────────────────────────
 
 export function taskClaim(db, root, input, actor = "agent") {
@@ -288,6 +353,8 @@ export function taskClaim(db, root, input, actor = "agent") {
       });
     }
     logEvent(db, { actor, action: "task.claim", taskId: t.id, detail: actor });
+    const deliveryMigration = migrateLegacyCoverageTaskToVerify(db, root, t, anchor);
+    if (deliveryMigration) t.delivery = "verify";
     // 项目上下文在 claim 这一刻读一次，随返回一起下发（见下面 return 里的 context）。
     const ctxLoaded = loadContext(root);
     // 接活那一刻工作区里已经有的改动，不是这个任务干的（多半是上一任留下的）。
@@ -305,6 +372,8 @@ export function taskClaim(db, root, input, actor = "agent") {
     } catch {
       // 弱模式没有 git：没有继承的概念
     }
+    const verifyCommands = [...new Set((t.acceptance ?? []).map((item) => parseAssertion(item.assertion).command).filter(Boolean))];
+    if (!verifyCommands.length) verifyCommands.push(contractCommands(body)[0] ?? "<契约验收命令>");
     return {
       id: t.id,
       title: t.title,
@@ -314,9 +383,10 @@ export function taskClaim(db, root, input, actor = "agent") {
       // 交付模式必须跟着 claim 一起下发：verify 任务没有 commit 这一步，
       // 照抄 code 的四步会在 commit 上空转（T-011）。
       delivery: t.delivery ?? "code",
+      deliveryMigration,
       cadence:
         t.delivery === "verify"
-          ? [`devcontrol run -- ${contractCommands(body)[0] ?? "<契约验收命令>"}`, `devcontrol close ${t.id}（verify 不用 commit）`]
+          ? [...verifyCommands.map((command) => `devcontrol run -- ${command}`), `devcontrol close ${t.id}（verify 不用 commit）`]
           : [`devcontrol run -- ${contractCommands(body)[0] ?? "<契约验收命令>"}`, 'devcontrol commit -m "…"', `devcontrol close ${t.id}`],
       // Agent 开工时就该知道「代码要怎么写」，而不是收口被拦才第一次听说
       standards: body.standards ?? [],

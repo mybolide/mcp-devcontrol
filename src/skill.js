@@ -37,9 +37,20 @@ export function skillBody({ noMcp = false } = {}) {
 3. 改代码只能动 \`claim\` 返回的 \`scope\` 里的文件。
    **\`claim\` 的返回里还带项目上下文**（架构、数据约定、怎么加功能、错误怎么处理）——那是这个项目自己的文档，内核直接给你内容、不是路径。开工前先看它，别自己重新摸索一遍项目；它和实际代码冲突时以代码为准，并把冲突告诉人。项目还没写上下文时 claim 会明说，这时按 \`devcontrol init\` 给的清单补上。
 4. **先自己跑验收**：CLI 用 \`devcontrol run -- <契约里的命令>\`；走 MCP 就用自己的 shell 跑，然后把结果交给 \`evidence.record\`（command + exit）。跑几次都行，内核取当前代码上的那份。
-5. \`devcontrol commit -m "..."\`：只提交 scope 内的文件，自动写 Task-Id。
-6. \`devcontrol close\`：内核**不执行测试**，只核验你留下的证据（命令对不对、跑的是不是当前这份代码、退出码满足断言）。
+5. 只有 \`delivery=code\` 才执行 \`devcontrol commit -m "..."\`：只提交 scope 内的文件，自动写 Task-Id。\`delivery=verify\` 不提交，也不允许改文件。
+6. \`devcontrol close\`：内核**不执行测试**，只核验你留下的证据（命令对不对、跑的是不是当前这份代码、退出码满足断言）；verify 还会核验 HEAD 未漂移、工作树干净。
    close 时如果内核说「这次改动碰了上下文没覆盖的东西」，会要求 \`--context-note\`：一句话说清更新了哪篇、或为什么不用更新。规范过期了还被当成权威，比没有规范更糟。
+
+## 任务交付模式必须按任务意图选择
+
+\`delivery\` 与 \`kind\` 独立，不能因为 \`kind=test\` 或验收命令看起来像测试就推断交付模式：
+
+- \`code\`（默认）：任务需要实现功能、修复问题或修改/交付文件；必须跑验收并提交 scope 内改动。
+- \`verify\`：任务目标**仅仅是运行已冻结的验收命令**，不修改任何文件；只跑验收、留证据、直接收口，不得 commit。
+
+创建任务时由 Agent 自己判断：MCP \`task.create\` 显式传 \`delivery: "verify"\`，CLI 显式传 \`--delivery verify\`。如果验收失败后需要改代码，应另建 \`code\` 任务；不要把实现任务误标为 verify。内核自动补齐的验收覆盖任务默认仍是 code，因为它可能需要实现才能满足验收。
+
+旧版自动生成的「覆盖验收」任务可能被默认建成 code。task.claim 只有在全部派生验收证据都已在当前 HEAD 通过、工作树干净且没有任务提交时，才会自动迁移为 verify；返回的 deliveryMigration 字段会说明迁移原因。条件不全就保持 code，不要求 Owner 手工修正，也不猜测普通实现任务。
 
 ## Owner 的审批需要真人确认，Agent 不能代签
 
@@ -126,7 +137,7 @@ export function agentsBlock() {
   return `${BEGIN}
 开工先跑 ${open}：它返回的 \`next\` 就是下一件事，不要自己挑。
 改代码前必须 task.claim；**claim 的返回里带着这个项目的上下文**（架构、数据约定、怎么加功能、错误怎么处理），开工前先看它，别自己重新摸索一遍项目。不许修改 acceptance，不许自选命令；只改 scope 内的文件。
-**先自己跑** \`devcontrol run -- <验收命令>\` 留证据；再 \`devcontrol commit -m "..."\`（只提交 scope 内文件）；最后 \`devcontrol close\`（只核验证据）。
+**先自己跑** \`devcontrol run -- <验收命令>\` 留证据；delivery=code 再 \`devcontrol commit -m "..."\`（只提交 scope 内文件），delivery=verify 不提交；最后 \`devcontrol close\`（只核验证据）。
 遇到歧义用 ask，不要猜。
 ${consoleLine}
 多 Agent 并行时，每个 Agent 用自己的 \`DEVCONTROL_ACTOR\`，否则会被 WIP=1 挡住。
@@ -145,14 +156,14 @@ version: "${VERSION}"
 
 1. 开工先 \`devcontrol status\`（MCP 里是 \`bootstrap\`），照它给的 \`next\` 做。
 2. 改代码前 \`task.claim\`——**返回值里带着项目上下文（架构、数据约定、怎么加功能），先看它**；只改 scope 内的文件。
-3. 改完**先** \`devcontrol run -- <命令>\` 留证据，**再** \`devcontrol commit\`，**最后** \`devcontrol close\`（只核验证据）。
+3. **先** \`devcontrol run -- <命令>\` 留证据；delivery=code **再** \`devcontrol commit\`，delivery=verify 不提交；**最后** \`devcontrol close\`（只核验证据）。
 `;
 }
 
 export function claudeBlock() {
   return `${BEGIN}
 本项目用 devcontrol 管研发纪律，完整规矩见 \`${SKILL_REL}\`。
-开工 \`devcontrol status\`（MCP 里是 \`bootstrap\`）；改代码前 \`task.claim\`（**返回值里带着项目上下文，先看它**），只改 scope 内文件；改完**先** \`run\` 留证据 → **再** \`commit\` → **最后** \`close\`。
+开工 \`devcontrol status\`（MCP 里是 \`bootstrap\`）；改代码前 \`task.claim\`（**返回值里带着项目上下文，先看它**），只改 scope 内文件；改完**先** \`run\` 留证据 → delivery=code 才 **commit**（verify 不提交）→ **close**。
 ${END}`;
 }
 

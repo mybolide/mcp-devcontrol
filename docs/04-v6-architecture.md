@@ -54,7 +54,7 @@
 
 1. 有在办任务 → `task.close`（先收口）；
 2. backlog 里依赖已满足的 → `task.claim`（按 ID 顺序，依赖未满足的进 `blockers`，并计入 `counts.blocked`）；
-3. 需求验收还有没被任何任务覆盖的 → `task.create`，并在 `why` 里点名缺哪条、`args.deriveFrom` 给出索引；
+3. 需求验收还有没被任何任务覆盖的 → `task.create`，并在 `why` 里点名缺哪条、`args.deriveFrom` 给出索引；自动补齐的任务默认 `delivery=code`，因为可能需要实现来满足验收；只有明确不改文件、只运行冻结命令的纯验证任务，创建时才显式指定 `delivery=verify`；
 4. 只剩阻塞任务 → `wait` + `next.blocked` 列表；
 5. 等 Owner 批准 / 无待办 → `wait` / `task.create`。
 
@@ -68,6 +68,8 @@
 - 其余（等批准/等回答/parked）：只有基础动作。
 
 Agent 侧纪律（`AGENTS.md` 与 MCP `instructions` 同源）：**只调用 `actions` 里出现的动作**。
+
+旧版自动生成的「覆盖验收」任务可能被默认建成 `code`。`task.claim` 只在任务仍是旧生成器特征、所有派生验收证据都已在当前 HEAD 通过、工作树干净且没有任务提交时，自动迁移为 `verify` 并记录 `task.delivery.auto-migrate`；缺少任何条件都保持 `code`，不要求 Owner 手工修正，也不猜测普通实现任务的交付模式。
 
 ### 4.5 通用记忆（memory）
 
@@ -167,7 +169,7 @@ Agent 侧纪律（`AGENTS.md` 与 MCP `instructions` 同源）：**只调用 `ac
 - **转移保护**：跨需求复用 Path 是 Owner 的显式动作（`reqApprove` 本身就是 Owner 通道），但源需求上还有 `backlog/doing/parked` 任务、在办租约、或 `questions.status='open'` 时一律 `E_PATH_IN_USE`。转移成功写 `path.rebind` 审计并回传 `rebindFrom`。
 - **不变的部分**：转移只改 `paths.requirement_id`，合同内容不动；历史任务各自保存 `contract_commit`，按自己的契约核验，快照不因转移而漂移。重复批准由 `E_ILLEGAL_TRANSITION` 挡住且只留一条审计，并发批准因 `BEGIN IMMEDIATE` 只有一个成功。
 
-## 11. 任务交付模式（6.0.0-alpha.6：`delivery` = code / verify）
+## 11. 任务交付模式（6.0.0-alpha.7：`delivery` = code / verify）
 
 这一轮修的是「纯验证任务根本收不了口」。真实案例（T-011，Rust Clippy 验收）：领任务 → `cargo clippy` 全绿、证据已留 → `commit` 时 `E_NO_DELIVERY`（本来就没有代码改动）→ `close` 时还是 `E_NO_DELIVERY`（找不到归属提交）→ 只能 parked 等 Owner。这不是 Clippy 的问题，也不是那个项目的配置问题：**内核把「交付」等同于「交出归属提交」，而有一整类任务只交付验收结果。**
 

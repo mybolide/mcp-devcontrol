@@ -1,6 +1,6 @@
 {
   "name": "mcp-devcontrol",
-  "version": "6.0.0-alpha.6",
+  "version": "6.0.0-alpha.7",
   "description": "DevControl — a discipline kernel for coding agents: gates in the core, single-tool MCP, SQLite as the only source of truth, console owned by the connection",
   "type": "module",
   "bin": {

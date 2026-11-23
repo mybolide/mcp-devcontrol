@@ -808,9 +808,10 @@ export function taskAdjust(db, root, input) {
     if (!t) fail("NOT_FOUND", `任务不存在：${input.taskId}`);
     const scope = input.scope ?? t.scope;
     const budget = input.budgetLines ?? t.budget_lines;
-    // 交付模式：Owner 是唯一能改它的通道（Agent 只能在 task.create 时选一次）。
-    // 这是 T-011 那类「纯验证任务被当成代码任务派下去」的补救阀门，所以必须留：
-    // 但改它等于改这次交付的验收口径，必须留审计，且已收口的任务不许改（那是改历史）。
+    // 交付模式的人工调整只有 Owner 能做（Agent 在 task.create 时选一次）。
+    // 另有一个更窄的内核自动迁移：旧版生成的覆盖验收任务只有在全部证据通过当前 HEAD、
+    // 工作树干净且没有任务提交时，才会在 claim 时从 code 迁为 verify；不满足就不猜。
+    // 人工调整仍等于改变交付口径，必须留审计，且已收口的任务不许改（那是改历史）。
     const delivery = input.delivery ?? t.delivery ?? "code";
     if (!["code", "verify"].includes(delivery)) {
       fail("INVALID_ARGUMENT", `交付模式只能是 code 或 verify，收到 ${String(input.delivery)}`);

@@ -20,6 +20,14 @@ test("INSTRUCTIONS 的收尾顺序必须是 run → commit → close", async () 
   assert.ok(iRun < iCommit && iCommit < iClose, `顺序错了：${INSTRUCTIONS.slice(0, 400)}`);
 });
 
+test("INSTRUCTIONS 明确区分 code 与 verify：纯验证不要求提交", async () => {
+  const { INSTRUCTIONS } = await import("../src/mcp.js");
+  assert.match(INSTRUCTIONS, /delivery=code/);
+  assert.match(INSTRUCTIONS, /delivery=verify/);
+  assert.match(INSTRUCTIONS, /不提交/);
+  assert.match(INSTRUCTIONS, /工作树必须干净/);
+});
+
 // 从 ACTIONS 反推正则：不手抄动作名，抄了就会漏
 const actionPattern = async () => {
   const { ACTIONS } = await import("../src/mcp.js");

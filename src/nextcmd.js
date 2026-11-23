@@ -37,6 +37,7 @@ export function cliCommand(action, args = {}) {
       if (args.requirementId) parts.push("--req", quote(args.requirementId));
       if (args.pathId) parts.push("--path", quote(args.pathId));
       if (args.kind) parts.push("--kind", quote(args.kind));
+      if (args.delivery) parts.push("--delivery", quote(args.delivery));
       if (args.title) parts.push("--title", quote(args.title));
       const scope = list(args.scope);
       if (scope.length) parts.push("--scope", quote(scope.join(",")));

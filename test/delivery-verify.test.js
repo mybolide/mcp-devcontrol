@@ -9,11 +9,13 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import { getTask, taskAdjust } from "../src/store.js";
+import { openDb } from "../src/db.js";
+import { getTask, reqIntake, reqApprove, taskAdjust } from "../src/store.js";
 import { taskClaim, taskClose, taskCreate } from "../src/gates.js";
 import { listCompletions } from "../src/completion.js";
 import { commitFiles } from "../src/git.js";
 import { bootstrap } from "../src/digest.js";
+import { dispatch } from "../src/mcp.js";
 import { makeRepo, initFlow, newTask, prove, closeProven, CLOSE_NOTE } from "./helpers.js";
 
 const verifyTask = (db, root, reqId, extra = {}) => newTask(db, root, reqId, { delivery: "verify", ...extra });
@@ -131,6 +133,109 @@ test("next 不会催 verify 任务去 commit：先跑验收，跑通了直接收
   const after = bootstrap(db, root).next;
   assert.equal(after.action, "task.close");
   assert.match(after.why, /verify/);
+});
+
+test("MCP task.create 保留调用方明确指定的 verify 交付模式", async () => {
+  const root = makeRepo();
+  const { db, reqId } = initFlow(root);
+  const created = await dispatch(db, root, {
+    action: "task.create",
+    requirementId: reqId,
+    pathId: "P-001",
+    kind: "test",
+    delivery: "verify",
+    title: "只运行冻结验收",
+    scope: ["src"],
+    acceptance: [{ deriveFrom: 0, assertion: "npm test :: exit==0" }],
+  });
+  assert.equal(created.delivery, "verify");
+  assert.equal(created.kind, "test");
+});
+
+test("verify claim 的 cadence 使用任务自己的验收命令，而不是 Path 的第一条命令", () => {
+  const root = makeRepo();
+  const db = openDb(root);
+  db.prepare("INSERT INTO paths(id,allowed_paths_json,allow_new_files,budget_lines,test_cmds_json,status) VALUES('P-001',?,0,1200,?,'draft')").run(
+    JSON.stringify(["src"]), JSON.stringify(["npm run build", "npm test"]),
+  );
+  const req = reqIntake(db, root, {
+    type: "requirement", title: "r", goal: "g",
+    acceptance: ["npm run build :: exit==0", "npm test :: exit==0"],
+  });
+  reqApprove(db, root, { requirementId: req.id, pathId: "P-001" });
+  const task = taskCreate(db, root, {
+    requirementId: req.id,
+    pathId: "P-001",
+    kind: "test",
+    delivery: "verify",
+    title: "只验证 npm test",
+    scope: ["src"],
+    acceptance: [{ deriveFrom: 1, assertion: "npm test :: exit==0" }],
+  });
+
+  const claim = taskClaim(db, root, { id: task.id }, "agentA");
+  assert.equal(claim.delivery, "verify");
+  assert.equal(claim.cadence[0], "devcontrol run -- npm test");
+  assert.equal(claim.cadence[1], `devcontrol close ${task.id}（verify 不用 commit）`);
+});
+
+test("旧版覆盖验收任务：全部证据通过当前 HEAD、工作树干净且无提交时自动迁移为 verify", async () => {
+  const root = makeRepo();
+  const { db, reqId } = initFlow(root);
+  const task = newTask(db, root, reqId, { title: "覆盖验收：npm test :: exit==0" });
+  prove(db, root, task.id);
+
+  const claim = taskClaim(db, root, { id: task.id }, "agentA");
+  assert.equal(claim.delivery, "verify");
+  assert.equal(claim.deliveryMigration?.from, "code");
+  assert.equal(getTask(db, task.id).delivery, "verify");
+  const event = db.prepare("SELECT actor,detail FROM events WHERE task_id=? AND action='task.delivery.auto-migrate'").get(task.id);
+  assert.equal(event.actor, "system");
+  assert.match(event.detail, /current HEAD/);
+
+  const closed = await closeProven(db, root, { id: task.id });
+  assert.equal(closed.delivery, "verify");
+  assert.equal(getTask(db, task.id).status, "done");
+});
+
+test("旧版覆盖验收任务只要证据过期或工作树变脏，就绝不自动迁移", () => {
+  const root = makeRepo();
+  const { db, reqId } = initFlow(root);
+  const task = newTask(db, root, reqId, { title: "覆盖验收：npm test :: exit==0" });
+  prove(db, root, task.id);
+  fs.writeFileSync(path.join(root, "src/a.js"), "export const a = 99;\n");
+
+  const claim = taskClaim(db, root, { id: task.id }, "agentA");
+  assert.equal(claim.delivery, "code");
+  assert.equal(claim.deliveryMigration, null);
+  assert.equal(getTask(db, task.id).delivery, "code");
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM events WHERE task_id=? AND action='task.delivery.auto-migrate'").get(task.id).n, 0);
+});
+
+test("旧版覆盖验收任务名下已有提交，即使重新跑过验收也不能自动迁移", () => {
+  const root = makeRepo();
+  const { db, reqId } = initFlow(root);
+  const task = newTask(db, root, reqId, { title: "覆盖验收：npm test :: exit==0" });
+  fs.writeFileSync(path.join(root, "src/a.js"), "export const a = 100;\n");
+  commitFiles(root, ["src/a.js"], `feat: deliver code\n\nTask-Id: ${task.id}`, { author: "agentA" });
+  prove(db, root, task.id); // 证据在新 HEAD 上通过，但任务已经有代码交付
+
+  const claim = taskClaim(db, root, { id: task.id }, "agentA");
+  assert.equal(claim.delivery, "code");
+  assert.equal(claim.deliveryMigration, null);
+  assert.equal(getTask(db, task.id).delivery, "code");
+});
+
+test("普通实现任务即使验收已经通过，也不会被旧任务迁移规则改成交付 verify", () => {
+  const root = makeRepo();
+  const { db, reqId } = initFlow(root);
+  const task = newTask(db, root, reqId); // 普通标题，不是旧生成器的「覆盖验收：」任务
+  prove(db, root, task.id);
+
+  const claim = taskClaim(db, root, { id: task.id }, "agentA");
+  assert.equal(claim.delivery, "code");
+  assert.equal(claim.deliveryMigration, null);
+  assert.equal(getTask(db, task.id).delivery, "code");
 });
 
 test("Owner 可以改交付模式（补救派错的任务），已收口的任务不行", async () => {
