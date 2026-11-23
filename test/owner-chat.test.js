@@ -97,7 +97,7 @@ async function startServer(root, secret) {
   } };
 }
 
-test("真实控制台：预览不写库，签名真人消息复用原有 Owner action 并记录 chat channel", async () => {
+test("真实控制台：签名真人消息复用原有 Owner action 并记录 chat channel", async () => {
   const root = makeRepo();
   const { db } = initFlow(root);
   const result = reqIntake(db, root, { title: "验证后台运行", goal: "G", acceptance: ["npm test :: exit==0"] });
@@ -105,11 +105,8 @@ test("真实控制台：预览不写库，签名真人消息复用原有 Owner a
   const secret = "test-only-provider-neutral-chat-secret-32bytes!";
   const server = await startServer(root, secret);
   try {
-    const preview = await request(server.port, "/api/chat/preview", { message: "批准" });
-    assert.equal(preview.status, 200);
-    assert.equal(preview.body.kind, "approve");
-    assert.equal(db.prepare("SELECT status FROM requirements WHERE id='FR-002'").get().status, "draft", "预览必须无副作用");
-
+    // 控制台不再有「对话授权」输入框，所以也没有 /api/chat/preview 这条预览路径：
+    // 唯一入口是 Host 签名的真人消息（远端聊天），本机审批就是收件箱里点一下。
     const event = {
       authorRole: "owner", connector: "codex", eventId: randomUUID(),
       project: root, message: "批准",

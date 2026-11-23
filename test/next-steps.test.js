@@ -58,7 +58,7 @@ test("照抄 next 给的命令不会立刻撞墙（第一次就成功）", () =>
   const next = bootstrap(db, root).next;
   assert.equal(next.action, "task.close");
   assert.equal(next.cli, `devcontrol close ${t.id}`);
-  const closed = cli(root, "close", t.id);
+  const closed = cli(root, "close", t.id, "--summary", "夹具结论", "--changes", "夹具改动", "--limitations", "无");
   assert.equal(closed.code, 0, closed.stdout);
 });
 

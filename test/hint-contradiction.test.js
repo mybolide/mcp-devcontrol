@@ -47,7 +47,7 @@ test("close 没提交时：人看到的是完整四步，不是一句 commit", (
   run(root, ["task", "create", "--req", "FR-001", "--path", "P-001", "--title", "t", "--scope", "src", "--accept", "npm test :: exit==0"]);
   run(root, ["task", "claim", "T-001"]);
 
-  const out = run(root, ["close", "T-001"]);
+  const out = run(root, ["close", "T-001", "--summary", "夹具结论", "--changes", "夹具改动", "--limitations", "无"]);
   assert.notEqual(out.code, 0);
   assert.match(out.stderr, /E_NO_DELIVERY/);
   assert.match(out.stderr, /devcontrol run --/, "提示里必须有「先跑」这一步");

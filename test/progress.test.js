@@ -76,7 +76,11 @@ test("CLI close：进度写 stderr，stdout 仍是一整段可解析的 JSON", (
   const t = ready(db, root, newTask(db, root, reqId));
 
   prove(db, root, t.id);
-  const out = execFileSync(process.execPath, [BIN, "close", t.id], { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+  const out = execFileSync(
+    process.execPath,
+    [BIN, "close", t.id, "--summary", "夹具结论", "--changes", "夹具改动", "--limitations", "无"],
+    { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+  );
   const parsed = JSON.parse(out);
   assert.equal(parsed.ok, true);
   assert.equal(parsed.closedBy, "evidence");

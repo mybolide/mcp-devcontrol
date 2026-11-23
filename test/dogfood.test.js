@@ -48,7 +48,7 @@ test("close 成功：JSON 里有 ok:true，和失败同一套字段", () => {
   fs.writeFileSync(path.join(root, "src/a.js"), "export const a = 99;\n");
   dc(root, ["commit", "-m", "feat: 改动"]);
   dc(root, ["run", "--", "npm test"]); // 工具不跑测试：证据要 Agent 自己留
-  const r = dc(root, ["close", t.id]);
+  const r = dc(root, ["close", t.id, "--summary", "夹具结论", "--changes", "夹具改动", "--limitations", "无"]);
   const j = JSON.parse(r.out);
   assert.equal(j.ok, true);
   assert.ok(Array.isArray(j.runs));
