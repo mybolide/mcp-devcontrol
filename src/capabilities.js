@@ -38,9 +38,9 @@ export const CAPABILITIES = [
     name: "建任务",
     action: "task.create",
     // MCP 参数名（zod schema 的字段）
-    mcp: ["requirementId", "pathId", "title", "kind", "scope", "acceptance", "dependsOn"],
+    mcp: ["requirementId", "pathId", "title", "kind", "delivery", "scope", "acceptance", "dependsOn"],
     // CLI 参数名（--flag 后面那段）
-    cli: { sub: "task create", flags: ["req", "path", "title", "kind", "scope", "accept", "depends"] },
+    cli: { sub: "task create", flags: ["req", "path", "title", "kind", "delivery", "scope", "accept", "depends"] },
     // 控制台没有等价物：Owner 不建任务（那是 Agent 的活）
     console: null,
   },

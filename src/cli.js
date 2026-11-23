@@ -445,7 +445,7 @@ export function cmdTask(args) {
     const title = flag("title");
     if (!req || !pathId || !title) {
       return failCli(
-        '用法：devcontrol task create --req FR-001 --path P-001 --title "一言说清" [--kind fix] [--scope src,test] [--accept "npm test :: exit==0"] [--depends T-001[,T-002]]',
+        '用法：devcontrol task create --req FR-001 --path P-001 --title "一言说清" [--kind fix] [--delivery code|verify] [--scope src,test] [--accept "npm test :: exit==0"] [--depends T-001[,T-002]]',
         "E_USAGE",
       );
     }
@@ -471,8 +471,14 @@ export function cmdTask(args) {
     const scopeList = listOf("scope");
     const scope = scopeList.length ? scopeList : undefined;
     const dependsOn = listOf("depends");
-    const task = taskCreate(db, root, { requirementId: req, pathId, kind: flag("kind") ?? "feature", title, scope, acceptance, dependsOn }, actor);
+    const task = taskCreate(
+      db,
+      root,
+      { requirementId: req, pathId, kind: flag("kind") ?? "feature", delivery: flag("delivery") ?? "code", title, scope, acceptance, dependsOn },
+      actor,
+    );
     console.log(`${task.id}  已建  ${task.title}`);
+    console.log(`交付：${task.delivery === "verify" ? "verify（只跑验收，不交代码）" : "code（交出归属提交）"}`);
     console.log(`scope: ${(task.scope ?? []).join(", ")}`);
     if (task.dependsOn?.length) console.log(`前置: ${task.dependsOn.join(", ")}`);
     return 0;
@@ -487,6 +493,9 @@ export function cmdTask(args) {
     console.log(`${claimed.id} 已领取（租约到 ${claimed.claimExpiresAt}）`);
     console.log(`scope: ${claimed.scope.join(", ")}`);
     for (const cmd of claimed.testCmds) console.log(`验收命令: ${cmd}`);
+    // 收口节奏必须跟着下发：verify 任务没有 commit 这一步，照抄 code 的四步只会空转（T-011）。
+    if (claimed.delivery === "verify") console.log("交付：verify（只跑验收，不交代码——不要 commit）");
+    for (const step of claimed.cadence ?? []) console.log(`下一步: ${step}`);
     // 规范也印出来：开工时就该知道边界，而不是收口被拦才第一次听说
     if (claimed.standards?.rules?.length) {
       console.log(`规范（${claimed.standards.enforced?.length ? `内核会拦：${claimed.standards.enforced.join("、")}；` : ""}其余靠自觉）：`);
@@ -536,6 +545,8 @@ export function cmdTask(args) {
     console.log(`${task.id}  ${task.title}`);
     console.log(`状态：${task.status}${task.closed_by ? ` · ${task.closed_by}` : ""}${task.closed_at ? ` · ${task.closed_at}` : ""}`);
     console.log(`需求 ${task.requirement_id} · Path ${task.path_id} · scope: ${task.scope.join(", ") || "(未设)"}`);
+    // verify 交付没有提交可看，写清楚：否则 review 的人会以为「怎么没提交」是漏了。
+    if (task.delivery === "verify") console.log("交付：verify（只跑验收，不交代码；故意没有提交）");
     if (!history.length) {
       console.log(
         task.status === "done"
@@ -545,7 +556,12 @@ export function cmdTask(args) {
       return 0;
     }
     for (const record of history) {
-      const kind = record.closedBy === "force-close" ? "Owner 强制完成（未经验收）" : "验收通过";
+      const kind =
+        record.closedBy === "force-close"
+          ? "Owner 强制完成（未经验收）"
+          : record.delivery === "verify"
+            ? "验收通过（verify 交付，无提交）"
+            : "验收通过";
       console.log(`\n第 ${record.sequence} 次 · ${kind} · ${record.closedAt} · ${record.actor}`);
       console.log(`结论：${record.summary}`);
       console.log(`改动：${record.changes}`);
@@ -563,8 +579,10 @@ export function cmdTask(args) {
   }
   if (sub === "list") {
     // 列宽要容得下最长的状态（abandoned = 9），否则 "abandonedfeature" 粘成一坨
-    for (const t of db.prepare("SELECT id,status,kind,title FROM tasks ORDER BY id").all()) {
-      console.log(`${t.id}  ${t.status.padEnd(10)}${t.kind.padEnd(9)}${t.title}`);
+    for (const t of db.prepare("SELECT id,status,kind,delivery,title FROM tasks ORDER BY id").all()) {
+      // verify 任务不交代码，列表里一眼能分清，免得有人去查它为什么没提交
+      const tag = t.delivery === "verify" ? "[verify]" : "";
+      console.log(`${t.id}  ${t.status.padEnd(10)}${t.kind.padEnd(9)}${tag.padEnd(8)}${t.title}`);
     }
     return 0;
   }

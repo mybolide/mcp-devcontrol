@@ -60,6 +60,10 @@ export const SCHEMA = {
   requirementId: z.string().optional(),
   pathId: z.string().optional(),
   kind: z.string().optional().describe("feature|bugfix|chore|test，或记忆类型 pitfall|howto|decision|preference|snippet|note"),
+  delivery: z
+    .string()
+    .optional()
+    .describe("task.create：code（默认）交出归属提交；verify 是纯验证任务——只跑契约里冻结的验收命令，不交代码，也不许提交"),
   title: z.string().optional(),
   acceptance: z
     .array(z.object({ deriveFrom: z.number().optional(), assertion: z.string() }))

@@ -856,12 +856,13 @@
         return `<details style="margin-top:8px"><summary>交付记录 ${history.length} 次</summary>${rows}</details>`;
       }
       function taskRow(t) {
-        return `<tr><td class="mono nw">${esc(t.id)}</td><td class="nw">${esc(KIND_TEXT[t.kind] ?? t.kind)}</td><td>${esc(t.title)}</td><td class="nw">${tag(t.status)}</td>
+        return `<tr><td class="mono nw">${esc(t.id)}</td><td class="nw">${esc(KIND_TEXT[t.kind] ?? t.kind)}${t.delivery === "verify" ? ` <span class="pill" title="verify 交付：只跑验收，不交代码">verify</span>` : ""}</td><td>${esc(t.title)}</td><td class="nw">${tag(t.status)}</td>
           <td class="mu">${t.acceptance.map((a) => esc(a.assertion)).join("<br>")}${completionCell(t)}</td>
           <td class="nw"><div class="row inline">
             ${t.status === "backlog" || t.status === "parked" ? `<button class="btn" data-rank="${t.id}" title="置顶：内核挑活时会先看它（顺序就是优先级）">置顶</button>` : ""}
             <button class="btn" data-handoff="${t.id}" title="换人接手：先释放它，再生成一张交接卡">交接</button>
             ${t.status === "done" || t.status === "parked" ? `<button class="btn danger" data-reopen="${t.id}">打回</button>` : ""}
+            ${t.status !== "done" ? `<button class="btn" data-delivery="${t.id}|${t.delivery === "verify" ? "code" : "verify"}" title="切换交付模式：code 必须交出提交；verify 只跑验收、不交代码">${t.delivery === "verify" ? "改 code" : "改 verify"}</button>` : ""}
             ${t.status === "doing" ? `<button class="btn danger" data-override="${t.id}">放行</button>` : ""}
           </div></td></tr>`;
       }
@@ -1141,6 +1142,7 @@
               { name: "pathId", label: "Path", type: "select", value: pth.id, options: paths.map((x) => ({ value: x.id, label: `${x.id} · ${(x.allowedPaths || []).join(",") || "整个仓库"}` })) },
               { name: "title", label: "要做什么", type: "text", minLength: 4, placeholder: "一句话说清（这就是任务标题）" },
               { name: "kind", label: "类型", type: "select", value: "feature", options: [{ value: "feature", label: "功能" }, { value: "bugfix", label: "修复" }, { value: "chore", label: "杂务" }, { value: "test", label: "测试" }] },
+              { name: "delivery", label: "交付", type: "select", value: "code", options: [{ value: "code", label: "代码（交出提交）" }, { value: "verify", label: "纯验证（只跑验收，不交代码）" }], help: "verify 任务不用提交：跑通验收命令就能收口，且不许提交" },
               { name: "scope", label: "改动范围", type: "text", value: (pth.allowedPaths || []).join(","), help: "逗号分隔；默认跟这条 Path 一样，可以收窄" },
               { name: "acceptance", label: "验收命令（一行一条）", type: "textarea", rows: 3, value: cmds.join("\n"), help: "必须是契约里有的命令；不写 :: 谓词就按 exit==0 算" },
             ],
@@ -1159,7 +1161,7 @@
               const idx = (req?.acceptance ?? []).findIndex((a) => String(a).split("::")[0].trim() === cmd);
               return { deriveFrom: idx >= 0 ? idx : 0, assertion };
             });
-          return owner("task.add", { requirementId: r.values.requirementId, pathId: r.values.pathId, kind: r.values.kind, title: r.values.title, scope, acceptance });
+          return owner("task.add", { requirementId: r.values.requirementId, pathId: r.values.pathId, kind: r.values.kind, delivery: r.values.delivery, title: r.values.title, scope, acceptance });
         }
         if (b.id === "create") {
           const kind = $("kind").value;
@@ -1201,6 +1203,20 @@
           const res = await owner("handoff", { taskId: b.dataset.handoff });
           if (res.ok && navigator.clipboard) await navigator.clipboard.writeText(res.result.text);
           return;
+        }
+        if (b.dataset.delivery) {
+          const [taskId, delivery] = b.dataset.delivery.split("|");
+          const r = await openSheet({
+            title: `改 ${taskId} 的交付模式`,
+            desc:
+              delivery === "verify"
+                ? "改成 verify：这个任务只负责跑通契约里的验收命令，不交代码、也不许提交（Clippy、编译检查、只跑测试这类活本来就该这样收口）。"
+                : "改成 code：这个任务必须交出带 Task-Id 的提交才能收口。",
+            okText: "改模式",
+            fields: [{ name: "reason", label: "为什么改", type: "textarea", rows: 3, minLength: 6, placeholder: "例如：这条是 Clippy 验收，本来就不该产生代码改动" }],
+          });
+          if (!r.ok) return;
+          return owner("adjust", { taskId, delivery, reason: r.values.reason });
         }
         if (b.dataset.reopen) {
           const taskId = b.dataset.reopen;
