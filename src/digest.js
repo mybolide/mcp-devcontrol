@@ -350,7 +350,10 @@ export function bootstrap(db, root, extra = {}) {
           fix: `控制台「收件箱」回答 ${q.id}，或让 Owner 在终端看 questions`,
         });
       }
+      // 同一个任务只出一条：已经有待回答问题的任务，问题那条就代表了它
+      const asked = new Set(out.filter((x) => x.kind === "question").map((x) => x.taskId));
       for (const t of parked) {
+        if (asked.has(t.id)) continue;
         const st = reworkState(db, t);
         if (st.owner === "agent") continue; // 自己能救的不进 Owner 待办
         out.push({
