@@ -45,6 +45,7 @@ import { sha256 } from "./fingerprint.js";
 import { weekly, verdict } from "./weekly.js";
 import { listReleases, shipRelease } from "./release.js";
 import { resolveOwnerChat } from "./owner-chat.js";
+import { humanAssertionTitle } from "./title.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(HERE, "..", "public");
@@ -362,7 +363,9 @@ export async function startConsole(args) {
           } catch {
             standards = null;
           }
-          return { ...pth, standards };
+          // 收件箱是给人看的：原始命令（cargo test -p xxx --locked …）人读不出做了什么，
+          // 所以这里额外给一版人话标题。原始命令仍然保留，命令行/机器继续用它。
+          return { ...pth, standards, testCmdsHuman: (pth.testCmds || []).map((c) => humanAssertionTitle(c)) };
         }),
         tasks: listTasks(adb),
         bugs: listBugs(adb),

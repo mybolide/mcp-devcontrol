@@ -53,10 +53,23 @@ test("表单弹层提供了字段、校验与计数", () => {
 
 test("需求收件箱允许复用已批准的 Path，并对重新绑定二次确认", () => {
   const inbox = script.slice(script.indexOf("function renderInbox("), script.indexOf("function renderTasks("));
-  assert.ok(inbox.includes('.filter((p) => !p.requirement_id || p.status === "approved")'), "草稿需求必须能看到未绑定 Path 和已批准 Path");
+  assert.ok(
+    inbox.includes('!p.requirement_id || p.status === "approved"'),
+    "草稿需求必须能看到未绑定 Path 和已批准 Path",
+  );
   assert.ok(inbox.includes('data-rebind="${rebind ? "true" : "false"}"'), "复用操作必须显式标记重新绑定");
   assert.ok(inbox.includes("批准后将重新绑定到"), "界面必须说明 Path 会重新绑定到新需求");
   assert.ok(inbox.includes("冻结命令："), "批准前仍要展示将冻结的验收命令");
+  // 刚为本需求建的 Path 还是草稿：它必须出现在自己需求的可选项里，
+  // 否则 Owner 只能选到别家的 Path 或一条空命令的 Path（实测批不了需求）
+  assert.ok(
+    inbox.includes('p.requirement_id === r.id'),
+    "草稿需求要能选到自己名下那条还没批准的 Path",
+  );
+  // 收件箱是给人看的：冻结命令走人话标题（后端 testCmdsHuman），不再贴 cargo --locked 原文
+  assert.ok(inbox.includes("cmdsHuman(p)"), "冻结命令必须用人话标题渲染");
+  assert.equal(inbox.includes("<code>${esc(c)}</code>"), false, "收件箱不该再直接贴原始命令");
+  assert.match(script, /list\.slice\(0, 3\)/, "命令太多时要截断，不能把卡片拉成一根长条");
 
   const approve = script.slice(script.indexOf("if (b.dataset.approve)"), script.indexOf("if (b.dataset.abandon)"));
   assert.ok(approve.includes('b.dataset.rebind === "true"'), "只有复用 Path 才触发额外确认");

@@ -83,12 +83,24 @@
       .panel { overflow-x: auto; }
       td .btn { padding: 5px 9px; font-size: 12.5px; }
       .panel + .panel { margin-top: 18px; }
-      .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 12px; margin-bottom: 22px; }
+      /* 指标卡：按格数铺满一行，不留半行空白也不会把数字拉成一排空盒子
+         （宽屏 8 张一行、中屏 4 张一行、手机 2 张一行，永远整除） */
+      .metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 22px; }
+      @media (min-width: 1500px) { .metrics { grid-template-columns: repeat(8, minmax(0, 1fr)); } }
       .metric { background: #fff; border: 1px solid #e2e7ee; border-radius: 14px; padding: 14px 16px; }
       .metric strong { display: block; font-size: 26px; font-weight: 740; letter-spacing: -0.8px; color: #172437; }
       .metric span { font-size: 12.5px; color: #5a6c81; }
       .metric.warn strong { color: var(--warn); }
-      .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; }
+      /* 收件箱卡片按可用宽度自动铺开；早期只有 280px 一列，宽屏上整列吊在左边一大片空白。
+         长文（冻结命令那种）在卡片里折行，不把卡片撑成一根窄长条。 */
+      .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 380px), 1fr)); gap: 16px; align-items: start; }
+      #inbox .card { min-width: 0; }
+      #inbox .card .mu { word-break: break-word; }
+      /* 一个需求下可能有好几条可复用的 Path：每条做成一块可点的选项，
+         按钮和它的说明绑在一起，人不会点错行 */
+      .opts { display: grid; gap: 8px; margin-top: 10px; }
+      .opt { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; padding: 10px 12px; border: 1px solid #e6ebf2; border-radius: 10px; background: #fafcff; }
+      .opt .btn { align-self: flex-start; }
       .card {
         background: #fff; border: 1px solid #e2e7ee; border-radius: 14px; padding: 14px 16px;
         box-shadow: 0 1px 6px #152b4c06; border-left: 3px solid #cfd8e3;
@@ -226,7 +238,7 @@
         .bar { gap: 10px; padding-bottom: 10px; margin-bottom: 18px; }
         h1 { font-size: 24px; letter-spacing: -0.6px; }
         .sub { font-size: 14px; }
-        .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+        .metrics { gap: 10px; }
         .metric { padding: 12px 13px; border-radius: 12px; }
         .metric strong { font-size: 22px; }
         .grid { grid-template-columns: 1fr; gap: 10px; }
@@ -236,6 +248,8 @@
         .sheet-foot { padding: 14px 16px 16px; }
         .toast { left: 12px; right: 12px; bottom: 12px; max-width: none; }
       }
+      /* 手机上指标卡两列：4 列时数字和标签会挤在一起 */
+      @media (max-width: 720px) { .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
     </style>
   </head>
   <body>
@@ -801,28 +815,42 @@
         $("metrics").innerHTML = items.map(([label, n, cls]) => `<div class="metric ${cls}"><strong>${n}</strong><span>${label}</span></div>`).join("");
       }
 
+      /**
+       * 冻结命令给人看的一行：用后端给的人话标题，最多 3 条，多的收成「另有 N 条」。
+       * 原始命令（cargo test -p x --locked …）在收件箱里不出现——人读它等于白读。
+       */
+      function cmdsHuman(p) {
+        const list = p.testCmdsHuman || [];
+        if (!list.length) return `<span style="color:var(--warn)">（空，close 会无命令可跑）</span>`;
+        const head = list.slice(0, 3).map((c) => esc(c)).join("、");
+        const more = list.length > 3 ? `　另有 ${list.length - 3} 条` : "";
+        return `${head}${more}`;
+      }
       function renderInbox(s) {
         const cards = [];
         for (const r of s.requirements.filter((x) => x.status === "draft")) {
-          // Path 是文件范围 + 冻结命令，可以跨需求复用。已绑定的 Path 也要展示，
-          // 但必须明确告诉 Owner 这次批准会把它重新绑定到当前需求。
+          // Path 是文件范围 + 冻结命令，可以跨需求复用。可选的是：还没绑需求的、已批准的，
+          // 以及**绑定在本需求上但还没批准**的那条——刚为本需求建的 Path 正是草稿，
+          // 少了它 Owner 只能去选别家的 Path 或者一条空命令的 Path（实测批不了）。
           const paths = s.paths
-            .filter((p) => !p.requirement_id || p.status === "approved")
+            .filter((p) => !p.requirement_id || p.status === "approved" || p.requirement_id === r.id)
             .map((p) => {
-              const cmds = (p.testCmds || []).map((c) => `<code>${esc(c)}</code>`).join(" ");
               const rebind = Boolean(p.requirement_id && p.requirement_id !== r.id);
               const label = rebind ? `复用 ${p.id} 并批准` : `批准 + ${p.id}`;
               const boundReq = rebind ? s.requirements.find((x) => x.id === p.requirement_id) : null;
               const binding = rebind
                 ? `<div class="mu" style="margin-top:4px;color:var(--warn)">当前关联：${esc(p.requirement_id)}${boundReq ? ` · ${esc(boundReq.title)}` : ""}。批准后将重新绑定到 ${esc(r.id)}。</div>`
                 : "";
-              return `<div style="margin-bottom:6px"><button class="btn primary" data-approve="${r.id}" data-path="${p.id}" data-rebind="${rebind ? "true" : "false"}">${label}</button>
-                <div class="mu" style="margin-top:4px">冻结命令：${cmds || `<span style="color:var(--warn)">（空，close 会无命令可跑）</span>`}</div>${binding}</div>`;
+              return `<div class="opt">
+                <button class="btn primary" data-approve="${r.id}" data-path="${p.id}" data-rebind="${rebind ? "true" : "false"}">${label}</button>
+                <div class="mu">冻结命令：${cmdsHuman(p)}</div>${binding}</div>`;
             })
             .join("");
-          cards.push(`<div class="card req"><strong>${esc(r.id)} ${esc(r.title)}</strong>
+          // 标题里已经写了编号就别再拼一遍（「FR-001 FR-001 …」看着像页面坏了）
+          const reqLabel = r.title.startsWith(r.id) ? r.title : `${r.id} ${r.title}`;
+          cards.push(`<div class="card req"><strong>${esc(reqLabel)}</strong>
             <div class="mu">待批准需求 · ${r.acceptance.length} 条验收</div>
-            <div class="row wrap">${paths || `<span class="mu">没有可用的 Path</span>`}</div></div>`);
+            <div class="opts">${paths || `<span class="mu">没有可用的 Path</span>`}</div></div>`);
         }
         // 已批准需求下新增的 draft Path：这类 Path 只能单独批（不重审需求）。
         // 早先收件箱只看 draft 需求，所以它们永远不出现，人只能靠命令行发现。
@@ -833,12 +861,11 @@
             s.requirements.some((r) => r.id === x.requirement_id && ["approved", "building"].includes(r.status)),
         )) {
           const req = s.requirements.find((r) => r.id === p.requirement_id);
-          const cmds = (p.testCmds || []).map((c) => `<code>${esc(c)}</code>`).join(" ");
           cards.push(`<div class="card req"><strong>${esc(p.id)} 待批准 · ${esc(req?.id ?? "")} ${esc(req?.title ?? "")}</strong>
             <div class="mu">需求已批准，只批这条 Path：需求状态与验收不动</div>
             <div class="mu">范围：${esc((p.allowedPaths || []).join("、") || "（未定义）")} · 预算 ${esc(p.budget_lines)} 行</div>
-            <div class="mu">冻结命令：${cmds || `<span style="color:var(--warn)">（空，close 会无命令可跑）</span>`}</div>
-            <div class="row wrap" style="margin-top:6px"><button class="btn primary" data-path-approve="${esc(p.id)}">批准 ${esc(p.id)}</button></div></div>`);
+            <div class="mu">冻结命令：${cmdsHuman(p)}</div>
+            <div class="row wrap"><button class="btn primary" data-path-approve="${esc(p.id)}">批准 ${esc(p.id)}</button></div></div>`);
         }
         for (const q of s.questions.filter((x) => x.status === "open")) {
           cards.push(`<div class="card q"><strong>${esc(q.id)} ${esc(q.question)}</strong>
