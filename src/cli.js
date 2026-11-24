@@ -16,6 +16,7 @@ import { hintFor } from "./hints.js";
 import { assertionCommand, detectTestCmds } from "./testcmd.js";
 import { acceptScopeWarnings } from "./acceptance.js";
 import { taskRework, taskResume } from "./rework.js";
+import { setPathUnion } from "./store.js";
 import { pathPrunePreview } from "./store.js";
 import { isVendorPath, vendorIgnores } from "./vendor.js";
 import {
@@ -725,6 +726,17 @@ export function cmdPath(args) {
     } catch (error) {
       return failCli(error.message, error.code ?? "E_ERROR", error.data ?? null, 1);
     }
+  }
+  if (sub === "union") {
+    // Owner 口径：批准 Path 时要不要把需求验收的命令并进来。默认 on（历史行为）。
+    const want = String(args[1] ?? "").toLowerCase();
+    if (!["on", "off"].includes(want)) {
+      return failCli("用法：devcontrol path union <on|off>（off = Path 只冻结自己声明的命令，需求验收不再并进来）", "E_USAGE");
+    }
+    const r = setPathUnion(db, want === "on");
+    console.log(`批准 Path 时的命令并集：${r.union ? "on（沿用历史行为）" : "off（只冻 Path 自己声明的命令）"}`);
+    console.log(r.union ? "  改成 off 之后：需求验收里没有任何 Path 声明的命令会建不出任务（next 会明确说是哪条）" : "  已记一条审计（path.union），旧契约不受影响");
+    return 0;
   }
   if (sub === "revoke") {
     const pathId = args.slice(1).find((a) => /^P-\d+$/.test(a)) ?? flag("path");

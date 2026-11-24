@@ -548,7 +548,10 @@ export function pathApprove(db, root, input = {}) {
     // 与 reqApprove 同一口径：Owner 写在需求验收里的命令必须一起冻进契约，
     // 否则任务照需求建出来，收口时会被 E_CONTRACT 拦住（说契约里没这条命令）。
     const wanted = req ? req.acceptance.map((a) => assertionCommand(a)).filter(Boolean) : [];
-    const testCmds = [...new Set([...p.testCmds, ...wanted])];
+    // 并集只在没被关掉时做。关掉后 Path 只冻结自己声明的命令——那才是 P0-2 的目标形态：
+    // 「这条 Path 属于哪个阶段」不再被需求验收抹平，按命令挑 Path 才有意义。
+    // 默认保持历史行为，由 Owner 在把旧 Path 清干净之后再翻，避免当天建不出任务。
+    const testCmds = pathUnionOn(db) ? [...new Set([...p.testCmds, ...wanted])] : [...new Set(p.testCmds)];
     if (!testCmds.length) fail("E_NO_TEST_CMD", "Path 至少需要一条验收命令才能批准");
     const body = contractBody({
       pathId: p.id,
@@ -665,7 +668,7 @@ export function reqApprove(db, root, input) {
     // Owner 在需求验收里写的命令，必须一起冻进契约：只按 Path 原来采到的那几条冻结，
     // 等于把 Owner 明说的验收（例如「构建也要过」）静默丢掉，之后任何任务想用它都会被 E_CONTRACT 拦住。
     const wanted = req.acceptance.map((a) => assertionCommand(a)).filter(Boolean);
-    const testCmds = [...new Set([...p.testCmds, ...wanted])];
+    const testCmds = pathUnionOn(db) ? [...new Set([...p.testCmds, ...wanted])] : [...new Set(p.testCmds)];
     const body = contractBody({
       pathId: p.id,
       requirementId: req.id,
@@ -1146,4 +1149,27 @@ export function handoff(db, input, root = null) {
     `起步: devcontrol mcp → task.claim(${t.id})`,
   ].filter(Boolean);
   return { text: lines.join("\n"), released };
+}
+
+/**
+ * 批准 Path 时要不要把需求验收的命令并进契约。
+ *
+ * 默认 on：历史行为，改了会让现有项目当天建不出某些任务（需求验收里有、Path 没声明的命令）。
+ * Owner 把旧 Path 清干净（path prune-preview 看得见差在哪）之后可以关掉，从此每条 Path
+ * 只冻结自己阶段的命令 —— 这是 P0-2 的目标形态，也是按命令挑 Path 的前提。
+ */
+export function pathUnionOn(db) {
+  return metaGet(db, "path.union_commands") !== "off";
+}
+
+/** Owner：翻这个开关。写审计，因为它是「以后新批准的契约长什么样」的口径。 */
+export function setPathUnion(db, on) {
+  metaSet(db, "path.union_commands", on ? "on" : "off");
+  logEvent(db, {
+    actor: "owner",
+    channel: "owner",
+    action: "path.union",
+    detail: on ? "on：需求验收的命令仍会冻进每条 Path" : "off：Path 只冻结自己声明的命令",
+  });
+  return { union: Boolean(on) };
 }
