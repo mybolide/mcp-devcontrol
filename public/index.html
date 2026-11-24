@@ -55,7 +55,8 @@
       .sidefooter { margin-top: auto; padding: 14px 12px 4px; border-top: 1px solid #edf0f4; font-size: 12.5px; color: #5a6c81; }
       .sidefooter .conn { font-weight: 650; color: var(--green); }
       .sidefooter .conn.off { color: var(--warn); }
-      .main { width: 100%; max-width: 1400px; margin: 0 auto; padding: 28px clamp(22px, 3.4vw, 56px) 56px; }
+      /* 宽屏下别把内容挤成中间一窄条：用满可用宽度，留白交给 padding */
+      .main { width: 100%; max-width: 1760px; margin: 0 auto; padding: 28px clamp(22px, 3vw, 56px) 56px; }
       .bar { display: flex; align-items: center; gap: 16px; padding: 0 0 18px; margin-bottom: 26px; border-bottom: 1px solid #e4e9f0; flex-wrap: wrap; }
       .breadcrumbs { display: flex; gap: 8px; align-items: baseline; font-size: 13.5px; color: #4f6077; }
       .breadcrumbs b { color: #233c60; font-weight: 720; }
@@ -105,6 +106,20 @@
       th { text-align: left; font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: #6b7c92; font-weight: 700; padding: 8px 8px; border-bottom: 1px solid #e6ebf2; }
       td { padding: 9px 8px; border-bottom: 1px solid #eef1f5; color: #26364a; vertical-align: top; word-break: break-word; }
       th { white-space: nowrap; }
+      /* 表格按内容分配宽度，但关键的「标题 / Path / 验收」给下限：
+         否则长验收文本会把标题列压成一行一两个字，看着像坏了（需求页实测过） */
+      #reqs td:nth-child(2) { min-width: 300px; }
+      #reqs td:nth-child(4) { min-width: 280px; }
+      #reqs td:nth-child(5) { min-width: 260px; }
+      #tasks td:nth-child(3) { min-width: 220px; }
+      #tasks td:nth-child(5) { min-width: 280px; }
+      #reqs td:nth-child(1), #tasks td:nth-child(1), #reqs td:nth-child(3) { white-space: nowrap; }
+      /* 窄屏别把表格压成一条：让卡片内部横向滚动，表结构保持不变
+         （早先试过 table{display:block} —— 那会把列拆散、只剩前两列，比挤压更糟） */
+      .panel { overflow-x: auto; }
+      @media (max-width: 1100px) {
+        .panel table { min-width: 860px; }
+      }
       /* 短列（ID/类型/状态/操作）按内容收窄，把余量让给标题与现象 */
       td.nw { white-space: nowrap; }
       /* 窄屏：表格改成一条条卡片，不横向挤压 */
@@ -981,8 +996,8 @@
               .filter((t) => t.requirement_id === r.id)
               .map((t) => `<span class="pill ${t.status === "done" ? "done" : t.status === "doing" ? "doing" : ""}">${esc(t.id)}</span>`)
               .join(" ");
-            return `<tr><td class="mono">${esc(r.id)}</td><td>${esc(r.title)}</td><td>${tag(r.status)}</td>
-              <td class="mono">${canAbandon(r) ? `<button class="btn danger" data-abandon="${esc(r.id)}" title="这件事不做了：需求归档，连带还挂着的任务一起放弃">作废</button> ` : ""}${pth ? `${esc(pth.id)} <button class="btn" data-budget="${pth.id}" data-cur="${pth.budget_lines ?? ""}" data-used="${s.tasks.filter((t) => t.path_id === pth.id && t.status === "done").reduce((n, t) => n + (t.changed_lines ?? 0), 0)}" title="改这条 Path 的改动预算">${pth.budget_lines ?? "?"} 行</button>` : "—"}
+            return `<tr><td class="mono nw">${esc(r.id)}</td><td>${esc(r.title)}</td><td class="nw">${tag(r.status)}${canAbandon(r) ? ` <button class="btn danger" data-abandon="${esc(r.id)}" title="这件事不做了：需求归档，连带还挂着的任务一起放弃">作废</button>` : ""}</td>
+              <td class="mono">${pth ? `${esc(pth.id)} <button class="btn" data-budget="${pth.id}" data-cur="${pth.budget_lines ?? ""}" data-used="${s.tasks.filter((t) => t.path_id === pth.id && t.status === "done").reduce((n, t) => n + (t.changed_lines ?? 0), 0)}" title="改这条 Path 的改动预算">${pth.budget_lines ?? "?"} 行</button>` : `<span class="mu">无自有 Path</span>`}
                 ${pth && (pth.testCmds || []).length ? `<div class="mu" style="margin-top:4px">验收：${pth.testCmds.map(esc).join(" · ")} <button class="btn" data-retest="${pth.id}" data-cmds="${esc((pth.testCmds || []).join(" | "))}" title="项目改了 test 脚本，重新采一次验收命令">重采</button></div>` : ""}
                 ${pth && pth.standards?.rules?.length ? `<div class="mu" style="margin-top:2px" title="${esc(pth.standards.rules.map((s) => (s.enforced ? "[内核会拦] " : "") + s.text).join("\n"))}">规范 ${pth.standards.rules.length} 条 · 悬停看全文</div>` : ""}</td>
               <td>${cov}${miss}${allPaths}<div class="mu">${r.acceptance.map((a) => esc(a)).join(" · ")}</div></td>
