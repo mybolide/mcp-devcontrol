@@ -39,17 +39,18 @@ test("parked 的任务仍然算「这条验收有人管」", async () => {
   assert.equal(plan.covered, 1);
 });
 
-test("next 不会让人建新任务顶替 parked（而是等 Owner）", async () => {
+test("next 把可自救的 parked 直接派回去重做（不再让人建新任务，也不干等）", async () => {
   const root = makeRepo({ failTest: true });
   const { db, reqId } = initFlow(root);
   const task = newTask(db, root, reqId);
   await parkTask(db, root, task);
 
   const digest = bootstrap(db, root);
-  assert.equal(digest.next.action, "wait", `不该建议 ${digest.next.action}`);
+  // 验收没过属于「Agent 自己能修」：内核该把它派回去，而不是让 Owner 点一下
+  assert.equal(digest.next.action, "task.rework", `该派回去重试，实际 ${digest.next.action}`);
+  assert.equal(digest.next.args.id, task.id);
   assert.match(digest.next.why, new RegExp(task.id));
-  assert.match(digest.next.why, /parked/);
-  assert.match(digest.next.why, /不要新建任务/, "要说清「不要另起一条」，否则 Agent 还是会去建");
+  assert.match(digest.next.why, /自己重试/);
 });
 
 test("next 与 blockers 不再互相打脸", async () => {
@@ -61,9 +62,9 @@ test("next 与 blockers 不再互相打脸", async () => {
   const digest = bootstrap(db, root);
   const parkedBlocker = digest.blockers.find((b) => b.code === "E_PARKED");
   assert.ok(parkedBlocker, "blockers 应报 E_PARKED");
-  // 两边的说法必须一致：都说「等 Owner」
-  assert.equal(digest.next.action, "wait");
-  assert.match(parkedBlocker.fix, /Owner/);
+  // 两边的说法必须一致：都说「自己能重试」，不能一个让 Agent 干活、一个让他等人
+  assert.equal(digest.next.action, "task.rework");
+  assert.match(parkedBlocker.fix, /rework/);
 });
 
 test("还有 backlog 任务可领时，先去干能干的活（别傻等）", async () => {

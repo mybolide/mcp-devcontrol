@@ -57,6 +57,17 @@ export function availableActions(db) {
     (p) => p.status === "approved" && reqs.some((r) => ["approved", "building"].includes(r.status) && r.id === p.requirement_id),
   );
   const acts = new Set(["bootstrap", "bug.report"]);
+  // 「等」也是一个真动作：Agent 必须能调 wait 拿最新状态。把它排除在动作面外，
+  // next 一旦返回 wait 就违反「照抄必成」——实测过，这是最容易被忽略的一条。
+  acts.add("wait");
+  // 挂起但 Agent 自己能救的任务：派回去重试（task.rework）。
+  // 早先这里只按 doing/approvedPath 推动作面，于是 next 让 Agent 去 rework，
+  // 而 rework 不在动作面上——「该做什么」和「能不能做」自相矛盾。
+  const reworkable = tasks.filter((t) => t.status === "parked" && reworkState(db, t).owner === "agent");
+  if (reworkable.length) acts.add("task.rework");
+  // 在办但租约已过期：Agent 崩溃/掉线，先把任务放回待办（task.resume），别让它锁住 WIP
+  const expired = doing.filter((t) => !t.claim_expires_at || Date.parse(t.claim_expires_at) < Date.now());
+  if (expired.length) acts.add("task.resume");
   // Path 草案不授予权限：只要有尚在进行的需求、且当前没有 Agent 在办任务，
   // 就允许 Agent 提交新的范围提案；真正生效仍由 Owner 批准并冻结契约。
   if (!doing.length && reqs.some((r) => ["draft", "approved", "building"].includes(r.status))) {
@@ -138,7 +149,19 @@ export function bootstrap(db, root, extra = {}) {
         : `Path ${p.id} 还是草稿：先 devcontrol intake "…" --accept "…" 收一条需求，再 approve（${where}）`,
     });
   }
-  for (const t of parked) blockers.push({ code: "E_PARKED", fix: `${t.id} 已 parked，等 Owner reopen` });
+  for (const t of parked) {
+    // blocker 的说法必须和 next 一致：能自救的说「自己 retry」，剩下的才说等 Owner。
+    // 两边不一致时，Agent 会照着 blocker 去等人——那正是这次要消掉的矛盾。
+    const st = reworkState(db, t);
+    blockers.push({
+      code: "E_PARKED",
+      taskId: t.id,
+      fix:
+        st.owner === "agent"
+          ? `${t.id} 可自主返工：devcontrol task rework ${t.id}（还剩 ${st.remaining} 次）`
+          : `${t.id} 已 parked，等 Owner 决定 reopen 还是放弃（${st.reason}）`,
+    });
+  }
   for (const t of blocked) blockers.push({ code: "E_DEP_OPEN", fix: `${t.id} 等前置：${t.dependsOn.join(", ")}` });
 
   // 内核自己排优先级：收口 > 领取（依赖已满足）> 补拆（验收没被覆盖）> 等阻塞。
@@ -150,6 +173,16 @@ export function bootstrap(db, root, extra = {}) {
       // 一条在办任务要按顺序走三步，next 每一步都要说对，不能一上来就催收口：
       //   ① 写代码 → ② 自己跑验收留证据 → ③ commit → ④ close
       // 「有没有提交」「有没有证据」是内核**数得出来**的事实，不是猜的。
+      // 在办但租约已过期：先让 Agent 把任务放回待办（task.resume），别让它拿着一个
+      // 谁都改不动的任务继续干——收口也会因为 E_CLAIM_STALE 卡住。
+      if (Date.parse(current.claim_expires_at ?? 0) < Date.now()) {
+        return {
+          action: "task.resume",
+          args: { id: current.id },
+          why: `${current.id} 的租约已经过期（${current.claim_expires_at ?? "无"}）：先释放它，再重新领`,
+          cli: `devcontrol task resume ${current.id}`,
+        };
+      }
       const weak = (metaGet(db, "mode") ?? "git") === "weak";
       // verify 任务根本没有「提交」这一步：把 commits 直接当成已交付，
       // 否则 next 会一直催它去 commit——照做必然撞 E_NO_DELIVERY（T-011 就卡在这）。
@@ -204,6 +237,18 @@ export function bootstrap(db, root, extra = {}) {
       };
     }
     if (ready[0]) return { action: "task.claim", args: { id: ready[0].id }, why: `依赖已满足，下一个可领取：${ready[0].title}` };
+    // 挂起但自己能救的，先派回去重试：这不占 Owner 待办，也不该让位给「再拆一条新任务」
+    // （拆新任务会变成两张单子管同一条验收）。
+    const reworkable = parked.filter((t) => reworkState(db, t).owner === "agent");
+    if (reworkable.length) {
+      const st = reworkState(db, reworkable[0]);
+      return {
+        action: "task.rework",
+        args: { id: reworkable[0].id },
+        why: `${reworkable[0].id} 是代码/证据类失败（${st.lastFailure?.code ?? "?"}），自己重试就能回去，不用找人（还剩 ${st.remaining} 次）`,
+        cli: `devcontrol task rework ${reworkable[0].id} --note "这次怎么改"`,
+      };
+    }
     if (gaps.length) {
       const gap = gaps[0];
       const missing = gap.missing[0];

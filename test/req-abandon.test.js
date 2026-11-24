@@ -49,7 +49,7 @@ test("作废之后，next 不再围着它转（覆盖率不再统计已归档需
   await parkTask(db, root, task);
 
   const before = bootstrap(db, root);
-  assert.equal(before.next.action, "wait", "作废前应等 Owner");
+  assert.equal(before.next.action, "task.rework", "作废前：可自救的挂起任务该被派回去重试");
 
   reqAbandon(db, root, { requirementId: reqId, reason: REASON });
   const after = bootstrap(db, root);
