@@ -68,16 +68,27 @@ export function doctor(db, root) {
       if (!existsOnDisk(rel)) items.push({ severity: "warn", code: "STALE_PATH", detail: `${p.id} 的 allowed_path 不存在：${rel}` });
     }
     // 验收命令会不会已经过期：契约冻的是批准那一刻的命令，项目改了 test 脚本它不会自己跟。
-    // 命令过期时收口跑的是一条不存在的命令，Agent 看着「失败」却不知道错在哪。
+    // 但**不能拿字面相等去比**：采集器在 Rust 项目里只认得出 `cargo test`，而契约里写的是
+    // `cargo test --workspace --locked`——拿一个更弱的采集结果去指责一份更强的契约，
+    // 结果就是 7 条 Path 全报 drift（假警报，这次就是这么来的）。
+    // 判据改成「命令签名」：取前两个非开关 token（cargo test / npm test / node --test / git diff）。
+    // 只要有一条契约命令的签名还能被采到，就说明这条契约仍然跑得动。
     if (p.status === "approved" && p.testCmds?.length) {
       const now = detectTestCmds(root);
-      const stale = now.cmds.length ? !p.testCmds.some((c) => now.cmds.includes(c)) : false;
+      const sig = (cmd) => {
+        const parts = String(cmd ?? "").trim().split(/\s+/).filter(Boolean);
+        if (!parts.length) return "";
+        const sub = parts.slice(1).find((x) => !x.startsWith("-"));
+        return sub ? `${parts[0]} ${sub}` : parts[0];
+      };
+      const detectedSigs = new Set(now.cmds.map(sig));
+      const stale = detectedSigs.size ? !p.testCmds.some((c) => detectedSigs.has(sig(c))) : false;
       if (stale) {
         items.push({
           severity: "warn",
           code: "TEST_CMD_DRIFT",
           pathId: p.id,
-          detail: `${p.id} 冻结的命令是 ${p.testCmds.join(" / ")}，项目现在该用 ${now.cmds.join(" / ")}（控制台点「重采验收命令」可更新）`,
+          detail: `${p.id} 冻结的命令是 ${p.testCmds.join(" / ")}，项目现在采到的是 ${now.cmds.join(" / ")}——两者对不上号，收口时可能跑一条已不存在的命令（控制台点「重采验收命令」可更新）`,
         });
       }
     }

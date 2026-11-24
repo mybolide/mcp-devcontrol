@@ -82,3 +82,23 @@ test("需求还有没做完的活时，仍然是 error（真问题不能被降�
   assert.equal(items[0].severity, "error");
   db.close();
 });
+
+test("契约命令比采集结果更强时不算 drift（cargo test --workspace 与 cargo test 是同一签名）", () => {
+  const root = makeRepo(); // npm 项目：采集结果是 npm test
+  const { db, reqId } = initFlow(root);
+  // 契约写的是更强的那条，但签名一样
+  db.prepare("UPDATE paths SET test_cmds_json=? WHERE id='P-001'").run(JSON.stringify(["npm test --watch=false"]));
+  const drift = doctor(db, root).filter((i) => i.code === "TEST_CMD_DRIFT");
+  assert.deepEqual(drift, [], `签名一致就不该报 drift：${JSON.stringify(drift)}`);
+  db.close();
+});
+
+test("契约命令和项目现状完全不同时仍然要报 drift（别把检查修成摆设）", () => {
+  const root = makeRepo(); // 采集结果是 npm test
+  const { db } = initFlow(root);
+  db.prepare("UPDATE paths SET test_cmds_json=? WHERE id='P-001'").run(JSON.stringify(["cargo test --workspace --locked"]));
+  const drift = doctor(db, root).filter((i) => i.code === "TEST_CMD_DRIFT");
+  assert.equal(drift.length, 1);
+  assert.match(drift[0].detail, /cargo test/);
+  db.close();
+});
