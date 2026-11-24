@@ -6,6 +6,7 @@ import { releaseSummary } from "./release.js";
 import { cliCommand } from "./nextcmd.js";
 import { suggestScope } from "./scope.js";
 import { contextStatus } from "./context.js";
+import { matchPathForAssertion } from "./pathmatch.js";
 
 /**
  * 需求覆盖度：每条需求验收有没有任务在管。
@@ -141,9 +142,8 @@ export function bootstrap(db, root, extra = {}) {
 
   // 内核自己排优先级：收口 > 领取（依赖已满足）> 补拆（验收没被覆盖）> 等阻塞。
   // next.args 必须能原样执行：Agent 照抄就成功，不要逼它自己补 pathId/kind/scope。
-  // Path 必须属于这条需求本身。**不许兜底到「任意已批准的 Path」**：
-  // 那样 FR-004 没有 Path 时会悄悄拿到 FR-003 的 P-002，等于拿别人的授权开工。
-  const approvedPath = (reqId) => paths.find((p) => p.status === "approved" && p.requirement_id === reqId);
+  // Path 必须属于这条需求本身，而且要能履行这条验收：选哪条 Path 不再看「列表里第一条」，
+  // 交给 pathmatch.js 按「契约里冻结了这条验收命令」来选；选不出来就明说差在哪。
   const next = (() => {
     if (current) {
       // 一条在办任务要按顺序走三步，next 每一步都要说对，不能一上来就催收口：
@@ -205,21 +205,47 @@ export function bootstrap(db, root, extra = {}) {
     if (ready[0]) return { action: "task.claim", args: { id: ready[0].id }, why: `依赖已满足，下一个可领取：${ready[0].title}` };
     if (gaps.length) {
       const gap = gaps[0];
-      const pth = approvedPath(gap.id);
-      if (!pth) return { action: "wait", args: {}, requirementId: gap.id, why: `需求 ${gap.id} 没有自己的已批准 Path：等 Owner 为它批准（不能借用别的需求的 Path）` };
+      const missing = gap.missing[0];
+      // 选 Path 的唯一判据：这条 Path 的契约里冻结了这条验收要跑的命令。
+      // 早先是「这条需求的第一条 approved」——FR-007 有 P-002/P-006/P-007 三条 approved 时
+      // 永远推荐 P-002（只授权 docs/spikes 两个文件），Agent 照抄必然撞 scope。
+      const match = matchPathForAssertion({ paths, requirementId: gap.id, assertion: missing.text });
+      const pth = match.path;
+      if (!match.path) {
+        return {
+          action: "wait",
+          args: {},
+          requirementId: gap.id,
+          why: `${gap.id} 这条验收没有 Path 能履行：${missing.text}。${match.reason}`,
+          pathDiagnostics: match.candidates,
+        };
+      }
+      // 多条 Path 都能跑这条验收时不猜：猜错就是「静默给错授权范围」，
+      // Agent 照着建出来的任务要么撞 scope、要么背上别家阶段的验收。
+      // 让它按自己要改的文件挑一条，并把候选摊开给人看。
+      if (match.candidates.length > 1) {
+        const list = match.candidates.map((c) => `${c.id}（${c.why}）`).join("；");
+        return {
+          action: "wait",
+          args: {},
+          requirementId: gap.id,
+          why: `${gap.id} 有 ${match.candidates.length} 条已批准 Path 都能跑这条验收，内核不替你选：${list}。用 devcontrol task create --req ${gap.id} --path <P-00x> 明确指定——按你这次要改的文件挑`,
+          pathDiagnostics: match.candidates,
+        };
+      }
       return {
         action: "task.create",
         args: {
           requirementId: gap.id,
           pathId: pth.id,
           kind: "feature",
-          title: `覆盖验收：${gap.missing[0].text}`,
+          title: `覆盖验收：${missing.text}`,
           // 不能直接把 Path 的 allowedPaths 塞进 next.args：Path 授权整个仓库时它是 `.`，
           // 照抄就会把 scope 写成整个仓库——而内核现在会拒（T-130）。
           scope: suggestScope(root, pth.allowedPaths),
-          acceptance: [{ deriveFrom: gap.missing[0].idx, assertion: gap.missing[0].text }],
+          acceptance: [{ deriveFrom: missing.idx, assertion: missing.text }],
         },
-        why: `需求 ${gap.id} 还有 ${gap.missing.length} 条验收没有任务覆盖：${gap.missing[0].text}`,
+        why: `需求 ${gap.id} 还有 ${gap.missing.length} 条验收没有任务覆盖：${missing.text}（用 ${pth.id}，它的契约冻结了这条命令）`,
       };
     }
     if (blocked.length) return { action: "wait", args: {}, why: `${blocked[0].id} 等前置 ${blocked[0].dependsOn.join(", ")} 完成`, blocked: blocked.map((t) => t.id) };
@@ -307,16 +333,26 @@ export function bootstrap(db, root, extra = {}) {
       }
     })(),
     requirement: (() => {
-      const picked = (current && reqs.find((r) => r.id === current.requirement_id)) || reqs.filter((r) => ["approved", "building"].includes(r.status)).slice(-1)[0] || reqs[0];
+      // 没有在办任务时，优先说「有缺口的那条需求」，而不是「列表里最后一条 approved」：
+      // 后者会让人以为现在该干的是别家阶段的事。
+      const picked =
+        (current && reqs.find((r) => r.id === current.requirement_id)) ||
+        (gaps[0] && reqs.find((r) => r.id === gaps[0].id)) ||
+        reqs.filter((r) => ["approved", "building"].includes(r.status)).slice(-1)[0] ||
+        reqs[0];
       return picked ? { id: picked.id, title: picked.title, status: picked.status } : null;
     })(),
-    // 显示「真正在用的那条 Path」：在办任务的、否则最近批准的一条，别再指第一条草稿
+    // 显示「真正在用的那条 Path」：在办任务的 → 否则**当前这条需求**里能履行待办验收的那条。
+    // 早先回落到「全项目最后一条 approved」，于是 FR-007 的 status 会显示 P-002（别家阶段的范围）。
     path: (() => {
-      const picked =
-        (current && paths.find((p) => p.id === current.path_id)) ||
-        paths.filter((p) => p.status === "approved").slice(-1)[0] ||
-        paths[0];
-      return picked ? { id: picked.id, status: picked.status, allowed: picked.allowedPaths } : null;
+      const shape = (p) => ({ id: p.id, status: p.status, requirementId: p.requirement_id, allowed: p.allowedPaths, commands: p.testCmds });
+      if (current) {
+        const own = paths.find((p) => p.id === current.path_id);
+        if (own) return shape(own);
+      }
+      if (!gaps.length) return null;
+      const m = matchPathForAssertion({ paths, requirementId: gaps[0].id, assertion: gaps[0].missing[0].text });
+      return m.path ? shape(m.path) : null;
     })(),
     task: current
       ? {

@@ -14,6 +14,7 @@ import { FLOWS_REL, flowFromRequirement, flowToRequirement, listFlows, readFlow 
 import { getReq, getTask, mapTask, listTasks, listReqs, listPaths, listDocs, reqIntake, reqApprove, pathIntake, pathApprove, pathRevoke, taskAbandon, disciplineStats, logRejection } from "./store.js";
 import { hintFor } from "./hints.js";
 import { assertionCommand, detectTestCmds } from "./testcmd.js";
+import { acceptScopeWarnings } from "./acceptance.js";
 import { isVendorPath, vendorIgnores } from "./vendor.js";
 import {
   demoteMemory,
@@ -481,6 +482,10 @@ export function cmdTask(args) {
     console.log(`交付：${task.delivery === "verify" ? "verify（只跑验收，不交代码）" : "code（交出归属提交）"}`);
     console.log(`scope: ${(task.scope ?? []).join(", ")}`);
     if (task.dependsOn?.length) console.log(`前置: ${task.dependsOn.join(", ")}`);
+    // 验收命令和 scope 明显对不上时先提醒一句（不拦：全量跑通是常态，但「只授权 docs 却要跑 apps/desktop 构建」得说清）
+    for (const w of acceptScopeWarnings({ acceptance, scope: task.scope, path: { id: task.path_id } })) {
+      console.log(`注意：${w.detail}\n  → ${w.fix}`);
+    }
     return 0;
   }
   if (sub === "claim") {
