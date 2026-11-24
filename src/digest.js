@@ -8,6 +8,7 @@ import { suggestScope } from "./scope.js";
 import { contextStatus } from "./context.js";
 import { matchPathForAssertion } from "./pathmatch.js";
 import { reworkState } from "./rework.js";
+import { humanAssertionTitle } from "./title.js";
 
 /**
  * 需求覆盖度：每条需求验收有没有任务在管。
@@ -285,7 +286,7 @@ export function bootstrap(db, root, extra = {}) {
           requirementId: gap.id,
           pathId: pth.id,
           kind: "feature",
-          title: `覆盖验收：${missing.text}`,
+          title: humanAssertionTitle(missing.text),
           // 不能直接把 Path 的 allowedPaths 塞进 next.args：Path 授权整个仓库时它是 `.`，
           // 照抄就会把 scope 写成整个仓库——而内核现在会拒（T-130）。
           scope: suggestScope(root, pth.allowedPaths),
