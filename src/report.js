@@ -51,9 +51,21 @@ export function doctor(db, root) {
       });
     }
   }
+  // allowed_paths 支持 glob（`dir/**`、`dir/*`）：判存在时先归一。
+  // 早先直接拿 `crates/x/**` 去 existsSync，于是所有写成 `dir/**` 的 Path 都被报成
+  // 「路径不存在」——误报，不是人写错了。
+  const existsOnDisk = (rel) => {
+    const raw = String(rel ?? "").trim().replace(/\\/g, "/");
+    const base = raw.replace(/\/\*{1,2}$/, "").replace(/\/+$/, "");
+    if (!base || base === ".") return true;
+    if (!/[*?]/.test(base)) return fs.existsSync(path.join(root, base));
+    // 通配在中间（如 src/*/x.js）：截到第一个通配符之前，判那层目录在不在
+    const cut = base.slice(0, base.search(/[*?]/)).replace(/\/+$/, "");
+    return cut ? fs.existsSync(path.join(root, cut)) : true;
+  };
   for (const p of listPaths(db)) {
     for (const rel of p.allowedPaths) {
-      if (!fs.existsSync(path.join(root, rel))) items.push({ severity: "warn", code: "STALE_PATH", detail: `${p.id} 的 allowed_path 不存在：${rel}` });
+      if (!existsOnDisk(rel)) items.push({ severity: "warn", code: "STALE_PATH", detail: `${p.id} 的 allowed_path 不存在：${rel}` });
     }
     // 验收命令会不会已经过期：契约冻的是批准那一刻的命令，项目改了 test 脚本它不会自己跟。
     // 命令过期时收口跑的是一条不存在的命令，Agent 看着「失败」却不知道错在哪。
@@ -181,14 +193,29 @@ function consistency(db) {
     const uncovered = r.acceptance
       .map(cmdOf)
       .filter((c) => c && !approvedPaths.some((p) => p.testCmds.includes(c)));
-    if (uncovered.length) {
+    if (!uncovered.length) continue;
+    // 这条需求还有没有在做的活：有任务没结束，或有验收没被任何任务认领。
+    const mine = tasks.filter((t) => t.requirement_id === r.id);
+    const pending = mine.some((t) => !["done", "abandoned"].includes(t.status));
+    const claimed = new Set(mine.flatMap((t) => t.acceptance.map((a) => a.deriveFrom)));
+    const openAcceptance = r.acceptance.map((_, i) => i).filter((i) => !claimed.has(i));
+    if (!pending && !openAcceptance.length) {
+      // 活已经干完了：Path 多半被复用给了别的需求。这是历史，不是待办——
+      // 报成 error 只会让 doctor 常红，人就开始无视它（真问题时也就看不见了）。
       out.push({
-        severity: "error",
-        code: "ACCEPTANCE_NOT_IN_CONTRACT",
+        severity: "note",
+        code: "ACCEPTANCE_PATH_MOVED",
         requirementId: r.id,
-        detail: `${r.id} 批准的验收里有 ${uncovered.join(" / ")}，但没有任何已批准的 Path 冻结了它（现有：${[...new Set(approvedPaths.flatMap((p) => p.testCmds))].join(" / ") || "空"}）`,
+        detail: `${r.id} 的活已经做完，但它现在没有自己的已批准 Path（很可能被复用给了别的需求）。要给它开新任务时先新建一条 Path；不改也不影响已完成的交付。`,
       });
+      continue;
     }
+    out.push({
+      severity: "error",
+      code: "ACCEPTANCE_NOT_IN_CONTRACT",
+      requirementId: r.id,
+      detail: `${r.id} 批准的验收里有 ${uncovered.join(" / ")}，但没有任何已批准的 Path 冻结了它（现有：${[...new Set(approvedPaths.flatMap((p) => p.testCmds))].join(" / ") || "空"}）`,
+    });
   }
 
   // ③ 任务的断言命令必须在该 Path 的冻结命令里（否则这条任务永远收不了口）
