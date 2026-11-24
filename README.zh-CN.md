@@ -91,6 +91,8 @@ devcontrol close                → 核对证据并收口。它不跑测试
 | `task.renew` | 长任务续租 |
 | `evidence.record` | 把你自己在 shell 里跑出来的结果交上来 |
 | `task.close` | 收口：核对证据 |
+| `task.rework` | 自己重试挂起的任务（失败是自己的就自己改，合同不变，次数有上限） |
+| `task.resume` | 崩溃恢复：释放过期租约，让别人能接手 |
 | `bug.report` | 报 Bug，带复现步骤 |
 | `ask` | 有歧义就问，别猜 |
 | `memory.write` | 记一条经验 |

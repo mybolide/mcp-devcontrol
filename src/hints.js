@@ -49,7 +49,11 @@ const HINTS = {
   E_BUSY: "任务状态正在被另一个进程改。等一秒重试；重复出现说明有两个 Agent 在抢同一个任务。",
   E_INTERNAL: "内核内部错误。带上 devcontrol 版本和刚才的命令去开 issue；DEVCONTROL_DEBUG=1 能看到堆栈。",
   E_ABANDONED: "这条任务已经随需求一起作废了（Owner 决定这件事不做）。别再领它；要做就直接提一条新需求。",
-  E_PARKED: "这条任务连续失败已 park（等 Owner 决定）。Agent 不能自己重开：Owner 在控制台「任务」里 reopen 后你再 claim，或者他会换个做法。",
+  E_PARKED:
+    "这条任务连续失败被挂起了。先看是谁的问题：如果上次失败是代码/证据类（例如验收没过），devcontrol task rework T-00x 自己重试就行，不用叫人；如果是授权类（没批、契约不符、Owner 拒绝），那只能等 Owner。",
+  E_NEEDS_OWNER: "这条卡在授权/协作问题上（没批、契约不符、Owner 拒绝、别人持有、被废弃），多试几次也不会变：把它交给 Owner，别硬试。",
+  E_REWORK_EXHAUSTED: "自主返工次数用完了。别再试了——把返回里的 report（试过什么、卡在哪）整理成人话交给 Owner，这是该他看的唯一一件事。",
+  E_CLAIM_ACTIVE: "这条任务的租约还没到期，可能真的有人在干：能续就 task.renew，确实要接手就等租约过期再 task.resume。",
   E_DEP_OPEN: "前置任务还没收口。先把它做完（devcontrol close），或者换一个不依赖它的任务。",
   E_CLAIM_STALE: "租约过期了，这个任务已经回到待领队列。重新 task.claim 一次即可（超过 45 分钟没动静就会这样）。",
   E_UNMERGED_WORK: "你的提交不在当前分支的祖先链上（被 rebase 掉了，或者提交在别的分支）。把它们合回来再收口。",

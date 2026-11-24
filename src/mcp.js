@@ -19,6 +19,7 @@ import { fail, getTask, logRejection, mapTask, pathIntake } from "./store.js";
 import { generalizeHint, memoryConfig, openMemory, recallMemories, rememberAndIndex, searchMemories } from "./memory.js";
 import { createRelease, planRelease, shipRelease } from "./release.js";
 import { registerChatOwnerApproval } from "./chat-owner-approval-mcp.js";
+import { taskRework, taskResume } from "./rework.js";
 
 export const TOOL_NAME = "devcontrol";
 
@@ -44,6 +45,8 @@ export const ACTIONS = [
   "task.claim",
   "task.renew",
   "task.close",
+  "task.rework",
+  "task.resume",
   "evidence.record",
   "bug.report",
   "ask",
@@ -77,6 +80,7 @@ export const SCHEMA = {
   testCmds: z.array(z.string()).optional().describe("path.create：冻结前供 Owner 审查的验收命令列表"),
   symptom: z.string().optional(),
   expected: z.string().optional(),
+  note: z.string().optional().describe("task.rework：这次打算怎么改（一句话，会进审计与报告）"),
   repro: z.array(z.string()).optional(),
   severity: z.string().optional(),
   resolvedBy: z.string().optional().describe("失败过的任务必填：一句话说清最后怎么解决的（自动写进通用记忆）"),
@@ -107,6 +111,8 @@ export async function dispatch(db, root, args, ctx = {}) {
     "task.create": ["requirementId", "pathId", "title"],
     "path.create": ["requirementId"],
     "task.close": ["summary", "changes", "limitations"],
+  "task.rework": ["id"],
+  "task.resume": ["id"],
     "task.claim": ["id"],
     "evidence.record": ["command"],
     "task.renew": ["id"],
@@ -175,6 +181,11 @@ export async function dispatch(db, root, args, ctx = {}) {
     }
     case "task.close":
       return taskClose(db, root, args, { signal: ctx.signal });
+    case "task.rework":
+      // 普通失败自己重试：不碰合同，次数有上限，失败经历一条不删
+      return taskRework(db, { id: args.id, note: args.note ?? args.reason, actor: args.actor ?? process.env.DEVCONTROL_ACTOR ?? "agent" });
+    case "task.resume":
+      return taskResume(db, { id: args.id, actor: args.actor ?? process.env.DEVCONTROL_ACTOR ?? "agent" });
     case "bug.report":
       return bugReport(db, args, args.actor ?? process.env.DEVCONTROL_ACTOR ?? "agent");
     case "ask":

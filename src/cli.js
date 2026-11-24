@@ -15,6 +15,7 @@ import { getReq, getTask, mapTask, listTasks, listReqs, listPaths, listDocs, req
 import { hintFor } from "./hints.js";
 import { assertionCommand, detectTestCmds } from "./testcmd.js";
 import { acceptScopeWarnings } from "./acceptance.js";
+import { taskRework, taskResume } from "./rework.js";
 import { pathPrunePreview } from "./store.js";
 import { isVendorPath, vendorIgnores } from "./vendor.js";
 import {
@@ -517,6 +518,33 @@ export function cmdTask(args) {
       console.log(`\n注意：${claimed.contextHint}`);
     }
     return 0;
+  }
+  if (sub === "rework") {
+    // 普通失败自己重试：不碰合同、次数有上限、失败经历一条不删
+    const id = args.slice(1).find((a) => /^T-\d+$/.test(a));
+    if (!id) return failCli('用法：devcontrol task rework T-00x [--note "这次打算怎么改"]', "E_USAGE");
+    try {
+      const r = taskRework(db, { id, note: flag("note") ?? flag("reason"), actor });
+      console.log(`${r.taskId} 已回到待办：第 ${r.reworks} 次自主返工（还剩 ${r.remaining} 次）`);
+      console.log(`scope 不变：${r.scope.join(", ") || "."}——返工不扩权，要扩得找 Owner`);
+      console.log(`下一步：devcontrol task claim ${r.taskId}`);
+      return 0;
+    } catch (error) {
+      return failCli(error.message, error.code ?? "E_ERROR", error.data ?? null, 1);
+    }
+  }
+  if (sub === "resume") {
+    // 崩溃恢复：只释放过期租约，合同不动
+    const id = args.slice(1).find((a) => /^T-\d+$/.test(a));
+    if (!id) return failCli("用法：devcontrol task resume T-00x", "E_USAGE");
+    try {
+      const r = taskResume(db, { id, actor });
+      console.log(`${r.taskId} 已释放过期租约（原持有者 ${r.releasedFrom ?? "?"}），回到待办`);
+      console.log(`下一步：devcontrol task claim ${r.taskId}`);
+      return 0;
+    } catch (error) {
+      return failCli(error.message, error.code ?? "E_ERROR", error.data ?? null, 1);
+    }
   }
   if (sub === "abandon") {
     const id = args.slice(1).find((a) => /^T-\d+$/.test(a));

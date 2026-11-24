@@ -91,6 +91,8 @@ One MCP tool, `devcontrol`, with an `action` field:
 | `task.renew` | Extend the lease on a long task |
 | `evidence.record` | Hand up the result you got in your own shell |
 | `task.close` | Close: verify the evidence |
+| `task.rework` | Retry a parked task yourself when the failure was yours to fix (same contract, capped) |
+| `task.resume` | Recover a task whose agent died (release the expired lease) |
 | `bug.report` | Report a bug with repro steps |
 | `ask` | Ask when ambiguous instead of guessing |
 | `memory.write` | Record a reusable lesson |

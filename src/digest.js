@@ -7,6 +7,7 @@ import { cliCommand } from "./nextcmd.js";
 import { suggestScope } from "./scope.js";
 import { contextStatus } from "./context.js";
 import { matchPathForAssertion } from "./pathmatch.js";
+import { reworkState } from "./rework.js";
 
 /**
  * 需求覆盖度：每条需求验收有没有任务在管。
@@ -255,8 +256,16 @@ export function bootstrap(db, root, extra = {}) {
     if (parked.length) {
       return {
         action: "wait",
-        args: {},
-        why: `${parked.map((t) => t.id).join("、")} 已 parked（连续失败），等 Owner 决定 reopen 还是放弃；不要新建任务顶替它`,
+        // 挂起任务先说「能不能自己救」：能自救的给 task.rework，真需要人的才说等 Owner
+        why: (() => {
+          const states = parked.map((t) => ({ id: t.id, st: reworkState(db, t) }));
+          const mine = states.filter((x) => x.st.owner === "agent").map((x) => x.id);
+          const theirs = states.filter((x) => x.st.owner !== "agent").map((x) => x.id);
+          const parts = [`${parked.map((t) => t.id).join("、")} 已 parked`];
+          if (mine.length) parts.push(`${mine.join("、")} 是代码/证据类失败：devcontrol task rework <id> 自己重试，不要新建任务顶替它`);
+          if (theirs.length) parts.push(`${theirs.join("、")} 只有 Owner 能解（授权/协作问题、或自主返工次数用完）：把失败原因整理给他`);
+          return parts.join("；");
+        })(),
         blocked: parked.map((t) => t.id),
       };
     }

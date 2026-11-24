@@ -319,7 +319,12 @@ export function taskClaim(db, root, input, actor = "agent") {
     // parked 必须由 Owner reopen，Agent 不能自己重开：连续失败 3 次是「需要人看一眼」的信号，
     // 让它自己领回去重试第 4 次，等于把这套门禁当摆设。
     if (t.status === "parked") {
-      fail("E_PARKED", `${t.id} 已 parked（连续失败 3 次），等 Owner 在控制台 reopen；Agent 不能自己重开`, { taskId: t.id });
+      // 挂起不该是死路：代码/证据类失败，Agent 自己 task.rework 就能回去重试；
+      // 授权类才需要人。措辞必须和 reworkState 的判据一致，否则又是一封「让人干等」的信。
+      fail("E_PARKED", `${t.id} 已 parked（连续失败 3 次）：先用 task.rework 看是谁的问题——代码/证据类会放你回去重试，授权类会明确告诉你等 Owner`, {
+        taskId: t.id,
+        hint: `devcontrol task rework ${t.id}`,
+      });
     }
     // 重领时 base_head 不能往后挪。Owner 调预算 / 重新批准会在任务自己的提交**之后**
     // 产生一个新的契约提交；直接拿最新契约提交当起点，就把任务已有的提交甩出了区间，
