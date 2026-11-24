@@ -1000,18 +1000,38 @@ export function ask(db, input) {
   return tx(db, () => {
     const t = getTask(db, input.taskId);
     if (!t) fail("NOT_FOUND", `任务不存在：${input.taskId}`);
+    // 三类问题，只有 C 类该占 Owner 的待办：
+    //   decision（A）：技术选型 / 怎么拆 / 怎么修 —— 归 Agent 自己，别问；
+    //   external（B）：依赖没装、服务挂了 —— 先自己重试 / 降级 / 等待，别把噪音丢给人；
+    //   owner（C）   ：超范围、新权限、不可逆数据操作、产品方向、真金白银 —— 只有这类进待办。
+    const raw = String(input.kind ?? "owner").toLowerCase();
+    const ALIAS = { a: "decision", technical: "decision", b: "external", blocked: "external", dependency: "external", c: "owner" };
+    const kind = ["owner", "external", "decision"].includes(raw) ? raw : ALIAS[raw];
+    if (!kind) {
+      fail("INVALID_ARGUMENT", `ask 的 kind 只能是 owner / external / decision（收到 ${input.kind}）`, { kinds: ["owner", "external", "decision"] });
+    }
+    const actor = t.claimed_by ?? "agent";
+    const question = String(input.question ?? "").slice(0, 300);
+    if (kind === "decision") {
+      fail("E_ASK_NOT_OWNER", "这类判断归你自己：技术选型、怎么拆任务、怎么修——做出决定，并在 close 的 changes / resolvedBy / contextNote 里交代清楚", { kind });
+    }
+    if (kind === "external") {
+      // 不挂起任务、不占 Owner 待办：记一条事件就够，Agent 继续重试/降级/等待
+      logEvent(db, { actor, action: "ask.external", taskId: t.id, detail: question });
+      return { kind, questionId: null, guidance: "先自己重试 / 降级 / 等待；真的过不去（权限被拒、必须人装的依赖）再用 kind=owner 找人" };
+    }
     const open = db.prepare("SELECT COUNT(*) c FROM questions WHERE task_id=? AND status='open'").get(t.id).c;
     if (open >= 3) {
-      logEvent(db, { actor: t.claimed_by ?? "agent", action: "ask.quota", taskId: t.id, code: "E_QUOTA", detail: input.question });
-      return { questionId: null, quotaLeft: 0, note: "配额已满，只记事件" };
+      logEvent(db, { actor, action: "ask.quota", taskId: t.id, code: "E_QUOTA", detail: question });
+      return { kind, questionId: null, quotaLeft: 0, note: "配额已满，只记事件" };
     }
     const n = Number(metaGet(db, "counter:Q") ?? 0) + 1;
     const id = `Q-${String(n).padStart(3, "0")}`;
     const expires = new Date(Date.now() + 24 * 3600_000).toISOString();
-    db.prepare("INSERT INTO questions(id,task_id,question,options_json,status,expires_at) VALUES(?,?,?,?,?,?)").run(id, t.id, String(input.question ?? "").slice(0, 300), JSON.stringify(input.options ?? []), "open", expires);
+    db.prepare("INSERT INTO questions(id,task_id,question,options_json,status,expires_at) VALUES(?,?,?,?,?,?)").run(id, t.id, question, JSON.stringify(input.options ?? []), "open", expires);
     db.prepare("INSERT INTO meta(key,value) VALUES('counter:Q',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(String(n));
     db.prepare("UPDATE tasks SET status='parked', claimed_by=NULL, claim_expires_at=NULL WHERE id=? AND status='doing'").run(t.id);
-    logEvent(db, { actor: t.claimed_by ?? "agent", action: "ask", taskId: t.id, detail: id });
-    return { questionId: id, expiresAt: expires, quotaLeft: 2 - open };
+    logEvent(db, { actor, action: "ask", taskId: t.id, detail: id });
+    return { kind, questionId: id, expiresAt: expires, quotaLeft: 2 - open };
   });
 }
