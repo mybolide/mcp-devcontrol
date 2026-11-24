@@ -13,7 +13,9 @@ import { openDb } from "../src/db.js";
 import { reqIntake, reqApprove, pathIntake, pathApprove, listPaths } from "../src/store.js";
 import { bootstrap } from "../src/digest.js";
 import { matchPathForAssertion, pathCoversAssertion } from "../src/pathmatch.js";
-import { commandPaths, acceptScopeWarnings } from "../src/acceptance.js";
+import { commandPaths, acceptScopeWarnings, crateDirs } from "../src/acceptance.js";
+import fs from "node:fs";
+import path from "node:path";
 import { makeRepo } from "./helpers.js";
 
 /** 直接写 paths 表：按「Path 只冻结自己阶段命令」的目标形状造数据。 */
@@ -149,4 +151,18 @@ test("现状钉住（P0-2 待改）：批准 Path 时会把需求验收的命令
   const row = listPaths(db).find((x) => x.id === p.pathId);
   assert.deepEqual([...row.testCmds].sort(), ["git diff --check", "npm test"], "现在 Path 会把需求验收一并吃掉（P0-2 要拆开）");
   db.close();
+});
+
+test("crate 名能翻成目录：cargo -p 也算得出它碰了哪", () => {
+  // 真实现场：P-002 只授权 docs/spikes，却带着 `cargo test -p agent-studio-acp`。
+  // 命令里没有仓库路径，只有 crate 名——不翻成目录，体检就整类漏掉。
+  const root = makeRepo();
+  fs.mkdirSync(path.join(root, "crates/agent-studio-acp"), { recursive: true });
+  fs.writeFileSync(path.join(root, "crates/agent-studio-acp/Cargo.toml"), '[package]\nname = "agent-studio-acp"\nversion = "0.1.0"\n');
+  const crates = crateDirs(root);
+  assert.equal(crates.get("agent-studio-acp"), "crates/agent-studio-acp");
+  assert.deepEqual(commandPaths("cargo test -p agent-studio-acp --locked", { crates }), ["crates/agent-studio-acp"]);
+  assert.deepEqual(commandPaths("cargo clippy --package=agent-studio-acp --locked", { crates }), ["crates/agent-studio-acp"]);
+  assert.deepEqual(commandPaths("cargo test --workspace --locked", { crates }), [], "全工作区不硬指某个目录");
+  assert.deepEqual(commandPaths("cargo test -p 不存在的crate", { crates }), [], "翻不出来就不猜");
 });

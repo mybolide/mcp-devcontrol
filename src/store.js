@@ -10,7 +10,7 @@ import { assertionCommand, detectTestCmds, retargetAssertion } from "./testcmd.j
 import { assertScopeInsideRepo, assertScopeIsSpecific } from "./scope.js";
 import { listCompletionsForTasks } from "./completion.js";
 import { forceCloseCompletionInput, insertCompletion } from "./completion.js";
-import { commandPaths, pathInScope } from "./acceptance.js";
+import { commandPaths, crateDirs, pathInScope } from "./acceptance.js";
 
 /**
  * 只读预览：这条 Path 的契约里，哪些命令其实碰不到它被授权的范围。
@@ -28,10 +28,13 @@ export function pathPrunePreview(db, root, { pathId }) {
   if (p.status !== "approved") fail("E_NEED_APPROVED", `${p.id} 当前 ${p.status}，只有已批准的 Path 才有契约可看`);
   const body = readContract(root, p.contract_commit, p.id, p.hash).body;
   const commands = contractCommands(body);
+  // crate 名 → 目录：`cargo test -p agent-studio-acp` 里没有仓库路径，
+  // 不翻成目录，「这条命令碰了哪」就算不出来（P-002 那串 -p 就是这么溜过去的）。
+  const crates = crateDirs(root);
   const keep = [];
   const prune = [];
   for (const command of commands) {
-    const outside = commandPaths(command).filter((f) => !pathInScope(f, p.allowedPaths));
+    const outside = commandPaths(command, { crates }).filter((f) => !pathInScope(f, p.allowedPaths));
     if (outside.length) prune.push({ command, outside });
     else keep.push(command);
   }

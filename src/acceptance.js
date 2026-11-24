@@ -13,9 +13,56 @@
 //   · 命令与 scope 明显对不上时给一条诊断（不拦，因为「跑整个工作区的测试、
 //     只改一个 crate」是常态；但「只授权 docs/** 却要跑 apps/desktop 构建」不像话）。
 import { assertionCommand } from "./testcmd.js";
+import fs from "node:fs";
+import path from "node:path";
+
+/**
+ * crate 名 → 仓库内目录（只读扫 Cargo.toml，不走网络）。
+ *
+ * 为什么需要：`cargo test -p agent-studio-acp` 里没有仓库路径，只有 crate 名。
+ * 不把它翻成目录，「这条命令碰了哪」就算不出来——体检会把最常见的一类 Rust
+ * 命令整类漏掉（P-002 身上那串 `-p agent-studio-acp` 就是这么溜过去的）。
+ * 按 root 缓存：一次进程内只扫一遍。
+ */
+const CRATE_CACHE = new Map();
+export function crateDirs(root) {
+  const key = path.resolve(String(root ?? "."));
+  if (CRATE_CACHE.has(key)) return CRATE_CACHE.get(key);
+  const map = new Map();
+  const skip = new Set(["target", "node_modules", ".git", ".devcontrol", "dist", "build", ".venv"]);
+  const walk = (dir, depth) => {
+    if (depth > 5) return;
+    let entries;
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory() || skip.has(entry.name)) continue;
+      const abs = path.join(dir, entry.name);
+      const toml = path.join(abs, "Cargo.toml");
+      if (fs.existsSync(toml)) {
+        try {
+          const text = fs.readFileSync(toml, "utf8");
+          // 只认 [package] 段里的 name，别把 [workspace.package] 或依赖名当 crate 名
+          const section = text.split(/^\[/m).find((s) => s.startsWith("package]"));
+          const name = section?.match(/\bname\s*=\s*"([^"]+)"/)?.[1];
+          if (name && !map.has(name)) map.set(name, path.relative(key, abs).replace(/\\/g, "/") || ".");
+        } catch {
+          /* 读不了就当不知道：诊断少一条，也不能因此拦人 */
+        }
+      }
+      walk(abs, depth + 1);
+    }
+  };
+  walk(key, 0);
+  CRATE_CACHE.set(key, map);
+  return map;
+}
 
 /** 把命令里出现的仓库路径挑出来（`npm --prefix apps/desktop run build` → apps/desktop）。 */
-export function commandPaths(command) {
+export function commandPaths(command, { crates = null } = {}) {
   const out = new Set();
   const text = String(command ?? "");
   // --prefix <dir> / -C <dir> / 显式 ./ 或 目录/文件 形式的参数
@@ -24,6 +71,13 @@ export function commandPaths(command) {
   for (const m of text.matchAll(/(?:^|\s)(\.\/[^\s"']+|[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.*-]+)+)/g)) {
     const v = m[1].replace(/^\.\//, "");
     if (!v.startsWith("-") && !/^\d/.test(v)) out.add(v);
+  }
+  // cargo 的 -p / --package 只给 crate 名：有映射表才翻得出目录，翻不出来就不猜
+  if (crates) {
+    for (const m of text.matchAll(/(?:^|\s)(?:-p|--package)[=\s]+([^\s"']+)/g)) {
+      const dir = typeof crates.get === "function" ? crates.get(m[1]) : crates[m[1]];
+      if (dir) out.add(dir);
+    }
   }
   return [...out].filter((p) => p && p !== "." && !/^(cargo|npm|node|pnpm|yarn)$/.test(p));
 }
