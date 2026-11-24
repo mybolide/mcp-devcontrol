@@ -213,15 +213,15 @@ test("ask 挂起任务 → Owner answer 放回队列；配额满只记事件", (
   const { db, reqId } = initFlow(root);
   const task = newTask(db, root, reqId);
   taskClaim(db, root, { id: task.id }, "agentA");
-  const q = ask(db, { taskId: task.id, question: "字段用驼峰还是下划线？", options: ["驼峰", "下划线"] });
+  const q = ask(db, { taskId: task.id, question: "字段用驼峰还是下划线？", options: ["驼峰", "下划线"], kind: "owner" });
   assert.ok(q.questionId);
   assert.equal(getTask(db, task.id).status, "parked");
   answer(db, { questionId: q.questionId, answer: "驼峰" });
   assert.equal(getTask(db, task.id).status, "backlog");
 
   taskClaim(db, root, { id: task.id }, "agentA");
-  for (let i = 0; i < 3; i += 1) ask(db, { taskId: task.id, question: `补充问题 ${i}` });
-  const quota = ask(db, { taskId: task.id, question: "第 4 个" });
+  for (let i = 0; i < 3; i += 1) ask(db, { taskId: task.id, question: `补充问题 ${i}`, kind: "owner" });
+  const quota = ask(db, { taskId: task.id, question: "第 4 个", kind: "owner" });
   assert.equal(quota.questionId, null);
 });
 
@@ -687,7 +687,7 @@ test("挂起再回来的任务，自己的提交仍能收口（B-006）", async 
   commitFiles(root, ["src/a.js"], `feat\n\nTask-Id: ${task.id}\nDevControl-Base: ${task.base_head}`, { author: "agentA" });
 
   // 中途挂起（等 Owner 回答）→ 被放回队列 → 重新领取
-  const q = ask(db, { taskId: task.id, question: "要不要顺便改导出名？" });
+  const q = ask(db, { taskId: task.id, question: "要不要顺便改导出名？", kind: "owner" });
   answer(db, { questionId: q.questionId, answer: "不用，保持原样" });
   taskClaim(db, root, { id: task.id }, "agentA");
 

@@ -1143,7 +1143,7 @@ export function cmdAsk(args) {
   };
   const question = flag("question") ?? args.find((a) => !a.startsWith("--"));
   if (!question) {
-    return failCli('用法：devcontrol ask "你的问题" [--options 选项A,选项B] [--task T-00x]', "E_USAGE");
+    return failCli('用法：devcontrol ask "你的问题" [--kind owner|external|decision] [--options 选项A,选项B] [--task T-00x]', "E_USAGE");
   }
   const actor = flag("actor") ?? process.env.DEVCONTROL_ACTOR ?? "agent";
   // 不给 --task 就用手上正在办的那条：问到哪条任务头上，Agent 本来就知道
@@ -1164,7 +1164,12 @@ export function cmdAsk(args) {
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean);
-  const res = ask(db, { taskId, question, options });
+  const res = ask(db, { taskId, question, options, kind: flag("kind") });
+  if (res.kind === "external") {
+    // 外部阻塞：不占 Owner 待办，也不挂起任务——内核只把它记进事件
+    console.log(`已记为外部阻塞（不打扰 Owner）：${res.guidance}`);
+    return 0;
+  }
   if (!res.questionId) {
     console.log("配额已满（同时最多 3 个未答问题），这次只记了事件。等 Owner 回答后在控制台看。");
     return 0;

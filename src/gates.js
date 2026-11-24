@@ -1004,6 +1004,13 @@ export function ask(db, input) {
     //   decision（A）：技术选型 / 怎么拆 / 怎么修 —— 归 Agent 自己，别问；
     //   external（B）：依赖没装、服务挂了 —— 先自己重试 / 降级 / 等待，别把噪音丢给人；
     //   owner（C）   ：超范围、新权限、不可逆数据操作、产品方向、真金白银 —— 只有这类进待办。
+    if (!input.kind) {
+      // 不给 kind 就等于「让用户替我做判断」——那正是要禁掉的动作。
+      // 宁可报错让它想清楚「这到底该不该找人」，也不要默认吐一条 Owner 待办。
+      fail("E_ASK_NEEDS_KIND", "ask 必须说明这是哪类问题：decision（技术选择，自己定，不该问）/ external（外部阻塞，自己重试降级）/ owner（只有人能定：产品方向、权限、合同、不可逆操作）", {
+        kinds: ["decision", "external", "owner"],
+      });
+    }
     const raw = String(input.kind ?? "owner").toLowerCase();
     const ALIAS = { a: "decision", technical: "decision", b: "external", blocked: "external", dependency: "external", c: "owner" };
     const kind = ["owner", "external", "decision"].includes(raw) ? raw : ALIAS[raw];

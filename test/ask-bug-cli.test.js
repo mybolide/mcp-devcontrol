@@ -45,7 +45,7 @@ test("ask：不给 --task 时自动问到手上那条在办任务上", () => {
   const t = newTask(db, root, reqId);
   taskClaim(db, root, { id: t.id }, "agent");
 
-  const out = cli(root, "ask", "这个字段该不该允许为空？");
+  const out = cli(root, "ask", "这个字段该不该允许为空？", "--kind", "owner");
   assert.equal(out.code, 0, out.stdout);
   const qs = listQuestions(db);
   assert.equal(qs.length, 1, "问题要真的落库");
@@ -58,14 +58,14 @@ test("ask：任务会被暂停——问完继续猜是把纪律当摆设", () =>
   const { db, reqId } = initFlow(root);
   const t = newTask(db, root, reqId);
   taskClaim(db, root, { id: t.id }, "agent");
-  cli(root, "ask", "选 A 还是 B？", "--options", "A,B");
+  cli(root, "ask", "选 A 还是 B？", "--kind", "owner", "--options", "A,B");
   assert.equal(getTask(db, t.id).status, "parked", "问了就该停下等回答，而不是接着干");
 });
 
 test("ask：手上没活、也没给 --task —— 明确拒绝，不编一个任务号", () => {
   const root = makeRepo();
   initFlow(root);
-  const out = cli(root, "ask", "没问题也要问？");
+  const out = cli(root, "ask", "没问题也要问？", "--kind", "owner");
   assert.equal(out.code, 1);
   assert.equal(out.json?.code, "E_NO_TASK");
   assert.ok(out.json?.hint, "失败必须带 hint（统一契约）");
@@ -78,11 +78,11 @@ test("ask：未答问题最多 3 条，第 4 条只记事件（否则提问变�
   taskClaim(db, root, { id: t.id }, "agent");
   // 配额按「未答问题条数」算，不按任务状态算：任务 parked 了也照样能追问
   for (const q of ["问题一？", "问题二？", "问题三？"]) {
-    const out = cli(root, "ask", q, "--task", t.id);
+    const out = cli(root, "ask", q, "--kind", "owner", "--task", t.id);
     assert.equal(out.code, 0, out.stdout);
     assert.match(out.stdout, /Q-\d+ {2}已提问/, `「${q}」应当真的建出问题：${out.stdout}`);
   }
-  const fourth = cli(root, "ask", "问题四？", "--task", t.id);
+  const fourth = cli(root, "ask", "问题四？", "--kind", "owner", "--task", t.id);
   assert.equal(fourth.code, 0, "配额满不是错误，只是不再建新问题");
   assert.match(fourth.stdout, /配额已满/);
   assert.equal(listQuestions(db).length, 3, "第 4 条不该落库");

@@ -152,7 +152,7 @@ test("ask 记提问的人：任务停手前那个人还认得出来", () => {
   const t = newTask(db, root, reqId, { scope: ["src/a.js"], title: "卡住了" });
   taskClaim(db, root, { id: t.id }, "agent-y");
 
-  ask(db, { taskId: t.id, question: "这个字段该叫啥？" });
+  ask(db, { taskId: t.id, question: "这个字段该叫啥？", kind: "owner" });
   assert.deepEqual(actorsOf(db, "ask"), ["agent-y"]);
 
   const parked = db.prepare("SELECT claimed_by, status FROM tasks WHERE id=?").get(t.id);

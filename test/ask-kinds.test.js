@@ -48,9 +48,10 @@ test("C 类（真要人定）照旧：建问题 + 挂起任务", () => {
   db.close();
 });
 
-test("不给 kind 时沿用老行为（owner），别名也认", () => {
+test("不给 kind 直接拒（不许默认吐一条 Owner 待办），别名仍然认", () => {
   const a = doing();
-  assert.equal(ask(a.db, { taskId: a.task.id, question: "要不要动线上数据？" }).kind, "owner");
+  assert.throws(() => ask(a.db, { taskId: a.task.id, question: "要不要动线上数据？" }), (e) => e.code === "E_ASK_NEEDS_KIND");
+  assert.equal(a.db.prepare("SELECT COUNT(*) c FROM questions").get().c, 0, "拒绝时不许留下问题");
   a.db.close();
   const b = doing();
   assert.equal(ask(b.db, { taskId: b.task.id, question: "权限给谁？", kind: "c" }).kind, "owner");

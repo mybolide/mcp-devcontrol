@@ -29,7 +29,7 @@ export const INSTRUCTIONS = `你是本项目的编码 Agent。工作纪律（由
 2. 改代码前必须 task.claim。**claim 的返回里带 \`context\` —— 那是这个项目的架构、数据约定、怎么加功能、错误怎么处理**，由项目自己的上下文文档生成，直接给你内容而不是路径。开工前先看它，别自己重新摸索一遍项目；它和实际代码冲突时以代码为准，并把冲突告诉人。只改任务 scope 内的文件；不许改 acceptance 或自选命令。
 3. 收尾按交付模式走：先 devcontrol run -- <验收命令>（自己跑也行，但证据必须落在当前这份代码上）；delivery=code 的任务通过后再 devcontrol commit -m "..."（只提交 scope 内文件），delivery=verify 的任务不改文件、不提交，证据通过后直接 task.close。verify 的证据绑定当前 HEAD，工作树必须干净。内核不跑你的测试，只核验命令在契约白名单里、代码版本与证据一致、退出码满足断言。没跑就 close 会被 E_NO_EVIDENCE 拦下；在办期间随时 bootstrap 看 next，它按你实际走到哪一步给下一条命令。
 4. **项目上下文过期要自己交代**：close 时如果内核发现「这次改动碰了上下文没覆盖的东西」（新目录、依赖变了、引用了已不存在的文件），会拒绝并要求 \`contextNote\`——一句话说清你是更新了哪篇、还是为什么不用更新。这不是走过场：规范过期了还在被当成权威，比没有规范更糟。
-5. 遇到歧义用 ask，不要猜。
+5. **技术判断归你自己，不要转嫁给用户**：技术方案、架构实现、任务拆解、怎么修 bug，都由你按「符合现有架构、风险最低、可逆」的原则自己定，不需要 ask。外部依赖失败（装不上、服务挂了、工具不可用）先自己重试 / 降级 / 等待，把结果记成证据。只有**产品方向、权限扩大、验收合同变化、不可逆操作（删数据/改历史/发布）**这几类才 request Owner 决策，而且必须用 ask kind=owner 并写清：遇到什么、你试过什么、为什么不能自己办、你推荐的方案、需要他定的那唯一一件事。你做的每个自主决策都要在 close 的 changes 或 resolvedBy 里写明理由。
 6. bootstrap 返回的 console 地址就是 Owner 控制台：MCP 启动时自动拉起、挂掉时 bootstrap 自动重建。把它转告 Owner 即可，人不需要手动启动或重启。
 7. memory 是**这个项目自己的经验库**（存在本仓库 .devcontrol/memory.db，不写远程）：踩到的坑/解法、定下的约定、踩过的 SDK 怪癖，随时可以 memory.write（title + body + kind/tags）；动手前先用 memory.search 查一下。任务失败过（bootstrap.task.reviewRound > 0）时，task.close 必须带 resolvedBy，内核会自动记一条 pitfall。
 8. path.create 只创建 Path 草案，不冻结契约、不授予写权限；创建后必须等待 Owner 审查并批准，不能把草案当成已授权范围。
@@ -119,7 +119,7 @@ export async function dispatch(db, root, args, ctx = {}) {
     "task.claim": ["id"],
     "evidence.record": ["command"],
     "task.renew": ["id"],
-    ask: ["taskId", "question"],
+    "ask": ["taskId", "question", "kind"],
     "bug.report": ["title", "symptom"],
     "release.create": ["title"],
     "release.plan": ["id"],

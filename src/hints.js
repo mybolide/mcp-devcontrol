@@ -51,6 +51,7 @@ const HINTS = {
   E_ABANDONED: "这条任务已经随需求一起作废了（Owner 决定这件事不做）。别再领它；要做就直接提一条新需求。",
   E_PARKED: "这条任务连续失败被挂起了。先看是谁的问题：如果上次失败是代码/证据类（例如验收没过），devcontrol task rework T-00x 自己重试就行，不用叫人；如果是授权类（没批、契约不符、Owner 拒绝），那只能等 Owner。",
   E_ASK_NOT_OWNER: "这类问题不该问：技术选型、怎么拆任务、怎么修——你自己决定，并在 close 的 changes / resolvedBy / contextNote 里交代清楚。只有超范围、新权限、不可逆数据操作、产品方向、真金白银才进 Owner 待办。",
+  E_ASK_NEEDS_KIND: "ask 必须说明是哪类问题：decision（技术选择，自己定，不该问）/ external（外部阻塞，自己重试降级）/ owner（只有人能定：产品方向、权限、合同、不可逆操作）。不写 kind 就不建 Owner 待办——这是为了防止把研发判断转嫁给用户。",
   E_NEEDS_OWNER: "这条卡在授权/协作问题上（没批、契约不符、Owner 拒绝、别人持有、被废弃），多试几次也不会变：把它交给 Owner，别硬试。",
   E_REWORK_EXHAUSTED: "自主返工次数用完了。别再试了——把返回里的 report（试过什么、卡在哪）整理成人话交给 Owner，这是该他看的唯一一件事。",
   E_CLAIM_ACTIVE: "这条任务的租约还没到期，可能真的有人在干：能续就 task.renew，确实要接手就等租约过期再 task.resume。",
