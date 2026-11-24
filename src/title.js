@@ -27,6 +27,7 @@ export function humanAssertionTitle(assertion) {
 
   if (/^cargo\s+clippy\b/.test(command)) return who ? `${who} 的 Clippy 零告警` : "Clippy 零告警";
   if (/^cargo\s+test\b/.test(command)) return who ? `跑通 ${who} 的测试` : "跑通 Rust 测试（全工作区）";
+  if (/^cargo\s+fmt\b/.test(command)) return who ? `${who} 的格式检查通过` : "格式检查通过";
   if (/^cargo\s+(build|check)\b/.test(command)) return who ? `编译通过（${who}）` : "编译通过";
   if (/^git\s+diff\s+--check\b/.test(command)) return "改动里没有空白错误";
   if (/^node\s+--test\b/.test(command)) {
@@ -40,6 +41,8 @@ export function humanAssertionTitle(assertion) {
   if (/^pytest\b/.test(command)) return "跑通 Python 测试";
   if (/^go\s+test\b/.test(command)) return "跑通 Go 测试";
   if (/^mvn\b|^gradle\b/.test(command)) return "跑通 Java 构建与测试";
+  // 一行 node -e 的校验脚本：人名不知道它验什么，但它确实是"项目自带的那条检查"
+  if (/^node\s+-e\b/.test(command)) return "跑通项目自带的校验脚本";
   // 认不出来就老实说：跑通这条命令，括号里给原文，人还能自己判断
   const short = command.length > 60 ? `${command.slice(0, 57)}…` : command;
   return `跑通 ${short}`;

@@ -16,6 +16,8 @@ test("常见命令翻成人话", () => {
     ["npm --prefix apps/desktop run build :: exit==0", "构建 apps/desktop"],
     ["node --test docs/spikes/x.test.mjs :: exit==0", "跑通 docs/spikes/x.test.mjs"],
     ["go test ./... :: exit==0", "跑通 Go 测试"],
+    ["cargo fmt --all -- --check :: exit==0", "格式检查通过"],
+    ["node -e \"process.exit(0)\" :: exit==0", "跑通项目自带的校验脚本"],
   ];
   for (const [assertion, expected] of cases) {
     assert.equal(humanAssertionTitle(assertion), expected, assertion);
