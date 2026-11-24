@@ -178,6 +178,17 @@ export function taskCreate(db, root, input, actor = "agent") {
       fail("INVALID_ARGUMENT", `未知交付模式 ${rawDelivery}，可用 ${DELIVERIES.join(" / ")}（code=交出提交，verify=只跑验收、不交代码）`);
     }
     const id = `T-${String(n).padStart(3, "0")}`;
+    // base_head 决定收口时扫哪一段提交，语义必须是「这条任务开始时的 HEAD」。
+    // 早先这里取 Path 的契约提交——它可能比任务开始早很多，于是区间里混进邻居任务、
+    // 甚至已经放弃的任务留下的历史提交；只要那些提交的 owner 判定稍有出入，
+    // 本任务就被报「无主提交」（B-002）。取不到 HEAD（弱模式）才退回契约提交。
+    const baseHead = (() => {
+      try {
+        return head(root) || p.contract_commit || "";
+      } catch {
+        return p.contract_commit ?? ""; // 弱模式（没有 git）：退回契约提交，close 会按弱模式处理
+      }
+    })();
     db.prepare(
       "INSERT INTO tasks(id,requirement_id,path_id,kind,delivery,title,status,scope_json,acceptance_json,depends_on_json,budget_lines,base_head,contract_hash,contract_commit,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
     ).run(
@@ -195,7 +206,7 @@ export function taskCreate(db, root, input, actor = "agent") {
       // Owner 调过的可能是 12000。于是 claim 下发的规范说「不超过 12000 行」，
       // 同一个响应里的 budgetLines 却是 400——Agent 照大的写，收口被内核自己数落（T-101）。
       Number(input.budgetLines ?? body.budgetLines ?? p.budget_lines ?? 1200),
-      p.contract_commit ?? "",
+      baseHead,
       p.hash,
       p.contract_commit ?? "",
       now(),
@@ -594,6 +605,10 @@ export async function taskClose(db, root, input, opts = {}) {
         .filter(Boolean)[0];
       if (firstMine) {
         const parent = git(root, ["rev-parse", `${firstMine}^`]).trim();
+        // 判断方向不能反：要问的是「base_head 是不是这个 parent 的后代」，
+        // 也就是 parent 早于/等于 base_head —— 这时把起点往前挪一格，才找得到
+        // 「base_head 被推到任务提交之后」而消失的提交。反过来写（isAncestor(base_head, parent)）
+        // 会在正常情况下把起点往前推到首个提交的父提交，把区间里的无主提交一起跳过（等于放宽门禁）。
         if (parent && isAncestor(root, parent, rangeBase)) rangeBase = parent;
       }
     } catch {
@@ -601,10 +616,13 @@ export async function taskClose(db, root, input, opts = {}) {
     }
     const commits = decorate(root, logCommits(root, `${rangeBase}..HEAD`));
     owned = commits.filter((c) => c.trailer === t.id || (!isApprove(c) && c.patch && db.prepare("SELECT 1 FROM patch_ids WHERE patch_id=? AND task_id=?").get(c.patch, t.id)));
-    // git 的时间只到秒，claim/closed 是毫秒：统一按秒比较，否则同一秒内的提交会被判成无主
-    const secFloor = (iso) => {
-      const t = Date.parse(iso ?? 0);
-      return Number.isFinite(t) ? Math.floor(t / 1000) * 1000 : 0;
+    // git 的时间只到秒，claim/closed 是毫秒：统一按秒比较，否则同一秒内的提交会被判成无主。
+    // 入参既可能是 ISO 字符串，也可能是数字（「放弃的任务没有任何时间列」时退到 Date.now()）：
+    // 早先只认字符串，Date.parse(数字) → NaN → 0，整个窗口塌成 1970，
+    // 于是被放弃任务的历史提交全被判「晚于窗口」→ 无主，把下一条任务的收口堵死（B-002）。
+    const secFloor = (v) => {
+      const n = v == null ? 0 : typeof v === "number" ? v : Date.parse(v);
+      return Number.isFinite(n) ? Math.floor(n / 1000) * 1000 : 0;
     };
     const validOwner = (c) => {
       if (!c.trailer || !taskExists(db, c.trailer)) return false;
