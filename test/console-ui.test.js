@@ -160,9 +160,15 @@ test("需求页不再把验收命令原文贴两遍，改成说人话", () => {
   const reqs = script.slice(script.indexOf("function renderReqs"), script.indexOf("function renderDocs"));
   assert.equal(reqs.includes("pth.testCmds.map(esc)"), false, "Path 列不该再贴验收命令原文");
   assert.match(reqs, /r\.acceptanceHuman \|\| r\.acceptance/, "验收列要用人话标题");
+  // 窄屏踩过的坑：901–1100 的表格 min-width:860 和 ≤900 的卡片模式同时生效，
+  // 整页被撑出横向滚动、每格压成一条竖线。两边断点必须互斥，卡片模式要关掉固定列宽。
+  assert.equal(src.includes("@media (min-width: 901px) and (max-width: 1100px)"), true, "表格最小宽度只能在 901–1100 生效");
+  // colgroup 在卡片模式下不会失效（还会锁列宽、把格子压成竖条），列宽只能写在 th 上
+  assert.equal(src.includes("<colgroup>"), false, "别用 colgroup：窄屏藏表头时它不失效");
+  assert.match(src, /#reqs-table th:nth-child\(2\) \{ width: 24%; \}/, "列宽要写在 th 上（表上开 table-layout: fixed）");
+  assert.equal(src.includes("#reqs-table { table-layout: auto; }"), true, "窄屏卡片模式要关掉固定列宽");
   assert.match(reqs, /title="\$\{esc\(r\.acceptance\[i\] \?\? a\)\}"/, "原文要留在 title 上，能核对");
-  assert.equal(src.includes("<colgroup>"), true, "需求表要用百分比列宽，宽屏才摊得开");
-  assert.match(src, /#reqs \{ table-layout: fixed; \}/, "固定列宽表：内容长短不再互相挤压");
+  assert.match(src, /#reqs-table \{ table-layout: fixed; \}/, "固定列宽表：内容长短不再互相挤压");
 });
 
 test("交付记录点开就不能被自动刷新合上（详情弹窗同理）", () => {

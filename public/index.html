@@ -122,22 +122,34 @@
       th { text-align: left; font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: #6b7c92; font-weight: 700; padding: 8px 8px; border-bottom: 1px solid #e6ebf2; }
       td { padding: 9px 8px; border-bottom: 1px solid #eef1f5; color: #26364a; vertical-align: top; word-break: normal; overflow-wrap: anywhere; }
       th { white-space: nowrap; }
-      /* 需求表按百分比分配列宽（见 HTML 里的 colgroup）：内容长短不再互相挤压，
-         长路径只在放不下时才断行，不会把整串路径拆成一条竖线。 */
-      #reqs { table-layout: fixed; }
+      /* 需求表按百分比分配列宽：内容长短不再互相挤压，长路径只在放不下时才断行。
+         宽度写在 th 上而不是 colgroup——窄屏 thead 一藏，列宽规则跟着失效；
+         colgroup 不会失效，卡片模式下仍锁着列宽、把格子压成竖条（实测踩过）。 */
+      #reqs-table { table-layout: fixed; }
+      #reqs-table th:nth-child(1) { width: 6%; }
+      #reqs-table th:nth-child(2) { width: 24%; }
+      #reqs-table th:nth-child(3) { width: 9%; }
+      #reqs-table th:nth-child(4) { width: 22%; }
+      #reqs-table th:nth-child(5) { width: 24%; }
+      #reqs-table th:nth-child(6) { width: 15%; }
       #tasks td:nth-child(3) { min-width: 220px; }
       #tasks td:nth-child(5) { min-width: 280px; }
       #reqs td:nth-child(1), #tasks td:nth-child(1), #reqs td:nth-child(3) { white-space: nowrap; }
       /* 窄屏别把表格压成一条：让卡片内部横向滚动，表结构保持不变
          （早先试过 table{display:block} —— 那会把列拆散、只剩前两列，比挤压更糟） */
       .panel { overflow-x: auto; }
-      @media (max-width: 1100px) {
+      /* 中屏（901–1100）保留表结构、让卡片内部横向滚动：
+         下限只在这个区间要，别和下面的「窄屏卡片模式」打架 */
+      @media (min-width: 901px) and (max-width: 1100px) {
         .panel table { min-width: 860px; }
       }
       /* 短列（ID/类型/状态/操作）按内容收窄，把余量让给标题与现象 */
       td.nw { white-space: nowrap; }
-      /* 窄屏：表格改成一条条卡片，不横向挤压 */
+      /* 窄屏：表格改成一条条卡片，不横向挤压。
+         固定列宽要关掉，否则 th 的百分比仍会把每个格子压成竖线（实测踩过） */
       @media (max-width: 900px) {
+        #reqs-table { table-layout: auto; }
+        .panel table { min-width: 0; }
         thead { display: none; }
         tbody tr { display: block; padding: 12px 0; border-bottom: 1px solid #eef1f5; }
         tbody td { display: block; width: auto !important; border: 0; padding: 2px 0; white-space: normal; }
@@ -327,12 +339,9 @@
           <p class="sub">需求是一等对象：每条需求绑一条 Path（批准时冻结验收命令），这里看它的验收覆盖和落在它下面的任务。</p>
         </div>
         <div class="panel">
-          <table>
-            <!-- 列宽按百分比固定：内容长短不再互相抢宽度，宽屏自动摊开 -->
-            <colgroup>
-              <col style="width: 6%"><col style="width: 24%"><col style="width: 9%">
-              <col style="width: 22%"><col style="width: 24%"><col style="width: 15%">
-            </colgroup>
+          <table id="reqs-table">
+            <!-- 列宽写在 th 上（见 CSS）：窄屏 thead 一隐藏，列宽规则自然失效，
+                 不会像 colgroup 那样在卡片模式下还锁着列宽 -->
             <thead><tr><th>ID</th><th>标题</th><th>状态</th><th>Path</th><th>验收覆盖</th><th>关联任务</th></tr></thead>
             <tbody id="reqs"></tbody>
           </table>
