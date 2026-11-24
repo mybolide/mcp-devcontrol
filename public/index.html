@@ -327,7 +327,7 @@
         </div>
         <div class="panel">
           <table>
-            <thead><tr><th>ID</th><th>类型</th><th>标题</th><th>状态</th><th>验收</th><th>操作</th></tr></thead>
+            <thead><tr><th>ID</th><th>类型</th><th>标题</th><th>状态</th><th>验收结论（这次做了什么）</th><th>操作</th></tr></thead>
             <tbody id="tasks"></tbody>
           </table>
         </div>
@@ -938,9 +938,32 @@
         const open = openDetails.has(t.id) ? " open" : "";
         return `<details style="margin-top:8px" data-details="${t.id}"${open}><summary>交付记录 ${history.length} 次</summary>${completionBlocks(history)}</details>`;
       }
+      /**
+       * 任务列表里给人看的是**结论**，不是机器看的验收命令。
+       * 人想知道的是「这条活干完了没有、交付了什么、还欠什么」；
+       * 那串 `cargo test --workspace --locked :: exit==0` 只在「详情」弹窗里给机器和复核的人看。
+       */
+      function verdictCell(t) {
+        const c = (t.completions ?? [])[0];
+        if (t.status === "done" && c) {
+          const out = [`<div>${esc(c.summary)}</div>`];
+          if (c.changes && c.changes !== "无") out.push(`<div class="mu">改动：${esc(c.changes)}</div>`);
+          if (c.limitations && c.limitations !== "无") out.push(`<div class="mu">遗留：${esc(c.limitations)}</div>`);
+          if (c.delivery === "verify") out.push(`<div class="mu">纯验证交付（没有代码改动）</div>`);
+          return out.join("");
+        }
+        if (t.status === "done") return `<div class="mu">交付记录：未记录</div>`;
+        const why =
+          t.status === "parked"
+            ? "挂起：连续失败，已停下等处理"
+            : t.status === "doing"
+              ? "在办：还没收口"
+              : "待办：还没收口";
+        return `<div class="mu">${why}</div>`;
+      }
       function taskRow(t) {
         return `<tr><td class="mono nw">${esc(t.id)}</td><td class="nw">${esc(KIND_TEXT[t.kind] ?? t.kind)}${t.delivery === "verify" ? ` <span class="pill" title="verify 交付：只跑验收，不交代码">verify</span>` : ""}</td><td>${esc(t.title)}</td><td class="nw">${tag(t.status)}</td>
-          <td class="mu">${t.acceptance.map((a) => esc(a.assertion)).join("<br>")}${completionCell(t)}</td>
+          <td>${verdictCell(t)}</td>
           <td class="nw"><div class="row inline">
             <button class="btn" data-detail="${t.id}" title="看这条任务的完整信息与交付记录（弹窗不会被自动刷新关掉）">详情</button>
             ${t.status === "backlog" || t.status === "parked" ? `<button class="btn" data-rank="${t.id}" title="置顶：内核挑活时会先看它（顺序就是优先级）">置顶</button>` : ""}
