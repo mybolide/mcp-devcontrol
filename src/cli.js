@@ -18,6 +18,7 @@ import { acceptScopeWarnings } from "./acceptance.js";
 import { taskRework, taskResume } from "./rework.js";
 import { setPathUnion } from "./store.js";
 import { pathPrunePreview } from "./store.js";
+import { taskStatus, acceptanceStatus } from "./inspect.js";
 import { isVendorPath, vendorIgnores } from "./vendor.js";
 import {
   demoteMemory,
@@ -582,6 +583,24 @@ export function cmdTask(args) {
     console.log(`需求 ${task.requirement_id} · Path ${task.path_id} · scope: ${task.scope.join(", ") || "(未设)"}`);
     // verify 交付没有提交可看，写清楚：否则 review 的人会以为「怎么没提交」是漏了。
     if (task.delivery === "verify") console.log("交付：verify（只跑验收，不交代码；故意没有提交）");
+    // 一次给全：验收结果（每条最后一条证据过没过）+ 失败与返工历史。
+    // 这些数据内核一直有，以前只能翻 .devcontrol/runs 或问人。
+    const acc = acceptanceStatus(db, task.id);
+    if (acc.items.length) {
+      console.log("验收：");
+      for (const it of acc.items) {
+        const mark = it.passed === null ? "未跑" : it.passed ? "过" : "没过";
+        console.log(`  · [${mark}] ${it.assertion}${it.runId ? `（${it.runId} @ ${it.head ?? "?"}）` : ""}`);
+      }
+    }
+    const st = taskStatus(db, task.id);
+    if (st.failures.length || st.reworks.length) {
+      console.log(
+        `返工：失败 ${st.failures.length} 次，自主返工 ${st.reworks.length} 次（${st.state.state}，${st.state.owner === "agent" ? "Agent 自己处理" : "等 Owner"}）`,
+      );
+      const last = st.failures[st.failures.length - 1];
+      if (last) console.log(`  最后一次：${last.code} · ${last.at}`);
+    }
     if (!history.length) {
       console.log(
         task.status === "done"

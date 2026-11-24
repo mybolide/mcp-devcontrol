@@ -20,6 +20,7 @@ import { generalizeHint, memoryConfig, openMemory, recallMemories, rememberAndIn
 import { createRelease, planRelease, shipRelease } from "./release.js";
 import { registerChatOwnerApproval } from "./chat-owner-approval-mcp.js";
 import { taskRework, taskResume } from "./rework.js";
+import { taskStatus, acceptanceStatus } from "./inspect.js";
 
 export const TOOL_NAME = "devcontrol";
 
@@ -47,6 +48,7 @@ export const ACTIONS = [
   "task.close",
   "task.rework",
   "task.resume",
+  "task.status",
   "evidence.record",
   "bug.report",
   "ask",
@@ -111,6 +113,7 @@ export async function dispatch(db, root, args, ctx = {}) {
     "task.create": ["requirementId", "pathId", "title"],
     "path.create": ["requirementId"],
     "task.close": ["summary", "changes", "limitations"],
+    "task.status": ["id"],
   "task.rework": ["id"],
   "task.resume": ["id"],
     "task.claim": ["id"],
@@ -186,6 +189,13 @@ export async function dispatch(db, root, args, ctx = {}) {
       return taskRework(db, { id: args.id, note: args.note ?? args.reason, actor: args.actor ?? process.env.DEVCONTROL_ACTOR ?? "agent" });
     case "task.resume":
       return taskResume(db, { id: args.id, actor: args.actor ?? process.env.DEVCONTROL_ACTOR ?? "agent" });
+    case "task.status":
+      // 一条查询拿全：状态机、可返工性、验收结果、失败与返工历史
+      return (() => {
+        const st = taskStatus(db, args.id);
+        if (!st) fail("NOT_FOUND", `任务不存在：${args.id}`);
+        return { ...st, acceptanceStatus: acceptanceStatus(db, args.id) };
+      })();
     case "bug.report":
       return bugReport(db, args, args.actor ?? process.env.DEVCONTROL_ACTOR ?? "agent");
     case "ask":

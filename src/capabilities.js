@@ -149,6 +149,7 @@ export const CAPABILITIES = [
   { name: "批准需求 + 冻契约", action: null, mcp: null, cli: { sub: "approve", flags: ["req", "path"] }, console: "approve" },
   { name: "改需求验收", action: null, mcp: null, cli: null, console: "amend" },
   { name: "调任务的 scope / 预算", action: null, mcp: null, cli: null, console: "adjust" },
+  { name: "查任务状态（状态/验收/失败/返工）", action: "task.status", mcp: ["id"], cli: { sub: "task show", flags: [] }, console: null },
   { name: "自主返工（挂起的任务自己重试）", action: "task.rework", mcp: ["id", "note"], cli: { sub: "task rework", flags: ["note"] }, console: null },
   { name: "崩溃后恢复（释放过期租约）", action: "task.resume", mcp: ["id"], cli: { sub: "task resume", flags: [] }, console: null },
   { name: "看 Path 契约里名不副实的命令（只读）", action: null, mcp: null, cli: { sub: "path prune-preview", flags: [] }, console: "path.prune-preview" },
