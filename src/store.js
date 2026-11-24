@@ -2,7 +2,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { logEvent, metaGet, metaSet, nextId, tx } from "./db.js";
-import { commitContract, contractBody, parseAssertion, readContract } from "./contract.js";
+import { commitContract, contractBody, contractCommands, parseAssertion, readContract } from "./contract.js";
 import { inScope } from "./fingerprint.js";
 import { logCommits, numstat, trailers } from "./git.js";
 import { sha256 } from "./fingerprint.js";
@@ -10,6 +10,45 @@ import { assertionCommand, detectTestCmds, retargetAssertion } from "./testcmd.j
 import { assertScopeInsideRepo, assertScopeIsSpecific } from "./scope.js";
 import { listCompletionsForTasks } from "./completion.js";
 import { forceCloseCompletionInput, insertCompletion } from "./completion.js";
+import { commandPaths, pathInScope } from "./acceptance.js";
+
+/**
+ * 只读预览：这条 Path 的契约里，哪些命令其实碰不到它被授权的范围。
+ *
+ * 为什么需要它：批准 Path 时内核曾把**需求验收的全部命令**并进契约，于是 P-002
+ * （只授权 docs/spikes）带着 `cargo test -p agent-studio-acp` 和 `apps/desktop` 构建。
+ * 这既是「按命令挑 Path」失灵的根源，也是「别的阶段的任务被迫跑本阶段之外的验收」的根源。
+ *
+ * 这里**一个字节都不写**：摘命令等于改一份 Owner 已批准的契约，只能由人确认后另走
+ * 一次 amend（那会留下新的契约提交和审计）。先看清楚再决定，比事后解释便宜。
+ */
+export function pathPrunePreview(db, root, { pathId }) {
+  const p = getPath(db, pathId);
+  if (!p) fail("NOT_FOUND", `Path 不存在：${pathId}`);
+  if (p.status !== "approved") fail("E_NEED_APPROVED", `${p.id} 当前 ${p.status}，只有已批准的 Path 才有契约可看`);
+  const body = readContract(root, p.contract_commit, p.id, p.hash).body;
+  const commands = contractCommands(body);
+  const keep = [];
+  const prune = [];
+  for (const command of commands) {
+    const outside = commandPaths(command).filter((f) => !pathInScope(f, p.allowedPaths));
+    if (outside.length) prune.push({ command, outside });
+    else keep.push(command);
+  }
+  return {
+    pathId: p.id,
+    requirementId: p.requirement_id,
+    allowedPaths: p.allowedPaths,
+    contractCommit: p.contract_commit,
+    commands,
+    keep,
+    prune,
+    removable: prune.length,
+    note: prune.length
+      ? "上面这些命令碰的路径都不在 allowedPaths 里：它们多半是同一条需求的其它阶段并进来的。真要摘掉，得 Owner 确认后另走一次 amend（会留下新契约提交与审计）。"
+      : "这条 Path 的命令都落在它自己的授权范围内，没有要摘的。",
+  };
+}
 
 export const now = () => new Date().toISOString();
 export const MIN = 60_000;

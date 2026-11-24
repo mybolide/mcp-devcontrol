@@ -149,6 +149,7 @@ export const CAPABILITIES = [
   { name: "批准需求 + 冻契约", action: null, mcp: null, cli: { sub: "approve", flags: ["req", "path"] }, console: "approve" },
   { name: "改需求验收", action: null, mcp: null, cli: null, console: "amend" },
   { name: "调任务的 scope / 预算", action: null, mcp: null, cli: null, console: "adjust" },
+  { name: "看 Path 契约里名不副实的命令（只读）", action: null, mcp: null, cli: { sub: "path prune-preview", flags: [] }, console: "path.prune-preview" },
   { name: "Bug 裁决", action: null, mcp: null, cli: null, console: "decide" },
   { name: "回答 Agent 的提问", action: null, mcp: null, cli: null, console: "answer" },
   { name: "换人接手任务（释放 + 交接卡）", action: null, mcp: null, cli: null, console: "handoff" },

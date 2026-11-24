@@ -16,6 +16,7 @@ import {
   reqApprove,
   reqAmend,
   pathAdjust,
+  pathPrunePreview,
   pathApprove,
   pathRetest,
   taskAdjust,
@@ -64,6 +65,7 @@ const REQUIRED = {
   "task.rank": ["taskId"],
   "path.adjust": ["pathId"],
   "path.retest": ["pathId"],
+  "path.prune-preview": ["pathId"],
   // 只冻一条 Path（需求已批准时的路径）：同样只走 Owner 通道，不进 MCP dispatcher。
   "path.approve": ["pathId"],
   "memory.promote": ["id"],
@@ -84,6 +86,9 @@ const RAW_ACTIONS = {
   answer: (db, root, p) => answer(db, p),
   override: (db, root, p) => override(db, p),
   "path.adjust": (db, root, p) => pathAdjust(db, root, p),
+  // 只读：看这条 Path 的契约里有哪些命令名不副实（碰的路径不在授权范围内）。
+  // 不进 MCP：它不写任何东西，但也不是 Agent 该操心的事。
+  "path.prune-preview": (db, root, p) => pathPrunePreview(db, root, p),
   "path.retest": (db, root, p) => pathRetest(db, root, p),
   "path.approve": (db, root, p) => pathApprove(db, root, p),
   handoff: (db, root, p) => handoff(db, p, root),

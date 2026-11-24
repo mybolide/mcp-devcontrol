@@ -15,6 +15,7 @@ import { getReq, getTask, mapTask, listTasks, listReqs, listPaths, listDocs, req
 import { hintFor } from "./hints.js";
 import { assertionCommand, detectTestCmds } from "./testcmd.js";
 import { acceptScopeWarnings } from "./acceptance.js";
+import { pathPrunePreview } from "./store.js";
 import { isVendorPath, vendorIgnores } from "./vendor.js";
 import {
   demoteMemory,
@@ -671,6 +672,27 @@ export function cmdPath(args) {
       console.log(`范围：${result.allowedPaths.join(", ")}；预算：${result.budgetLines} 行；新增文件：${result.allowNewFiles ? "允许" : "不允许"}`);
       console.log(`验收命令：\n${result.testCmds.map((command) => `  · ${command}`).join("\n")}`);
       console.log(`契约提交：${result.contractCommit ? result.contractCommit.slice(0, 8) : "弱模式（无回滚点）"}`);
+      return 0;
+    } catch (error) {
+      return failCli(error.message, error.code ?? "E_ERROR", error.data ?? null, 1);
+    }
+  }
+  if (sub === "prune-preview") {
+    // 只读预览：不改契约、不改库。摘命令必须 Owner 确认后另走一次 amend。
+    const pathId = args.slice(1).find((a) => /^P-\d+$/.test(a)) ?? flag("path");
+    if (!pathId) return failCli("用法：devcontrol path prune-preview P-00x", "E_USAGE");
+    try {
+      const r = pathPrunePreview(db, root, { pathId });
+      console.log(`${r.pathId} · 需求 ${r.requirementId ?? "（无）"} · 契约 ${String(r.contractCommit ?? "").slice(0, 8) || "弱模式"}`);
+      console.log(`授权范围：${r.allowedPaths.join("、") || "?"}`);
+      console.log(`\n冻结命令 ${r.commands.length} 条，其中 ${r.removable} 条碰的路径不在授权范围内：`);
+      for (const x of r.prune) console.log(`  ✂ ${x.command}\n      不在范围：${x.outside.join("、")}`);
+      if (!r.removable) console.log("  （无）");
+      if (r.keep.length) {
+        console.log(`\n保留 ${r.keep.length} 条：`);
+        for (const c of r.keep) console.log(`  · ${c}`);
+      }
+      console.log(`\n${r.note}`);
       return 0;
     } catch (error) {
       return failCli(error.message, error.code ?? "E_ERROR", error.data ?? null, 1);
