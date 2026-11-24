@@ -1032,13 +1032,42 @@ export function ask(db, input) {
       logEvent(db, { actor, action: "ask.quota", taskId: t.id, code: "E_QUOTA", detail: question });
       return { kind, questionId: null, quotaLeft: 0, note: "配额已满，只记事件" };
     }
+    // Owner 问题必须带着「五要素」：遇到什么 / 试过什么 / 为什么不能自己办 / 推荐方案 /
+    // 需要你定的唯一一件事。前两条内核自己就能补（失败历史、任务号），后三条只有 Agent 知道。
+    // 给了 detail 就把五段写成一条结构化问题；没给就**如实记一条 ask.quality**——
+    // 不拦（拦了会逼人编一句话糊弄），但缺什么必须看得见。
+    const detail = input.detail ?? {};
+    const fails = db.prepare("SELECT code FROM events WHERE task_id=? AND action='close.fail' ORDER BY id DESC LIMIT 3").all(t.id);
+    const autoTried = fails.length ? fails.map((f) => f.code).join("、") : "";
+    const elements = {
+      problem: String(detail.problem ?? question).trim(),
+      tried: String(detail.tried ?? autoTried).trim(),
+      whyNot: String(detail.whyNot ?? "").trim(),
+      recommendation: String(detail.recommendation ?? "").trim(),
+      decision: String(detail.decision ?? "").trim(),
+    };
+    const missing = Object.entries(elements).filter(([, v]) => !v).map(([k]) => k);
+    const composed = missing.length
+      ? question
+      : [
+          `遇到什么问题：${elements.problem}`,
+          `已经试过什么：${elements.tried}`,
+          `为什么不能自己办：${elements.whyNot}`,
+          `我推荐的方案：${elements.recommendation}`,
+          `需要你定的唯一一件事：${elements.decision}`,
+        ].join("\n");
     const n = Number(metaGet(db, "counter:Q") ?? 0) + 1;
     const id = `Q-${String(n).padStart(3, "0")}`;
     const expires = new Date(Date.now() + 24 * 3600_000).toISOString();
-    db.prepare("INSERT INTO questions(id,task_id,question,options_json,status,expires_at) VALUES(?,?,?,?,?,?)").run(id, t.id, question, JSON.stringify(input.options ?? []), "open", expires);
+    db.prepare("INSERT INTO questions(id,task_id,question,options_json,status,expires_at) VALUES(?,?,?,?,?,?)").run(id, t.id, composed.slice(0, 2000), JSON.stringify(input.options ?? []), "open", expires);
     db.prepare("INSERT INTO meta(key,value) VALUES('counter:Q',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(String(n));
     db.prepare("UPDATE tasks SET status='parked', claimed_by=NULL, claim_expires_at=NULL WHERE id=? AND status='doing'").run(t.id);
     logEvent(db, { actor, action: "ask", taskId: t.id, detail: id });
-    return { kind, questionId: id, expiresAt: expires, quotaLeft: 2 - open };
+    if (missing.length) {
+      // 缺要素不拦，但要留痕：控制台上这条问题会显示「缺什么」，
+      // 否则「Agent 把研发判断转嫁给用户」这件事永远没人统计得出来。
+      logEvent(db, { actor, action: "ask.quality", taskId: t.id, code: "E_ASK_INCOMPLETE", detail: `${id} 缺 ${missing.join("、")}` });
+    }
+    return { kind, questionId: id, expiresAt: expires, quotaLeft: 2 - open, elements, missing };
   });
 }

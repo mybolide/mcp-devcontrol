@@ -83,6 +83,16 @@ export const SCHEMA = {
   symptom: z.string().optional(),
   expected: z.string().optional(),
   note: z.string().optional().describe("task.rework：这次打算怎么改（一句话，会进审计与报告）"),
+  detail: z
+    .object({
+      problem: z.string().optional().describe("ask kind=owner：遇到什么问题"),
+      tried: z.string().optional().describe("ask kind=owner：已经试过什么（不给就由内核从失败历史补）"),
+      whyNot: z.string().optional().describe("ask kind=owner：为什么不能自己办"),
+      recommendation: z.string().optional().describe("ask kind=owner：你推荐的方案"),
+      decision: z.string().optional().describe("ask kind=owner：需要 Owner 定的那一件事"),
+    })
+    .optional()
+    .describe("ask kind=owner 的五要素；缺了不拦，但会在控制台标出缺什么"),
   repro: z.array(z.string()).optional(),
   severity: z.string().optional(),
   resolvedBy: z.string().optional().describe("失败过的任务必填：一句话说清最后怎么解决的（自动写进通用记忆）"),
