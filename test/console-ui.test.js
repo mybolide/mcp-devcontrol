@@ -140,3 +140,18 @@ test("需求页要列出这条需求的全部 Path，不能只取第一条", () 
   assert.match(reqs, /\$\{allPaths\}/, "全部 Path 要渲染出来");
   assert.doesNotMatch(reqs, /s\.paths\.find\(\(x\) => x\.requirement_id === r\.id\)/, "不许再只取第一条");
 });
+
+test("交付记录点开就不能被自动刷新合上（详情弹窗同理）", () => {
+  // 真实现场：点开「交付记录」的 <details>，4 秒后 tick 重绘整张表把它合上，
+  // 人只看到闪一下——于是以为「详情根本没做」。展开状态必须跨重绘记住。
+  assert.match(script, /const openDetails = new Set\(\)/, "展开状态要存起来");
+  assert.match(script, /data-details="\$\{t\.id\}"\$\{open\}/, "重绘时要还原 open 属性");
+  assert.match(script, /addEventListener\(\s*"toggle"/, "<details> 的 toggle 不冒泡，只能在捕获阶段听");
+  // 详情/表单开着时不要在底下重绘：刷掉等于「自己把人的窗关了」
+  assert.match(script, /if \(!force && document\.querySelector\("dialog\[open\]"\)\) return;/, "有弹窗时要暂停自动刷新");
+  assert.match(script, /b\.dataset\.detail\)/, "详情按钮要有 handler（每个 data-* 都得有人接）");
+  // id 撞车的教训：收件箱那个说明文本框原来就叫 detail，和详情弹窗抢同一个 id，
+  // getElementById 拿到的是文本框，showModal 直接抛错——弹窗永远打不开。
+  assert.equal(src.includes('id="detail"'), false, 'id="detail" 已被占用过，别再和收件箱文本框撞名');
+  assert.match(src, /id="task-detail"/, "详情弹窗要用独占的 id");
+});

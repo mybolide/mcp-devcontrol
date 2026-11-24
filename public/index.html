@@ -281,7 +281,7 @@
             <select id="kind"><option value="requirement">需求</option><option value="bug">Bug</option></select>
             <input id="title" placeholder="标题" />
           </div>
-          <textarea id="detail" rows="3" placeholder="目标 / 现象（需求填目标，Bug 填复现步骤）"></textarea>
+          <textarea id="intake-detail" rows="3" placeholder="目标 / 现象（需求填目标，Bug 填复现步骤）"></textarea>
           <div class="form-row" style="margin-top: 8px">
             <input id="assertion" placeholder="验收断言，例如 npm test :: exit==0" />
             <button class="btn primary" id="create" style="flex: 0 0 auto">提交</button>
@@ -441,6 +441,16 @@
           </div>
         </form>
       </dialog>
+      <dialog class="sheet" id="task-detail">
+        <div class="sheet-inner">
+          <h2 id="task-detail-title"></h2>
+          <p class="desc" id="task-detail-desc" hidden></p>
+          <div id="task-detail-body"></div>
+        </div>
+        <div class="sheet-foot">
+          <button class="btn" type="button" id="task-detail-close">关闭</button>
+        </div>
+      </dialog>
     </main>
     <script>
       const $ = (id) => document.getElementById(id);
@@ -485,6 +495,9 @@
       const VIEWS = { inbox: "收件箱", reqs: "需求", bugs: "Bug", tasks: "任务", release: "发布", memory: "记忆", docs: "文档", evidence: "证据", weekly: "周报", settings: "设置" };
       let currentProject = localStorage.getItem("devcontrol.project") || "";
       let lastState = null;
+      // 哪些任务的交付记录正展开着。4 秒一次的自动刷新会把整张表重绘，
+      // 不记住这个状态，人点开刚看两行就被刷新合上了。
+      const openDetails = new Set();
       // 局域网访问时链接里带 ?token=xxx：存起来、从地址栏抹掉，之后每个请求都带上。
       // 放 localStorage 而不是 cookie，是为了让别的站点发起的请求带不上它（这样 CSRF 就不成立）。
       {
@@ -840,25 +853,78 @@
        * 交付记录：任务做完了到底交付了什么、凭什么说它过了。
        * 只读后端给的 completion(s)，不在这里拼事实；旧任务没有记录就明确写「未记录」。
        */
-      function completionCell(t) {
-        const history = t.completions ?? [];
-        if (!history.length) return t.status === "done" ? `<div class="mu" style="margin-top:6px">交付记录：未记录</div>` : "";
-        const rows = history
+      /** 交付记录一屏内容：列表里用紧凑版，详情弹窗里用完整版（带 HEAD、runId、提交与时间）。 */
+      function completionBlocks(history, { full = false } = {}) {
+        return history
           .map((r) => {
-            const kind = r.closedBy === "force-close" ? "Owner 强制完成（未经验收）" : "验收通过";
-            const runs = (r.runs ?? []).map((run) => `<div class="mu">${esc(run.command)} → exit ${run.exitCode}</div>`).join("");
+            const kind =
+              r.closedBy === "force-close"
+                ? "Owner 强制完成（未经验收）"
+                : r.delivery === "verify"
+                  ? "验收通过（verify 交付，无提交）"
+                  : "验收通过";
+            const runs = (r.runs ?? [])
+              .map(
+                (run) =>
+                  `<div class="mu mono">${esc(run.command)} → exit ${run.exitCode}${full && run.head ? ` · HEAD ${esc(String(run.head).slice(0, 8))}` : ""}${full && run.runId ? ` · ${esc(run.runId)}` : ""}</div>`,
+              )
+              .join("");
+            const commits =
+              full && (r.commits ?? []).length
+                ? `<div class="mu">提交：${r.commits.map((c) => `<span class="mono">${esc(String(c.sha).slice(0, 8))}</span>`).join("、")}</div>`
+                : "";
             return `<div style="margin-top:8px"><b>第 ${r.sequence} 次 · ${kind}</b>
               <div>${esc(r.summary)}</div>
               <div class="mu">改动：${esc(r.changes)}</div>
-              <div class="mu">遗留：${esc(r.limitations)}</div>${runs}</div>`;
+              <div class="mu">遗留：${esc(r.limitations)}</div>${runs}${commits}${
+                full ? `<div class="mu">${esc(r.closedAt ?? "")} · ${esc(r.actor ?? "")}</div>` : ""
+              }</div>`;
           })
           .join("");
-        return `<details style="margin-top:8px"><summary>交付记录 ${history.length} 次</summary>${rows}</details>`;
+      }
+      /** 详情弹窗：这条任务的完整信息 + 全部交付记录（只读，刷新不会把它关掉）。 */
+      function openDetail(t) {
+        const dlg = $("task-detail");
+        $("task-detail-title").textContent = `${t.id} · ${t.title}`;
+        const desc = $("task-detail-desc");
+        desc.hidden = false;
+        desc.textContent = [
+          STATUS_TEXT[t.status] ?? t.status,
+          KIND_TEXT[t.kind] ?? t.kind,
+          t.delivery === "verify" ? "verify（只跑验收，不交代码）" : "code（要交归属提交）",
+          `需求 ${t.requirement_id}`,
+          `Path ${t.path_id}`,
+        ].join(" · ");
+        const rows = [];
+        const row = (k, v) => rows.push(`<tr><th style="width:96px">${k}</th><td>${v}</td></tr>`);
+        row("改动范围", (t.scope ?? []).map((x) => esc(x)).join("<br>") || "—");
+        row("行数", `${t.changed_lines ?? 0} 已用 / ${t.budget_lines ?? "—"} 上限`);
+        row("验收命令", (t.acceptance ?? []).map((a) => `<span class="mono">${esc(a.assertion)}</span>`).join("<br>") || "—");
+        if (t.review_round) row("返工", `${t.review_round} 次`);
+        if (t.claimed_by) row("领取者", esc(t.claimed_by));
+        if (t.created_at) row("创建", esc(t.created_at));
+        if (t.closed_at) row("收口", `${esc(t.closed_by ?? "evidence")} · ${esc(t.closed_at)}`);
+        const history = t.completions ?? [];
+        const body = history.length
+          ? completionBlocks(history, { full: true })
+          : `<div class="empty">${
+              t.status === "done" ? "这条任务没有交付记录（交付记录功能上线前收口的，没有事后补造）" : "还没收口，暂时没有交付记录"
+            }</div>`;
+        $("task-detail-body").innerHTML = `<table>${rows.join("")}</table>
+          <div style="margin:18px 0 0;font-size:12.5px;font-weight:700;color:#344258">交付记录 ${history.length} 次</div>${body}`;
+        if (!dlg.open) dlg.showModal();
+      }
+      function completionCell(t) {
+        const history = t.completions ?? [];
+        if (!history.length) return t.status === "done" ? `<div class="mu" style="margin-top:6px">交付记录：未记录</div>` : "";
+        const open = openDetails.has(t.id) ? " open" : "";
+        return `<details style="margin-top:8px" data-details="${t.id}"${open}><summary>交付记录 ${history.length} 次</summary>${completionBlocks(history)}</details>`;
       }
       function taskRow(t) {
         return `<tr><td class="mono nw">${esc(t.id)}</td><td class="nw">${esc(KIND_TEXT[t.kind] ?? t.kind)}${t.delivery === "verify" ? ` <span class="pill" title="verify 交付：只跑验收，不交代码">verify</span>` : ""}</td><td>${esc(t.title)}</td><td class="nw">${tag(t.status)}</td>
           <td class="mu">${t.acceptance.map((a) => esc(a.assertion)).join("<br>")}${completionCell(t)}</td>
           <td class="nw"><div class="row inline">
+            <button class="btn" data-detail="${t.id}" title="看这条任务的完整信息与交付记录（弹窗不会被自动刷新关掉）">详情</button>
             ${t.status === "backlog" || t.status === "parked" ? `<button class="btn" data-rank="${t.id}" title="置顶：内核挑活时会先看它（顺序就是优先级）">置顶</button>` : ""}
             <button class="btn" data-handoff="${t.id}" title="换人接手：先释放它，再生成一张交接卡">交接</button>
             ${t.status === "done" || t.status === "parked" ? `<button class="btn danger" data-reopen="${t.id}">打回</button>` : ""}
@@ -1087,6 +1153,9 @@
 
       async function tick(force = false) {
         if (document.hidden) return;
+        // 有弹窗开着就先别在底下重绘：详情正读着、表单正填着，被刷掉等于「自己关了」。
+        // 手动点刷新（force）例外，那是明确的动作。
+        if (!force && document.querySelector("dialog[open]")) return;
         try {
           await load(force);
           $("conn").textContent = `已连接 · ${new Date().toLocaleTimeString("zh-CN", { hour12: false })}`;
@@ -1103,6 +1172,12 @@
         const b = e.target.closest("button");
         if (!b) return;
         if (b.id === "refresh") return tick(true);
+        if (b.id === "task-detail-close") return $("task-detail").close();
+        if (b.dataset.detail) {
+          const t = (lastState?.tasks ?? []).find((x) => x.id === b.dataset.detail);
+          if (t) openDetail(t);
+          return;
+        }
         if (b.id === "save-settings") {
           const res = await owner("settings.save", {
             settings: {
@@ -1167,8 +1242,8 @@
           const kind = $("kind").value;
           const payload =
             kind === "bug"
-              ? { type: "bug", title: $("title").value, symptom: $("detail").value, expected: "", repro: [$("detail").value] }
-              : { type: "requirement", title: $("title").value, goal: $("detail").value, acceptance: [$("assertion").value || "npm test :: exit==0"] };
+              ? { type: "bug", title: $("title").value, symptom: $("intake-detail").value, expected: "", repro: [$("intake-detail").value] }
+              : { type: "requirement", title: $("title").value, goal: $("intake-detail").value, acceptance: [$("assertion").value || "npm test :: exit==0"] };
           return owner("intake", payload);
         }
         if (b.dataset.pathApprove) return owner("path.approve", { pathId: b.dataset.pathApprove });
@@ -1308,6 +1383,20 @@
         if (b.dataset.memDrop) return owner("memory.drop", { id: b.dataset.memDrop });
         if (b.dataset.ship) return owner("release.ship", { id: b.dataset.ship });
       });
+
+      // 交付记录的展开状态：<details> 的 toggle 事件不冒泡，只能在捕获阶段听。
+      // 记下来是为了让 4 秒一次的自动刷新重绘时能还原——不记就等于「点开就被自己关了」。
+      // 和其他交互 handler 放在一起（「每个 data-* 都要有 handler」那条自检也扫这一段）。
+      document.addEventListener(
+        "toggle",
+        (e) => {
+          const d = e.target;
+          if (!d || !d.dataset || !d.dataset.details) return;
+          if (d.open) openDetails.add(d.dataset.details);
+          else openDetails.delete(d.dataset.details);
+        },
+        true,
+      );
 
       $("project-switch").addEventListener("change", (e) => {
         currentProject = e.target.value;
