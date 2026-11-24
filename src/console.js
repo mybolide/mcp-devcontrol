@@ -11,6 +11,7 @@ import { readContract } from "./contract.js";
 import { taskCreate } from "./gates.js";
 import { VERSION } from "./protocol.js";
 import { bootstrap } from "./digest.js";
+import { requirementResult } from "./result.js";
 import {
   reqIntake,
   reqApprove,
@@ -371,6 +372,9 @@ export async function startConsole(args) {
           return { ...d, drift };
         }),
         questions: listQuestions(adb),
+      // 需求级结果汇总：给 Agent Studio 一个「这条需求到底做完没、交付了什么」的结构化出口，
+      // 不用它自己去拼任务/证据/事件（也就不会把过程里的每次调用都当通知推给人）
+      results: adb.prepare("SELECT id FROM requirements ORDER BY id").all().map((r) => requirementResult(adb, r.id)),
         memories: listMemories(memoryConfig(process.env, active.root), 30, null, "candidate"),
         memoriesActive: listMemories(memoryConfig(process.env, active.root), 30, null, "active"),
         runs: listRuns(active.db, 30),
