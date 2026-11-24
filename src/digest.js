@@ -333,6 +333,38 @@ export function bootstrap(db, root, extra = {}) {
           : `项目上下文还没写。按 .devcontrol/context-plan.md 里的模板补齐 ${st.indexPath} 和分类文档——写完 Agent 每次接任务都会自动带上，不用再自己重新读项目`,
       };
     })(),
+    // 需要人看的事，按「同一件事只出一条」聚合：
+    //   待回答的问题、只有 Owner 能解的挂起任务、自主返工用完的任务。
+    // 以前每条 close.fail 都会冒一条，同一个任务失败五次就有五条——
+    // 那不是信息，是噪音，人看两眼就开始无视整个收件箱。
+    attention: (() => {
+      const out = [];
+      const open = db.prepare("SELECT id, task_id, question, expires_at FROM questions WHERE status='open' ORDER BY id").all();
+      for (const q of open) {
+        out.push({
+          kind: "question",
+          id: q.id,
+          taskId: q.task_id,
+          summary: String(q.question ?? "").slice(0, 120),
+          expiresAt: q.expires_at,
+          fix: `控制台「收件箱」回答 ${q.id}，或让 Owner 在终端看 questions`,
+        });
+      }
+      for (const t of parked) {
+        const st = reworkState(db, t);
+        if (st.owner === "agent") continue; // 自己能救的不进 Owner 待办
+        out.push({
+          kind: st.state === "failed" ? "rework-exhausted" : "needs-owner",
+          id: t.id,
+          taskId: t.id,
+          summary: `${t.id} ${t.title}`,
+          reason: st.reason,
+          attempts: st.lastFailure?.code ? [st.lastFailure.code] : [],
+          reworks: st.reworks,
+        });
+      }
+      return out;
+    })(),
     now: now(),
     head: (() => {
       try {

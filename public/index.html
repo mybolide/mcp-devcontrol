@@ -835,10 +835,13 @@
             <div class="mu">${esc(b.severity)} · ${esc(b.symptom || "（无现象描述）")}</div>
             <div class="row wrap"><button class="btn primary" data-decide="${b.id}" data-decision="accept">采纳</button><button class="btn danger" data-decide="${b.id}" data-decision="reject">驳回</button></div></div>`);
         }
-        for (const t of s.tasks.filter((x) => x.status === "parked")) {
-          cards.push(`<div class="card"><strong>${esc(t.id)} 已挂起</strong>
-            <div class="mu">${esc(t.title)} · 连续失败或等待超时</div>
-            <div class="row wrap"><button class="btn" data-reopen="${t.id}">打回重做</button></div></div>`);
+        // 挂起任务不再一股脑丢给人：只有「自主返工用完」或「授权类」才进待办。
+        // 代码/证据类的失败 Agent 自己 `task rework` 就能回去重试——把它摆到收件箱，
+        // 人就得为每一次测试失败点一次「打回」，那正是要消掉的噪音。
+        for (const a of (s.digest?.attention || []).filter((x) => x.kind !== "question")) {
+          cards.push(`<div class="card"><strong>${esc(a.summary)} · ${a.kind === "rework-exhausted" ? "自主返工用完" : "需要你定"}</strong>
+            <div class="mu">${esc(a.reason || "")}${a.attempts?.length ? ` · 最后一次 ${esc(a.attempts.join("、"))}` : ""}${a.reworks ? ` · 已返工 ${a.reworks} 次` : ""}</div>
+            <div class="row wrap"><button class="btn" data-reopen="${esc(a.taskId)}">打回重做</button></div></div>`);
         }
         for (const m of s.memories || []) {
           cards.push(`<div class="card mem"><strong>${esc(m.title)}</strong>
