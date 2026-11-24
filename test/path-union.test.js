@@ -4,9 +4,10 @@
 // 验收都不会被 E_CONTRACT 拦；坏处是「这条 Path 属于哪个阶段」被抹平了——P-002 只授权
 // docs/spikes，却带着 `cargo test -p agent-studio-acp` 和 Desktop 构建。
 //
-// 关掉之后：Path 只冻结自己声明的命令。这是目标形态，但会让「需求验收里有、没有 Path
-// 声明」的命令当场建不出任务，所以做成 Owner 可控的开关，默认保持 on。
+// 关闭后：Path 只冻结自己声明的命令。这是目标形态，但会让「需求验收里有、没有 Path
+// 声明」的命令暂时建不出任务，所以做成 Owner 可控的开关，默认保持 on。
 import test from "node:test";
+import { taskCreate } from "../src/gates.js";
 import assert from "node:assert/strict";
 import { openDb } from "../src/db.js";
 import { reqIntake, reqApprove, pathIntake, pathApprove, listPaths, setPathUnion, pathUnionOn } from "../src/store.js";
@@ -62,5 +63,29 @@ test("关掉后旧契约不被改写（历史不动）", () => {
   setPathUnion(db, false);
   const after = db.prepare("SELECT hash, contract_commit, test_cmds_json FROM paths WHERE id=?").get(pathId);
   assert.deepEqual(after, before, "翻开关只影响以后批准的 Path");
+  db.close();
+});
+
+test("union=off 时建不出「没人声明」的命令：错误里要说清该补哪一层", () => {
+  const { root, db, reqId, pathId } = fixture();
+  setPathUnion(db, false);
+  reqApprove(db, root, { requirementId: reqId, pathId });
+  // 需求第二条验收（npm run build）现在没有任何 Path 声明
+  let err = null;
+  try {
+    taskCreate(db, root, {
+      requirementId: reqId,
+      pathId,
+      title: "把构建跑绿",
+      acceptance: [{ deriveFrom: 1, assertion: "npm run build :: exit==0" }],
+      scope: ["src"],
+    });
+  } catch (e) {
+    err = e;
+  }
+  assert.equal(err?.code, "E_CONTRACT");
+  assert.match(err.message, /npm run build/);
+  assert.match(err.data.hint, /新建一条/, "要说清是给这个阶段补 Path");
+  assert.match(err.data.hint, /path union/, "也要点出这是并集关掉之后的正常结果");
   db.close();
 });

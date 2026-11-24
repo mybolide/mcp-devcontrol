@@ -114,7 +114,14 @@ function checkAcceptance(acceptance, body) {
   const allowed = contractCommands(body);
   for (const item of acceptance) {
     const { command } = parseAssertion(item.assertion);
-    if (!allowed.includes(command)) fail("E_CONTRACT", `命令不在契约白名单：${command}`, { allowed });
+    if (!allowed.includes(command)) {
+      // 光给白名单不够：多数时候这条命令是「需求里有、没有任何 Path 声明」。
+      // path union=off 之后内核不再自动把它并进来，人得知道该补哪一层（Path，而不是需求）。
+      fail("E_CONTRACT", `命令不在契约白名单：${command}（这条 Path 没有声明它）`, {
+        allowed,
+        hint: "给这个阶段新建一条包含该命令的 Path，或让 Owner 用 path adjust 补上；把 devcontrol path union 设成 off 时，内核不会再把需求验收自动并进 Path",
+      });
+    }
     if (typeof item.deriveFrom !== "number") fail("E_CONTRACT", "验收缺少 deriveFrom");
   }
 }
