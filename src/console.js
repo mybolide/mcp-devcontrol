@@ -44,8 +44,8 @@ import { resolveRoot } from "./cli.js";
 import { sha256 } from "./fingerprint.js";
 import { weekly, verdict } from "./weekly.js";
 import { listReleases, shipRelease } from "./release.js";
+import { humanAcceptance, humanAssertionTitle } from "./title.js";
 import { resolveOwnerChat } from "./owner-chat.js";
-import { humanAssertionTitle } from "./title.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(HERE, "..", "public");
@@ -354,7 +354,12 @@ export async function startConsole(args) {
         project: { root: active.root, name: active.name },
         projects: projects.map((p) => ({ name: p.name, root: p.root, current: p.root === active.root })),
         digest: bootstrap(adb, active.root, { console: `http://${IS_LOOPBACK_BIND ? "127.0.0.1" : bindHost}:${port}/` }),
-        requirements: listReqs(adb),
+        // 需求页同一条断言原本既出现在 Path 列又出现在验收列，两处都是命令原文：
+        // 一条需求两屏高、还额外多出一列的空白。这里给人话版，原文仍在 acceptance 里。
+        requirements: listReqs(adb).map((r) => ({
+          ...r,
+          acceptanceHuman: (r.acceptance || []).map((a) => humanAcceptance(a)),
+        })),
         // 规范也一起给前端：Owner 批准时得看得见「这条 Path 上要守什么」
         paths: listPaths(adb).map((pth) => {
           let standards = null;

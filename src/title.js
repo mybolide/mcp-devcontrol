@@ -47,3 +47,22 @@ export function humanAssertionTitle(assertion) {
   const short = command.length > 60 ? `${command.slice(0, 57)}…` : command;
   return `跑通 ${short}`;
 }
+
+
+/**
+ * 一条需求验收断言 → 一句人话（列表里给人扫）。
+ *
+ * `cargo test -p agent-studio-ipc --locked :: exit==0` 这种原文属于机器：
+ * 人扫需求页只想知道「这条需求靠什么证明做完了」，不想读参数。
+ * 断言本身不改（内核按原文冻结），这里只负责显示。
+ */
+export function humanAcceptance(assertion) {
+  const raw = String(assertion ?? "").trim();
+  if (!raw) return "（未写验收）";
+  const [, ...condParts] = raw.split("::").map((x) => x.trim());
+  const title = humanAssertionTitle(raw);
+  const cond = condParts.join(" :: ").trim();
+  // exit==0 是默认语义，说了等于没说；别的条件（output 含某串之类）人得看见
+  if (!cond || /^exit\s*==\s*0$/.test(cond)) return title;
+  return `${title}（${cond}）`;
+}

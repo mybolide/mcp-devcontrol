@@ -154,6 +154,17 @@ test("需求页要列出这条需求的全部 Path，不能只取第一条", () 
   assert.doesNotMatch(reqs, /s\.paths\.find\(\(x\) => x\.requirement_id === r\.id\)/, "不许再只取第一条");
 });
 
+test("需求页不再把验收命令原文贴两遍，改成说人话", () => {
+  // 现场：同一条断言既在 Path 列（验收：cargo test …）又在验收列各贴一遍原文，
+  // 一条需求占两屏高、人还读不出验的是什么。原文留在 title，列表只说人话。
+  const reqs = script.slice(script.indexOf("function renderReqs"), script.indexOf("function renderDocs"));
+  assert.equal(reqs.includes("pth.testCmds.map(esc)"), false, "Path 列不该再贴验收命令原文");
+  assert.match(reqs, /r\.acceptanceHuman \|\| r\.acceptance/, "验收列要用人话标题");
+  assert.match(reqs, /title="\$\{esc\(r\.acceptance\[i\] \?\? a\)\}"/, "原文要留在 title 上，能核对");
+  assert.equal(src.includes("<colgroup>"), true, "需求表要用百分比列宽，宽屏才摊得开");
+  assert.match(src, /#reqs \{ table-layout: fixed; \}/, "固定列宽表：内容长短不再互相挤压");
+});
+
 test("交付记录点开就不能被自动刷新合上（详情弹窗同理）", () => {
   // 真实现场：点开「交付记录」的 <details>，4 秒后 tick 重绘整张表把它合上，
   // 人只看到闪一下——于是以为「详情根本没做」。展开状态必须跨重绘记住。

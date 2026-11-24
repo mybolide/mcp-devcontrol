@@ -59,6 +59,14 @@ test("/api/state 的 Path 带人话命令：原始命令仍保留给机器", asy
     const p = r.json().paths[0];
     assert.deepEqual(p.testCmds, ["cargo test -p agent-studio-ipc --locked"], "原始命令不能丢：CLI/机器还要靠它跑验收");
     assert.deepEqual(p.testCmdsHuman, ["跑通 agent-studio-ipc 的测试"], "页面拿到的必须是翻译过的人话");
+    // /api/state 少了 digest，页面第一步 renderMetrics 就抛错，整页白屏（踩过一次）
+    const st = r.json();
+    assert.equal(typeof st.digest, "object", "/api/state 必须带 digest：页面靠它渲染指标，少了整页白屏");
+    assert.ok(st.digest && st.digest.counts, "digest.counts 也要在，指标卡才有数");
+    // 需求页的验收覆盖列同理：原文留在 acceptance，human 版给页面
+    const r0 = r.json().requirements[0];
+    assert.deepEqual(r0.acceptance, ["cargo test -p agent-studio-ipc --locked :: exit==0"]);
+    assert.deepEqual(r0.acceptanceHuman, ["跑通 agent-studio-ipc 的测试"], "需求验收也要有人话版");
   } finally {
     srv.stop();
   }

@@ -55,8 +55,9 @@
       .sidefooter { margin-top: auto; padding: 14px 12px 4px; border-top: 1px solid #edf0f4; font-size: 12.5px; color: #5a6c81; }
       .sidefooter .conn { font-weight: 650; color: var(--green); }
       .sidefooter .conn.off { color: var(--warn); }
-      /* 宽屏下别把内容挤成中间一窄条：用满可用宽度，留白交给 padding */
-      .main { width: 100%; max-width: 1760px; margin: 0 auto; padding: 28px clamp(22px, 3vw, 56px) 56px; }
+      /* 不设上限：宽屏上让它用满，别在两边留一大条空白。
+         可读性靠 padding clamp 与列宽百分比控制，不靠把整页缩窄。 */
+      .main { width: 100%; max-width: none; margin: 0 auto; padding: 28px clamp(22px, 3vw, 56px) 56px; }
       .bar { display: flex; align-items: center; gap: 16px; padding: 0 0 18px; margin-bottom: 26px; border-bottom: 1px solid #e4e9f0; flex-wrap: wrap; }
       .breadcrumbs { display: flex; gap: 8px; align-items: baseline; font-size: 13.5px; color: #4f6077; }
       .breadcrumbs b { color: #233c60; font-weight: 720; }
@@ -113,16 +114,17 @@
       .mu { font-size: 12.5px; color: #61738a; }
       .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
       .row.inline { flex-wrap: nowrap; }
+      /* 验收列表：一条一行，长句在原处折行；没人的时候也不会被压成一条细线 */
+      .accs { display: grid; gap: 2px; }
+      .acc { font-size: 12.5px; color: #4f6077; overflow-wrap: anywhere; }
       .row.wrap { margin-top: 10px; }
       table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
       th { text-align: left; font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: #6b7c92; font-weight: 700; padding: 8px 8px; border-bottom: 1px solid #e6ebf2; }
-      td { padding: 9px 8px; border-bottom: 1px solid #eef1f5; color: #26364a; vertical-align: top; word-break: break-word; }
+      td { padding: 9px 8px; border-bottom: 1px solid #eef1f5; color: #26364a; vertical-align: top; word-break: normal; overflow-wrap: anywhere; }
       th { white-space: nowrap; }
-      /* 表格按内容分配宽度，但关键的「标题 / Path / 验收」给下限：
-         否则长验收文本会把标题列压成一行一两个字，看着像坏了（需求页实测过） */
-      #reqs td:nth-child(2) { min-width: 300px; }
-      #reqs td:nth-child(4) { min-width: 280px; }
-      #reqs td:nth-child(5) { min-width: 260px; }
+      /* 需求表按百分比分配列宽（见 HTML 里的 colgroup）：内容长短不再互相挤压，
+         长路径只在放不下时才断行，不会把整串路径拆成一条竖线。 */
+      #reqs { table-layout: fixed; }
       #tasks td:nth-child(3) { min-width: 220px; }
       #tasks td:nth-child(5) { min-width: 280px; }
       #reqs td:nth-child(1), #tasks td:nth-child(1), #reqs td:nth-child(3) { white-space: nowrap; }
@@ -326,6 +328,11 @@
         </div>
         <div class="panel">
           <table>
+            <!-- 列宽按百分比固定：内容长短不再互相抢宽度，宽屏自动摊开 -->
+            <colgroup>
+              <col style="width: 6%"><col style="width: 24%"><col style="width: 9%">
+              <col style="width: 22%"><col style="width: 24%"><col style="width: 15%">
+            </colgroup>
             <thead><tr><th>ID</th><th>标题</th><th>状态</th><th>Path</th><th>验收覆盖</th><th>关联任务</th></tr></thead>
             <tbody id="reqs"></tbody>
           </table>
@@ -1020,37 +1027,44 @@
             if (t.requirement_id !== r.id || t.status === "parked") continue;
             for (const a of t.acceptance) if (typeof a.deriveFrom === "number") idx.add(a.deriveFrom);
           }
-          const missing = r.acceptance.filter((_, i) => !idx.has(i));
+          const missing = r.acceptance.map((_, i) => i).filter((i) => !idx.has(i));
           return { text: `${idx.size}/${r.acceptance.length}`, missing };
         };
         const rows = s.requirements
           .map((r) => {
             const p = covOf(r);
             const cov = `<span class="pill ${p.missing.length ? "parked" : "good"}">覆盖 ${esc(p.text)}</span>`;
-            const miss = p.missing.length ? `<div class="mu" style="color:#a86b1a">待补拆：${p.missing.map(esc).join("；")}</div>` : "";
-            // Path 可被多条需求共用，所以先从这条需求的任务反查它实际用的 Path
-            // 一条需求可能有多条 Path（新的替换旧的、或并行存在）：全都列出来，
-        // 别只取「第一条」——否则已作废的旧 Path 会一直占着显示位，新的看不见。
-        const related = s.paths.filter((x) => x.requirement_id === r.id);
-        const usedPath = s.tasks.find((t) => t.requirement_id === r.id)?.path_id;
-        const pth =
-          related.find((x) => x.id === usedPath && x.status === "approved") ??
-          related.find((x) => x.status === "approved") ??
-          related[0];
-        const allPaths = related.length
-          ? `<div class="mu" style="margin-top:2px">Path：${related
-              .map((x) => `${esc(x.id)}<span class="pill ${x.status === "approved" ? "good" : x.status === "revoked" ? "bad" : "parked"}">${esc(x.status)}</span>`)
-              .join(" ")}</div>`
-          : "";
+            // 列表里只给人话；原文留在 title 上，要核对时悬停就能看见
+            const human = r.acceptanceHuman || r.acceptance;
+            const miss = p.missing.length
+              ? `<div class="mu" style="color:#a86b1a">待补拆：${p.missing.map((i) => esc(human[i] ?? r.acceptance[i])).join("；")}</div>`
+              : "";
+            // 同一条断言原来在 Path 列（验收：…）和验收列各贴一遍原文，两处都是命令：
+            // 一行需求两屏高，人还读不出它验的是什么。现在只保留验收列，且说人话。
+            // 原文没删——记在 data-assert 里，详情/悬停还能核对。
+            const related = s.paths.filter((x) => x.requirement_id === r.id);
+            const usedPath = s.tasks.find((t) => t.requirement_id === r.id)?.path_id;
+            const pth =
+              related.find((x) => x.id === usedPath && x.status === "approved") ??
+              related.find((x) => x.status === "approved") ??
+              related[0];
+            const allPaths = related.length
+              ? `<div class="mu" style="margin-top:2px">Path：${related
+                  .map((x) => `${esc(x.id)}<span class="pill ${x.status === "approved" ? "good" : x.status === "revoked" ? "bad" : "parked"}">${esc(x.status)}</span>`)
+                  .join(" ")}</div>`
+              : "";
+            const accLines = human
+              .map((a, i) => `<div class="acc" title="${esc(r.acceptance[i] ?? a)}">${esc(a)}</div>`)
+              .join("");
             const tasks = s.tasks
               .filter((t) => t.requirement_id === r.id)
               .map((t) => `<span class="pill ${t.status === "done" ? "done" : t.status === "doing" ? "doing" : ""}">${esc(t.id)}</span>`)
               .join(" ");
             return `<tr><td class="mono nw">${esc(r.id)}</td><td>${esc(r.title)}</td><td class="nw">${tag(r.status)}${canAbandon(r) ? ` <button class="btn danger" data-abandon="${esc(r.id)}" title="这件事不做了：需求归档，连带还挂着的任务一起放弃">作废</button>` : ""}</td>
               <td class="mono">${pth ? `${esc(pth.id)} <button class="btn" data-budget="${pth.id}" data-cur="${pth.budget_lines ?? ""}" data-used="${s.tasks.filter((t) => t.path_id === pth.id && t.status === "done").reduce((n, t) => n + (t.changed_lines ?? 0), 0)}" title="改这条 Path 的改动预算">${pth.budget_lines ?? "?"} 行</button>` : `<span class="mu">无自有 Path</span>`}
-                ${pth && (pth.testCmds || []).length ? `<div class="mu" style="margin-top:4px">验收：${pth.testCmds.map(esc).join(" · ")} <button class="btn" data-retest="${pth.id}" data-cmds="${esc((pth.testCmds || []).join(" | "))}" title="项目改了 test 脚本，重新采一次验收命令">重采</button></div>` : ""}
-                ${pth && pth.standards?.rules?.length ? `<div class="mu" style="margin-top:2px" title="${esc(pth.standards.rules.map((s) => (s.enforced ? "[内核会拦] " : "") + s.text).join("\n"))}">规范 ${pth.standards.rules.length} 条 · 悬停看全文</div>` : ""}</td>
-              <td>${cov}${miss}${allPaths}<div class="mu">${r.acceptance.map((a) => esc(a)).join(" · ")}</div></td>
+                ${pth && (pth.testCmds || []).length ? `<button class="btn" data-retest="${pth.id}" data-cmds="${esc((pth.testCmds || []).join(" | "))}" title="验收命令：${esc(pth.testCmdsHuman?.join("；") ?? "")}。项目改了 test 脚本可以重新采一次">重采验收命令</button>` : ""}
+                ${pth && pth.standards?.rules?.length ? `<div class="mu" style="margin-top:4px" title="${esc(pth.standards.rules.map((s) => (s.enforced ? "[内核会拦] " : "") + s.text).join("\n"))}">规范 ${pth.standards.rules.length} 条 · 悬停看全文</div>` : ""}</td>
+              <td>${cov}${miss}${allPaths}<div class="accs" style="margin-top:4px">${accLines}</div></td>
               <td>${tasks || `<span class="mu">—</span>`}</td></tr>`;
           })
           .join("");
